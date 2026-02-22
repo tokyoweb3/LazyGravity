@@ -75,29 +75,8 @@ export class SlashCommandHandler {
     }
 
     private handleModelsCommand(args: string[]): CommandResult {
-        if (args.length === 0) {
-            const current = this.modelService.getCurrentModel();
-            const available = this.modelService.getAvailableModels().join(', ');
-            return {
-                success: true,
-                message: `⚙️ 現在のモデル: **${current}**\n利用可能なモデル: ${available}\n変更方法: \`/models [model_name]\``,
-            };
-        }
-
-        const newModel = args[0];
-        const result = this.modelService.setModel(newModel);
-
-        if (result.success) {
-            return {
-                success: true,
-                message: `✅ モデルを **${result.model}** に変更しました。`,
-            };
-        } else {
-            return {
-                success: false,
-                message: result.error || '⚠️ 無効なモデルです。',
-            };
-        }
+        // Now handled by index.ts directly to use CDP
+        return { success: false, message: 'This should not be reached.' };
     }
 
     private handleTemplatesCommand(args: string[]): CommandResult {

@@ -27,14 +27,39 @@ graph TD
 - **入力値の検証とパストラバーサル対策 (Directory Traversal Protection):**
   - ユーザー入力やワークスペース指定に対するディレクトリトラバーサル攻撃（例: `../../etc/passwd`）を防ぐため、基準となるルートディレクトリ（`WORKSPACE_BASE_DIR`）を定義し、すべてのパス解決がその配下に収まることを `path.resolve` 等を用いて厳格にバリデーションします。
 
-## 3. スマート・ルーティング機能
-「どのワークスペース（ディレクトリ）への指示か」をDiscordのチャンネル構成とリンクさせます。
+## 3. ワークスペース管理（カテゴリ↔ワークスペース、チャンネル↔チャットセッション）
+Discordの **カテゴリ = ワークスペース**、**チャンネル = チャットセッション** として管理します。
 
-### チャンネル構造のルール
-- 毎回の指示に対して固定の1チャンネルを使うのではなく、「ワークスペース単位（プロジェクト）」の**カテゴリ**を作成。
-- その配下に、タスクやスレッドごとの**チャンネル**を生成する（またはDiscord標準のフォーラム/スレッド機能を利用）。
-- **Botの振る舞い:**
-  - `!workspace bind [パス]` 等でパスとカテゴリを紐付けるか、BotからPCの特定ディレクトリツリー（例: `~/Code/`）を読み取ってインタラクティブにカテゴリを作成するUIを提供する。
+### 実装済みの機能
+- **`/workspace`**: ベースディレクトリ配下のサブディレクトリ一覧（最大25件）をセレクトメニューで表示。選択するとカテゴリ + `session-1` チャンネルを自動作成しバインド。
+- **`/chat new`**: 現在のワークスペースカテゴリ配下に新しいセッションチャンネル（`session-N`）を作成し、Antigravityで新規チャットを開始。
+- **`/chat status`**: 現在のチャットセッション情報（セッション番号、ワークスペース、リネーム状態）を表示。
+- **`/chat list`**: 同ワークスペースの全チャットセッション一覧を表示。
+- **自動リネーム**: セッションチャンネルで初回メッセージ送信時、プロンプト内容からチャンネル名を自動生成してリネーム（例: `session-1` → `1-react認証バグ修正`）。
+
+### データフロー
+1. ユーザーが `/workspace` → セレクトメニューでワークスペースを選択
+2. `ChannelManager.ensureCategory()` でカテゴリを作成、`createSessionChannel()` で `session-1` チャンネルを作成
+3. `WorkspaceBindingRepository` が `workspace_bindings` テーブルに channel_id ↔ workspace_path を永続化
+4. `ChatSessionRepository` が `chat_sessions` テーブルにセッション情報（カテゴリID、セッション番号、リネーム状態）を永続化
+5. `/chat new` → 同カテゴリ配下に `session-N` を新規作成 + Antigravityで新規チャット開始
+6. 初回メッセージ送信時 → `TitleGeneratorService` がタイトル生成 → `ChannelManager.renameChannel()` でリネーム
+
+### アーキテクチャ
+```
+src/database/workspaceBindingRepository.ts  — SQLite CRUD (workspace_bindings テーブル)
+src/database/chatSessionRepository.ts       — SQLite CRUD (chat_sessions テーブル)
+src/services/workspaceService.ts            — FS操作・パス検証 (scanWorkspaces, validatePath)
+src/services/channelManager.ts              — Discord カテゴリ/チャンネル管理 (ensureCategory, createSessionChannel, renameChannel)
+src/services/titleGeneratorService.ts       — チャンネル名自動生成 (CDP経由 + テキスト抽出フォールバック)
+src/services/chatSessionService.ts          — Antigravity UI操作 (CDP経由で新規チャット開始・セッション情報取得)
+src/commands/workspaceCommandHandler.ts     — /workspace コマンド + セレクトメニュー処理
+src/commands/chatCommandHandler.ts          — /chat コマンド (new, status, list)
+```
+
+### 将来の拡展
+- CDP経由でAntigravityのワークスペースを直接切り替え（現在はプロンプトプレフィックス方式）
+- LLM APIによる高精度タイトル生成（現在はテキスト抽出ベース）
 
 ## 4. コンテキスト（文脈）の引継ぎ
 LLMエージェントへの指示と実行結果を、Discordの「リプライチェーン」によって管理・永続化する。

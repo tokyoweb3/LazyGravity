@@ -4,38 +4,53 @@ import { CdpService } from './cdpService';
 const RESPONSE_SELECTORS = {
     /** AIの最新応答テキストを取得する（Antigravity Cascade Panel 実DOM対応） */
     RESPONSE_TEXT: `(() => {
-        // Antigravity Cascade Panel のDOM構造:
-        //   ユーザーメッセージ: div.whitespace-pre-wrap.text-sm
-        //   AI応答テキスト:    div.leading-relaxed.select-text.text-sm > p
-        //   チャットパネル:    .antigravity-agent-side-panel
-        
-        // 1. Cascade Panel 内の AI応答要素を探す（最も確実）
+        // style/script/svg等の非表示要素を除外してテキストを抽出するヘルパー
+        function extractVisibleText(element) {
+            const clone = element.cloneNode(true);
+            // 非コンテンツ要素を全て除去
+            const removeTags = ['style', 'script', 'svg', 'link', 'meta'];
+            for (const tag of removeTags) {
+                const els = clone.querySelectorAll(tag);
+                els.forEach(el => el.remove());
+            }
+            // CSS定義を含むコードブロックも除去（@media, .selector {, --variable: 等）
+            const codeBlocks = clone.querySelectorAll('pre, code');
+            for (const block of codeBlocks) {
+                const content = block.textContent || '';
+                if (/@media\\b/.test(content) || /\\{[\\s\\S]*--[\\w-]+:/.test(content) || /\\.markdown-alert/.test(content)) {
+                    block.remove();
+                }
+            }
+            return clone.textContent?.trim() || null;
+        }
+
         const panel = document.querySelector('.antigravity-agent-side-panel');
         const scope = panel || document;
-        
+
+        // 1. Cascade Panel 内の AI応答要素を探す（最も確実）
         const aiResponses = scope.querySelectorAll('.leading-relaxed.select-text');
         if (aiResponses.length > 0) {
             const last = aiResponses[aiResponses.length - 1];
-            const text = last.textContent?.trim();
+            const text = extractVisibleText(last);
             if (text) return text;
         }
-        
+
         // 2. flex-col gap-y-3 コンテナ（AIの応答ブロック）
         const responseBlocks = scope.querySelectorAll('.flex.flex-col.gap-y-3');
         if (responseBlocks.length > 0) {
             const last = responseBlocks[responseBlocks.length - 1];
-            const text = last.textContent?.trim();
+            const text = extractVisibleText(last);
             if (text) return text;
         }
-        
+
         // 3. rendered-markdown（チャット内のmarkdown表示）
         const markdown = scope.querySelectorAll('.rendered-markdown');
         if (markdown.length > 0) {
             const last = markdown[markdown.length - 1];
-            const text = last.textContent?.trim();
+            const text = extractVisibleText(last);
             if (text) return text;
         }
-        
+
         return null;
     })()`,
     /** ストップボタンの存在チェック（生成中かどうかを判定） */
@@ -103,6 +118,11 @@ export class ResponseMonitor {
     private lastText: string | null = null;
     private startTime: number = 0;
 
+    /** 送信前の既存テキスト（古い応答を除外するため） */
+    private baselineText: string | null = null;
+    /** ストップボタンが一度でも出現したか（生成開始を検知済みか） */
+    private generationStarted: boolean = false;
+
     constructor(options: ResponseMonitorOptions) {
         this.cdpService = options.cdpService;
         this.pollIntervalMs = options.pollIntervalMs ?? 1000;
@@ -114,13 +134,27 @@ export class ResponseMonitor {
 
     /**
      * 監視を開始する。
+     * まず現在のテキストをベースラインとして記録し、
      * 内部でポーリングタイマーとタイムアウトタイマーを設定する。
      */
-    start(): void {
+    async start(): Promise<void> {
         if (this.isRunning) return;
         this.isRunning = true;
         this.lastText = null;
+        this.generationStarted = false;
         this.startTime = Date.now();
+
+        // ベースライン取得: 送信前の既存テキストを記録して除外対象にする
+        try {
+            const baseResult = await this.cdpService.call('Runtime.evaluate', {
+                expression: RESPONSE_SELECTORS.RESPONSE_TEXT,
+                returnByValue: true,
+                awaitPromise: true,
+            });
+            this.baselineText = baseResult?.result?.value ?? null;
+        } catch {
+            this.baselineText = null;
+        }
 
         // タイムアウトタイマーの設定
         if (this.maxDurationMs > 0) {
@@ -170,20 +204,6 @@ export class ResponseMonitor {
      */
     private async poll(): Promise<void> {
         try {
-            // テキスト取得
-            const textResult = await this.cdpService.call('Runtime.evaluate', {
-                expression: RESPONSE_SELECTORS.RESPONSE_TEXT,
-                returnByValue: true,
-                awaitPromise: true,
-            });
-            const currentText: string | null = textResult?.result?.value ?? null;
-
-            // テキストが変化した場合のみ通知
-            if (currentText !== null && currentText !== this.lastText) {
-                this.lastText = currentText;
-                this.onProgress?.(currentText);
-            }
-
             // ストップボタンの存在チェック（生成中かどうか）
             const stopResult = await this.cdpService.call('Runtime.evaluate', {
                 expression: RESPONSE_SELECTORS.STOP_BUTTON,
@@ -192,8 +212,32 @@ export class ResponseMonitor {
             });
             const isGenerating: boolean = stopResult?.result?.value ?? false;
 
-            // ストップボタンが消えていれば生成完了
-            if (!isGenerating) {
+            // ストップボタンが出現したら生成開始を記録
+            if (isGenerating) {
+                this.generationStarted = true;
+            }
+
+            // テキスト取得
+            const textResult = await this.cdpService.call('Runtime.evaluate', {
+                expression: RESPONSE_SELECTORS.RESPONSE_TEXT,
+                returnByValue: true,
+                awaitPromise: true,
+            });
+            const currentText: string | null = textResult?.result?.value ?? null;
+
+            // ベースライン（送信前の古い応答）と同じテキストは無視
+            if (currentText !== null && currentText === this.baselineText) {
+                return;
+            }
+
+            // テキストが変化した場合のみ通知
+            if (currentText !== null && currentText !== this.lastText) {
+                this.lastText = currentText;
+                this.onProgress?.(currentText);
+            }
+
+            // 完了判定: ストップボタンが一度出現してから消えた場合のみ完了とする
+            if (!isGenerating && this.generationStarted) {
                 const finalText = this.lastText ?? '';
                 await this.stop();
                 this.onComplete?.(finalText);

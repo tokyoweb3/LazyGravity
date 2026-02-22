@@ -176,6 +176,84 @@ describe('ChannelManager', () => {
         });
     });
 
+    describe('ensureCategory', () => {
+        it('カテゴリが存在しない場合、新規作成すること', async () => {
+            const mockGuild = createMockGuild([]);
+            const mockCategory = { id: 'cat-new', name: '🗂️-myproject' };
+            (mockGuild.channels.create as jest.Mock).mockResolvedValueOnce(mockCategory);
+
+            const result = await channelManager.ensureCategory(mockGuild, 'myproject');
+
+            expect(result).toEqual({ categoryId: 'cat-new', created: true });
+            expect(mockGuild.channels.create).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    name: '🗂️-myproject',
+                    type: ChannelType.GuildCategory,
+                })
+            );
+        });
+
+        it('カテゴリが既に存在する場合、既存のIDを返すこと', async () => {
+            const mockGuild = createMockGuild([
+                { id: 'cat-existing', name: '🗂️-myproject', type: ChannelType.GuildCategory },
+            ]);
+
+            const result = await channelManager.ensureCategory(mockGuild, 'myproject');
+
+            expect(result).toEqual({ categoryId: 'cat-existing', created: false });
+            expect(mockGuild.channels.create).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('createSessionChannel', () => {
+        it('カテゴリ配下にセッションチャンネルを作成すること', async () => {
+            const mockGuild = createMockGuild([]);
+            const mockChannel = { id: 'ch-session-1', name: 'session-1' };
+            (mockGuild.channels.create as jest.Mock).mockResolvedValueOnce(mockChannel);
+
+            const result = await channelManager.createSessionChannel(mockGuild, 'cat-1', 'session-1');
+
+            expect(result).toEqual({ channelId: 'ch-session-1' });
+            expect(mockGuild.channels.create).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    name: 'session-1',
+                    type: ChannelType.GuildText,
+                    parent: 'cat-1',
+                })
+            );
+        });
+    });
+
+    describe('renameChannel', () => {
+        it('チャンネル名をリネームすること', async () => {
+            const mockSetName = jest.fn().mockResolvedValue(undefined);
+            const channelCollection = new Collection<string, any>();
+            channelCollection.set('ch-1', { id: 'ch-1', setName: mockSetName });
+
+            const mockGuild = { channels: { cache: channelCollection } } as unknown as Guild;
+
+            await channelManager.renameChannel(mockGuild, 'ch-1', '1-react-auth-bug');
+
+            expect(mockSetName).toHaveBeenCalledWith('1-react-auth-bug');
+        });
+
+        it('チャンネルが見つからない場合エラーをスローすること', async () => {
+            const mockGuild = createMockGuild([]);
+
+            await expect(
+                channelManager.renameChannel(mockGuild, 'nonexistent', 'new-name')
+            ).rejects.toThrow('チャンネル nonexistent が見つかりません');
+        });
+    });
+
+    describe('sanitizeChannelName', () => {
+        it('sanitizeCategoryNameと同じ結果を返すこと', () => {
+            expect(channelManager.sanitizeChannelName('Hello World')).toBe(
+                channelManager.sanitizeCategoryName('Hello World')
+            );
+        });
+    });
+
     describe('ensureChannel - エラーハンドリング', () => {
         it('Discord API がエラーを返した場合、エラーを伝播すること', async () => {
             const mockGuild = createMockGuild([]);

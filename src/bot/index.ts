@@ -14,12 +14,24 @@ import { registerSlashCommands } from '../commands/registerSlashCommands';
 import { ModeService } from '../services/modeService';
 import { ModelService } from '../services/modelService';
 import { TemplateRepository } from '../database/templateRepository';
+import { WorkspaceBindingRepository } from '../database/workspaceBindingRepository';
+import { ChatSessionRepository } from '../database/chatSessionRepository';
+import { WorkspaceService } from '../services/workspaceService';
+import {
+    WorkspaceCommandHandler,
+    WORKSPACE_SELECT_ID,
+} from '../commands/workspaceCommandHandler';
+import { ChatCommandHandler } from '../commands/chatCommandHandler';
+import { ChannelManager } from '../services/channelManager';
+import { TitleGeneratorService } from '../services/titleGeneratorService';
 
 // CDP連携サービス
 import { CdpService } from '../services/cdpService';
+import { ChatSessionService } from '../services/chatSessionService';
 import { ResponseMonitor } from '../services/responseMonitor';
 import { ScreenshotService } from '../services/screenshotService';
 import { ApprovalDetector, ApprovalInfo } from '../services/approvalDetector';
+import { QuotaService } from '../services/quotaService';
 
 // =============================================================================
 // CDP ブリッジ: Discord ↔ Antigravity の結線
@@ -30,6 +42,7 @@ interface CdpBridge {
     cdp: CdpService;
     screenshot: ScreenshotService;
     approval: ApprovalDetector | null;
+    quota: QuotaService;
     isReady: boolean;
 }
 
@@ -42,11 +55,13 @@ async function initCdpBridge(notifyChannel?: Message['channel']): Promise<CdpBri
     });
 
     const screenshot = new ScreenshotService({ cdpService: cdp });
+    const quota = new QuotaService();
 
     const bridge: CdpBridge = {
         cdp,
         screenshot,
         approval: null,
+        quota,
         isReady: false,
     };
 
@@ -168,12 +183,24 @@ export const startBot = async () => {
     const modeService = new ModeService();
     const modelService = new ModelService();
     const templateRepo = new TemplateRepository(db);
-
-    // スラッシュコマンド用のハンドラー
-    const slashCommandHandler = new SlashCommandHandler(modeService, modelService, templateRepo);
+    const workspaceBindingRepo = new WorkspaceBindingRepository(db);
+    const chatSessionRepo = new ChatSessionRepository(db);
+    const workspaceService = new WorkspaceService(config.workspaceBaseDir);
+    const channelManager = new ChannelManager();
 
     // CDPブリッジの初期化
     const bridge = await initCdpBridge();
+
+    // CDP依存サービスの初期化
+    const chatSessionService = new ChatSessionService({ cdpService: bridge.cdp });
+    const titleGenerator = new TitleGeneratorService(bridge.cdp);
+
+    // コマンドハンドラーの初期化
+    const wsHandler = new WorkspaceCommandHandler(workspaceBindingRepo, chatSessionRepo, workspaceService, channelManager);
+    const chatHandler = new ChatCommandHandler(chatSessionService, chatSessionRepo, workspaceBindingRepo, channelManager);
+
+    // スラッシュコマンド用のハンドラー
+    const slashCommandHandler = new SlashCommandHandler(modeService, modelService, templateRepo);
 
     const client = new Client({
         intents: [
@@ -203,25 +230,96 @@ export const startBot = async () => {
                 return;
             }
 
-            if (interaction.customId === 'approve_action' && bridge.approval) {
-                await interaction.deferUpdate();
-                const success = await bridge.approval.approveButton();
-                await interaction.followUp({
-                    content: success ? '✅ 承認しました！' : '❌ ボタンが見つかりませんでした',
-                    ephemeral: true,
-                });
+            try {
+                if (interaction.customId === 'approve_action' && bridge.approval) {
+                    await interaction.deferUpdate();
+                    const success = await bridge.approval.approveButton();
+                    await interaction.followUp({
+                        content: success ? '✅ 承認しました！' : '❌ ボタンが見つかりませんでした',
+                        ephemeral: true,
+                    });
+                    return;
+                }
+
+                if (interaction.customId === 'deny_action' && bridge.approval) {
+                    await interaction.deferUpdate();
+                    const success = await bridge.approval.denyButton();
+                    await interaction.followUp({
+                        content: success ? '🚫 拒否しました' : '❌ ボタンが見つかりませんでした',
+                        ephemeral: true,
+                    });
+                    return;
+                }
+
+                // モデルUIの更新ボタン
+                if (interaction.customId === 'model_refresh_btn') {
+                    await interaction.deferUpdate();
+                    await sendModelsUI({ editReply: async (data: any) => await interaction.editReply(data) }, bridge);
+                    return;
+                }
+
+                // モデル切り替えボタン
+                if (interaction.customId.startsWith('model_btn_')) {
+                    console.log(`[Button] model_btn clicked. customId=${interaction.customId}`);
+                    await interaction.deferUpdate();
+
+                    const modelName = interaction.customId.replace('model_btn_', '');
+                    console.log(`[Button] Target model: ${modelName}`);
+
+                    if (!bridge.isReady) {
+                        console.log(`[Button] CDP not ready`);
+                        await interaction.followUp({ content: '⚠️ CDPに未接続です。', ephemeral: true });
+                        return;
+                    }
+
+                    console.log(`[Button] Calling cdp.setUiModel...`);
+                    const res = await bridge.cdp.setUiModel(modelName);
+                    console.log(`[Button] cdp.setUiModel result:`, res);
+
+                    if (!res.ok) {
+                        await interaction.followUp({ content: res.error || '⚠️ モデルの変更に失敗しました。', ephemeral: true });
+                    } else {
+                        console.log(`[Button] Calling sendModelsUI after successful setUiModel...`);
+                        await sendModelsUI({ editReply: async (data: any) => await interaction.editReply(data) }, bridge);
+                        await interaction.followUp({ content: `✅ モデルを **${res.model}** に変更しました！`, ephemeral: true });
+                        console.log(`[Button] sendModelsUI complete.`);
+                    }
+                    return;
+                }
+            } catch (error) {
+                console.error('ボタンインタラクションの処理中にエラーが発生:', error);
+
+                // 既にdeferUpdate等で応答済み/期限切れの場合を考慮し、フォールバックとして送信を試みる
+                try {
+                    if (!interaction.replied && !interaction.deferred) {
+                        await interaction.reply({ content: '❌ ボタン操作の処理中にエラーが発生しました。', ephemeral: true });
+                    } else {
+                        await interaction.followUp({ content: '❌ ボタン操作の処理中にエラーが発生しました。', ephemeral: true }).catch(console.error);
+                    }
+                } catch (e) {
+                    console.error('エラーメッセージの送信にも失敗しました:', e);
+                }
+            }
+        }
+
+        // ワークスペースセレクトメニュー処理
+        if (interaction.isStringSelectMenu() && interaction.customId === WORKSPACE_SELECT_ID) {
+            if (!config.allowedUserIds.includes(interaction.user.id)) {
+                await interaction.reply({ content: '⛔ 権限がありません。', ephemeral: true }).catch(console.error);
                 return;
             }
 
-            if (interaction.customId === 'deny_action' && bridge.approval) {
-                await interaction.deferUpdate();
-                const success = await bridge.approval.denyButton();
-                await interaction.followUp({
-                    content: success ? '🚫 拒否しました' : '❌ ボタンが見つかりませんでした',
-                    ephemeral: true,
-                });
+            if (!interaction.guild) {
+                await interaction.reply({ content: '⚠️ サーバー内でのみ使用できます。', ephemeral: true }).catch(console.error);
                 return;
             }
+
+            try {
+                await wsHandler.handleSelectMenu(interaction, interaction.guild);
+            } catch (error) {
+                console.error('ワークスペース選択エラー:', error);
+            }
+            return;
         }
 
         if (!interaction.isChatInputCommand()) return;
@@ -240,7 +338,7 @@ export const startBot = async () => {
         try {
             // まず応答を遅延させる（3秒制限を回避）
             await commandInteraction.deferReply();
-            await handleSlashInteraction(commandInteraction, slashCommandHandler, bridge);
+            await handleSlashInteraction(commandInteraction, slashCommandHandler, bridge, wsHandler, chatHandler);
         } catch (error) {
             console.error('スラッシュコマンドの処理でエラーが発生:', error);
             try {
@@ -312,7 +410,14 @@ export const startBot = async () => {
 
         // 🎯 平文メッセージ → Antigravityにプロンプトとして送信
         if (message.content.trim()) {
-            await sendPromptToAntigravity(bridge, message, message.content);
+            // 自動リネーム: 初回メッセージ送信時にチャンネル名をタイトルにリネーム
+            await autoRenameChannel(message, chatSessionRepo, titleGenerator, channelManager);
+
+            const workspacePath = wsHandler.getWorkspaceForChannel(message.channelId);
+            const prompt = workspacePath
+                ? `[ワークスペース: ${workspacePath}]\n${message.content}`
+                : message.content;
+            await sendPromptToAntigravity(bridge, message, prompt);
         }
     });
 
@@ -329,6 +434,32 @@ export const startBot = async () => {
 };
 
 /**
+ * 初回メッセージ送信時にチャンネル名を自動リネームする
+ */
+async function autoRenameChannel(
+    message: Message,
+    chatSessionRepo: ChatSessionRepository,
+    titleGenerator: TitleGeneratorService,
+    channelManager: ChannelManager,
+): Promise<void> {
+    const session = chatSessionRepo.findByChannelId(message.channelId);
+    if (!session || session.isRenamed) return;
+
+    const guild = message.guild;
+    if (!guild) return;
+
+    try {
+        const title = await titleGenerator.generateTitle(message.content);
+        const newName = `${session.sessionNumber}-${title}`;
+        await channelManager.renameChannel(guild, message.channelId, newName);
+        chatSessionRepo.updateDisplayName(message.channelId, title);
+    } catch (err) {
+        console.error('[AutoRename] リネーム失敗:', err);
+        // リネーム失敗はプロンプト送信をブロックしない
+    }
+}
+
+/**
  * 承認ボタン検出を開始する
  */
 function startApprovalDetector(bridge: CdpBridge, client: Client) {
@@ -339,14 +470,17 @@ function startApprovalDetector(bridge: CdpBridge, client: Client) {
         cdpService: bridge.cdp,
         pollIntervalMs: 2000,
         onApprovalRequired: async (info: ApprovalInfo) => {
-            console.log('🔔 承認ボタン検出:', info.buttonText, '-', info.description);
+            console.log('🔔 承認ボタン検出:', info.approveText, '/', info.denyText, '-', info.description);
 
             // Discord通知用のEmbed + ボタンを構築
             const embed = new EmbedBuilder()
                 .setTitle('🔔 承認が必要です')
                 .setDescription(info.description || 'Antigravityがアクションの承認を求めています')
                 .setColor(0xFFA500)
-                .addFields({ name: 'ボタン', value: info.buttonText })
+                .addFields(
+                    { name: '許可ボタン', value: info.approveText, inline: true },
+                    { name: '拒否ボタン', value: info.denyText || '(なし)', inline: true },
+                )
                 .setTimestamp();
 
             const approveBtn = new ButtonBuilder()
@@ -379,6 +513,101 @@ function startApprovalDetector(bridge: CdpBridge, client: Client) {
 
     bridge.approval.start();
     console.log('🔍 承認ボタン検出を開始しました');
+}
+
+/**
+ * /models コマンドのインタラクティブなUIを組み立てて送信する
+ */
+async function sendModelsUI(target: { editReply: (opts: any) => Promise<any> }, bridge: CdpBridge) {
+    if (!bridge.isReady) {
+        await target.editReply({ content: '⚠️ CDPに未接続です。' });
+        return;
+    }
+    const models = await bridge.cdp.getUiModels();
+    const currentModel = await bridge.cdp.getCurrentModel();
+    const quotaData = await bridge.quota.fetchQuota();
+
+    if (models.length === 0) {
+        await target.editReply({ content: '⚠️ Antigravityのモデル一覧の取得に失敗しました。' });
+        return;
+    }
+
+    function formatQuota(mName: string, current: boolean) {
+        if (!mName) return `${current ? '✅' : '🟩'} 不明`;
+
+        // Match by prefix or full name
+        const q = quotaData.find(q => q.label === mName || mName.includes(q.label) || q.label.includes(mName));
+        if (!q || q.quotaInfo?.remainingFraction === undefined) return `${current ? '✅' : '🟩'} ${mName}`;
+
+        const rem = q.quotaInfo.remainingFraction;
+        const percent = Math.round(rem * 100);
+        let icon = '🟢';
+        if (percent <= 20) icon = '🔴';
+        else if (percent <= 50) icon = '🟡';
+
+        const resetTime = new Date(q.quotaInfo.resetTime);
+        const diffMs = resetTime.getTime() - Date.now();
+        let timeStr = 'Ready';
+        if (diffMs > 0) {
+            const mins = Math.ceil(diffMs / 60000);
+            if (mins < 60) timeStr = `${mins}m`;
+            else timeStr = `${Math.floor(mins / 60)}h ${mins % 60}m`;
+        }
+
+        return `${current ? '✅' : '🟩'} ${mName} ${icon} ${percent}% ⏳ ${timeStr}`;
+    }
+
+    const currentModelFormatted = currentModel ? formatQuota(currentModel, true) : '不明';
+
+    const embed = new EmbedBuilder()
+        .setTitle('🤖 モデル管理')
+        .setColor(0x5865F2)
+        .setDescription(`**現在のモデル:**\n${currentModelFormatted}\n\n` +
+            `📋 **利用可能なモデル (${models.length}件)**\n` +
+            models.map(m => formatQuota(m, m === currentModel)).join('\n')
+        )
+        .setFooter({ text: '※ 最新のQuota情報を取得しました' })
+        .setTimestamp();
+
+    const rows: ActionRowBuilder<ButtonBuilder>[] = [];
+    let currentRow = new ActionRowBuilder<ButtonBuilder>();
+
+    // Add buttons
+    for (const mName of models.slice(0, 24)) { // leave 1 spot for refresh max
+        if (currentRow.components.length === 5) {
+            rows.push(currentRow);
+            currentRow = new ActionRowBuilder<ButtonBuilder>();
+        }
+        const safeName = mName.length > 80 ? mName.substring(0, 77) + '...' : mName;
+        currentRow.addComponents(new ButtonBuilder()
+            .setCustomId(`model_btn_${mName}`)
+            .setLabel(safeName)
+            .setStyle(mName === currentModel ? ButtonStyle.Success : ButtonStyle.Secondary)
+        );
+    }
+
+    // Append Refresh btn
+    if (currentRow.components.length < 5) {
+        currentRow.addComponents(new ButtonBuilder()
+            .setCustomId('model_refresh_btn')
+            .setLabel('🔄 更新')
+            .setStyle(ButtonStyle.Primary)
+        );
+        rows.push(currentRow);
+    } else {
+        rows.push(currentRow);
+        if (rows.length < 5) {
+            const refreshRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('model_refresh_btn')
+                    .setLabel('🔄 更新')
+                    .setStyle(ButtonStyle.Primary)
+            );
+            rows.push(refreshRow);
+        }
+    }
+
+    await target.editReply({ content: '', embeds: [embed], components: rows });
 }
 
 /**
@@ -430,6 +659,8 @@ async function handleSlashInteraction(
     interaction: ChatInputCommandInteraction,
     handler: SlashCommandHandler,
     bridge: CdpBridge,
+    wsHandler: WorkspaceCommandHandler,
+    chatHandler: ChatCommandHandler,
 ): Promise<void> {
     const commandName = interaction.commandName;
 
@@ -444,9 +675,20 @@ async function handleSlashInteraction(
 
         case 'models': {
             const modelName = interaction.options.getString('name');
-            const args = modelName ? [modelName] : [];
-            const result = await handler.handleCommand('models', args);
-            await interaction.editReply({ content: result.message });
+            if (!modelName) {
+                await sendModelsUI(interaction, bridge);
+            } else {
+                if (!bridge.isReady) {
+                    await interaction.editReply({ content: '⚠️ CDPに未接続です。' });
+                    break;
+                }
+                const res = await bridge.cdp.setUiModel(modelName);
+                if (res.ok) {
+                    await interaction.editReply({ content: `✅ モデルを **${res.model}** に変更しました。` });
+                } else {
+                    await interaction.editReply({ content: res.error || '⚠️ モデルの変更に失敗しました。' });
+                }
+            }
             break;
         }
 
@@ -496,6 +738,29 @@ async function handleSlashInteraction(
 
         case 'screenshot': {
             await handleScreenshot(interaction, bridge);
+            break;
+        }
+
+        case 'workspace': {
+            await wsHandler.handleShow(interaction);
+            break;
+        }
+
+        case 'chat': {
+            const subcommand = interaction.options.getSubcommand();
+            switch (subcommand) {
+                case 'new':
+                    await chatHandler.handleNew(interaction);
+                    break;
+                case 'status':
+                    await chatHandler.handleStatus(interaction);
+                    break;
+                case 'list':
+                    await chatHandler.handleList(interaction);
+                    break;
+                default:
+                    await interaction.editReply({ content: `⚠️ 未知のサブコマンドです: ${subcommand}` });
+            }
             break;
         }
 

@@ -34,7 +34,13 @@ export function loadConfig(): AppConfig {
 
     // Default workspace base directory is ~/Code for instance
     const defaultDir = path.join(os.homedir(), 'Code');
-    const workspaceBaseDir = process.env.WORKSPACE_BASE_DIR || defaultDir;
+    const rawDir = process.env.WORKSPACE_BASE_DIR || defaultDir;
+    // チルダ(~)をホームディレクトリに展開（dotenvは自動展開しないため）
+    const workspaceBaseDir = rawDir.startsWith('~/')
+        ? path.join(os.homedir(), rawDir.slice(2))
+        : rawDir === '~'
+            ? os.homedir()
+            : rawDir;
 
     // ギルドID（スラッシュコマンドの即時反映用）
     const guildId = process.env.GUILD_ID || undefined;

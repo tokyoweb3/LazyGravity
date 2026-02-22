@@ -2,7 +2,6 @@ import {
     SlashCommandBuilder,
     REST,
     Routes,
-    ChatInputCommandInteraction,
 } from 'discord.js';
 import { AVAILABLE_MODELS } from '../services/modelService';
 import { AVAILABLE_MODES } from '../services/modeService';
@@ -21,12 +20,6 @@ const modeCommand = new SlashCommandBuilder()
             .setName('name')
             .setDescription('変更先のモード名')
             .setRequired(false)
-            .addChoices(
-                ...AVAILABLE_MODES.map((mode) => ({
-                    name: mode,
-                    value: mode,
-                }))
-            )
     );
 
 /** /models コマンド定義 */
@@ -38,13 +31,6 @@ const modelsCommand = new SlashCommandBuilder()
             .setName('name')
             .setDescription('変更先のモデル名')
             .setRequired(false)
-            .addChoices(
-                // Discord の choices は最大25個まで
-                ...AVAILABLE_MODELS.slice(0, 25).map((model) => ({
-                    name: model,
-                    value: model,
-                }))
-            )
     );
 
 /** /templates コマンド定義 */
@@ -101,12 +87,55 @@ const screenshotCommand = new SlashCommandBuilder()
     .setName('screenshot')
     .setDescription('Antigravityの現在の画面をキャプチャします');
 
+/** /cdp コマンド定義 */
+const cdpCommand = new SlashCommandBuilder()
+    .setName('cdp')
+    .setDescription('AntigravityとのCDP接続を管理します')
+    .addSubcommand((sub) =>
+        sub
+            .setName('connect')
+            .setDescription('Antigravityへ手動で接続します')
+    )
+    .addSubcommand((sub) =>
+        sub
+            .setName('status')
+            .setDescription('現在のCDP接続ステータスを表示します')
+    );
+
+/** /workspace コマンド定義 */
+const workspaceCommand = new SlashCommandBuilder()
+    .setName('workspace')
+    .setDescription('ワークスペース一覧を表示し、選択するとチャンネルを自動作成してバインドします');
+
+/** /chat コマンド定義 */
+const chatCommand = new SlashCommandBuilder()
+    .setName('chat')
+    .setDescription('Antigravityのチャットセッションを管理します')
+    .addSubcommand((sub) =>
+        sub
+            .setName('new')
+            .setDescription('新しいチャットセッションを開始します')
+    )
+    .addSubcommand((sub) =>
+        sub
+            .setName('status')
+            .setDescription('現在のチャットセッション情報を表示します')
+    )
+    .addSubcommand((sub) =>
+        sub
+            .setName('list')
+            .setDescription('同ワークスペースのチャットセッション一覧を表示します')
+    );
+
 /** 登録するコマンドの配列 */
 export const slashCommands = [
     modeCommand,
     modelsCommand,
     templatesCommand,
     screenshotCommand,
+    cdpCommand,
+    workspaceCommand,
+    chatCommand,
 ];
 
 /**

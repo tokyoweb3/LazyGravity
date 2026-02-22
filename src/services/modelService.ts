@@ -4,25 +4,21 @@
  * 注意: Antigravityのバージョンアップに伴いモデルは変更される可能性があります
  */
 export const AVAILABLE_MODELS = [
-    'claude-3.5-sonnet',
-    'claude-3.5-haiku',
-    'cursor-small',
-    'gpt-4o',
-    'gpt-4o-mini',
-    'o1-mini',
-    'o1-preview',
-    'o3-mini',
-    'claude-3-opus',
     'gemini-2.5-pro',
+    'gemini-2.5-flash',
+    'gemini-2.0-flash-thinking-exp',
+    'gemini-2.0-pro-exp-02-05',
     'gemini-2.0-flash',
-    'gpt-4.1',
-    'gpt-4.1-mini',
-    'deepseek-r1',
-    'deepseek-v3',
+    'gemini-1.5-pro',
+    'gemini-1.5-flash',
+    'claude-3-5-sonnet-20241022',
+    'claude-3.5-sonnet',
+    'gpt-4o',
+    'o3-mini'
 ] as const;
 
 /** デフォルトのLLMモデル */
-export const DEFAULT_MODEL: Model = 'claude-3.5-sonnet';
+export const DEFAULT_MODEL: Model = 'gemini-2.5-pro';
 
 /** モデルの型定義 */
 export type Model = typeof AVAILABLE_MODELS[number];

@@ -450,6 +450,67 @@ export class CdpService extends EventEmitter {
     }
 
     /**
+     * AntigravityのUIから利用可能なモデル一覧を動的に取得する
+     */
+    async getUiModels(): Promise<string[]> {
+        if (!this.isConnectedFlag || !this.ws) {
+            throw new Error('CDPに接続されていません。');
+        }
+
+        const expression = `(async () => {
+            return Array.from(document.querySelectorAll('div.cursor-pointer'))
+                .map(e => ({text: (e.textContent || '').trim().replace(/New$/, ''), class: e.className}))
+                .filter(e => e.class.includes('px-2 py-1 flex items-center justify-between') || e.text.includes('Gemini') || e.text.includes('GPT') || e.text.includes('Claude'))
+                .map(e => e.text);
+        })()`;
+
+        try {
+            const contextId = this.getPrimaryContextId();
+            const callParams: any = {
+                expression,
+                returnByValue: true,
+                awaitPromise: true,
+            };
+            if (contextId !== null) callParams.contextId = contextId;
+
+            const res = await this.call('Runtime.evaluate', callParams);
+            const value = res?.result?.value;
+            if (Array.isArray(value) && value.length > 0) {
+                // remove duplicates
+                return Array.from(new Set(value));
+            }
+            return [];
+        } catch (error: any) {
+            console.error('Failed to get UI models:', error);
+            return [];
+        }
+    }
+
+    /**
+     * AntigravityのUIから現在選択されているモデルを取得する
+     */
+    async getCurrentModel(): Promise<string | null> {
+        if (!this.isConnectedFlag || !this.ws) {
+            return null;
+        }
+        const expression = `(() => {
+            return Array.from(document.querySelectorAll('div.cursor-pointer'))
+                .find(e => e.className.includes('px-2 py-1 flex items-center justify-between') && e.className.includes('bg-gray-500/20'))
+                ?.textContent?.trim().replace(/New$/, '') || null;
+        })()`;
+        try {
+            const contextId = this.getPrimaryContextId();
+            const res = await this.call('Runtime.evaluate', {
+                expression, returnByValue: true, awaitPromise: true,
+                contextId: contextId || undefined
+            });
+            return res?.result?.value || null;
+        } catch (e: any) {
+            return null;
+        }
+    }
+
+    /**
      * AntigravityのUI上のモデルドロップダウンを操作し、指定モデルに切り替える。
      * (Step 9: モデル・モード切替のUI同期)
      *
@@ -489,7 +550,7 @@ export class CdpService extends EventEmitter {
             '      }',
             '    }',
             '  }',
-            '  const candidates = Array.from(document.querySelectorAll("button, [role=\\"option\\"], [role=\\"menuitem\\"], option"));',
+            '  const candidates = Array.from(document.querySelectorAll("button, [role=\\"option\\"], [role=\\"menuitem\\"], option, div.cursor-pointer"));',
             '  const modelEl = candidates.find(el => {',
             '    const t = (el.textContent || el.getAttribute("value") || "").trim().toLowerCase();',
             '    return t === targetModel.toLowerCase() || t.includes(targetModel.toLowerCase());',

@@ -12,6 +12,21 @@ export interface EnsureChannelResult {
     created: boolean;
 }
 
+/**
+ * カテゴリ確保の結果
+ */
+export interface EnsureCategoryResult {
+    categoryId: string;
+    created: boolean;
+}
+
+/**
+ * セッションチャンネル作成の結果
+ */
+export interface CreateSessionChannelResult {
+    channelId: string;
+}
+
 /** カテゴリ名のプレフィックス絵文字 */
 const CATEGORY_PREFIX = '🗂️-';
 /** カテゴリ配下のデフォルトチャンネル名 */
@@ -25,47 +40,75 @@ const DEFAULT_CHANNEL_NAME = 'general';
 export class ChannelManager {
 
     /**
-     * ワークスペースパスに対応するカテゴリとテキストチャンネルを確保する。
+     * ワークスペースパスに対応するカテゴリを確保する。
      * 存在しなければ新規作成、存在すれば既存のIDを返す。
-     *
-     * @param guild - 操作対象のDiscordギルド
-     * @param workspacePath - ワークスペースの相対パス（例: "frontend", "backend/api"）
-     * @returns カテゴリID, チャンネルID, 作成フラグ
-     * @throws ワークスペースパスが空の場合
-     * @throws Discord APIがエラーを返した場合
      */
-    public async ensureChannel(guild: Guild, workspacePath: string): Promise<EnsureChannelResult> {
-        // 入力バリデーション
+    public async ensureCategory(guild: Guild, workspacePath: string): Promise<EnsureCategoryResult> {
         if (!workspacePath || workspacePath.trim() === '') {
             throw new Error('ワークスペースパスが指定されていません');
         }
 
-        // カテゴリ名をサニタイズ
         const sanitizedName = this.sanitizeCategoryName(workspacePath);
         const categoryName = `${CATEGORY_PREFIX}${sanitizedName}`;
 
-        // 既存のカテゴリを検索
         const existingCategory = guild.channels.cache.find(
             (ch) => ch.type === ChannelType.GuildCategory && ch.name === categoryName
         );
 
-        let categoryId: string;
-        let created = false;
-
         if (existingCategory) {
-            // 既存カテゴリが見つかった
-            categoryId = existingCategory.id;
-        } else {
-            // カテゴリを新規作成
-            const newCategory = await guild.channels.create({
-                name: categoryName,
-                type: ChannelType.GuildCategory,
-            });
-            categoryId = newCategory.id;
-            created = true;
+            return { categoryId: existingCategory.id, created: false };
         }
 
-        // 既存のテキストチャンネルを検索（カテゴリ配下）
+        const newCategory = await guild.channels.create({
+            name: categoryName,
+            type: ChannelType.GuildCategory,
+        });
+
+        return { categoryId: newCategory.id, created: true };
+    }
+
+    /**
+     * カテゴリ配下に新しいセッションチャンネルを作成する。
+     */
+    public async createSessionChannel(
+        guild: Guild,
+        categoryId: string,
+        channelName: string,
+    ): Promise<CreateSessionChannelResult> {
+        const newChannel = await guild.channels.create({
+            name: channelName,
+            type: ChannelType.GuildText,
+            parent: categoryId,
+        });
+
+        return { channelId: newChannel.id };
+    }
+
+    /**
+     * チャンネル名をリネームする。
+     */
+    public async renameChannel(guild: Guild, channelId: string, newName: string): Promise<void> {
+        const channel = guild.channels.cache.get(channelId);
+        if (!channel) {
+            throw new Error(`チャンネル ${channelId} が見つかりません`);
+        }
+
+        await channel.setName(newName);
+    }
+
+    /**
+     * ワークスペースパスに対応するカテゴリとテキストチャンネルを確保する。
+     * 後方互換のため維持。内部で ensureCategory + createSessionChannel('general') を呼ぶ。
+     */
+    public async ensureChannel(guild: Guild, workspacePath: string): Promise<EnsureChannelResult> {
+        if (!workspacePath || workspacePath.trim() === '') {
+            throw new Error('ワークスペースパスが指定されていません');
+        }
+
+        const categoryResult = await this.ensureCategory(guild, workspacePath);
+        const categoryId = categoryResult.categoryId;
+
+        // 既存のdefaultチャンネルを検索（カテゴリ配下）
         const existingTextChannel = guild.channels.cache.find(
             (ch) =>
                 ch.type === ChannelType.GuildText &&
@@ -75,7 +118,6 @@ export class ChannelManager {
         );
 
         if (existingTextChannel) {
-            // 既存のテキストチャンネルが見つかった => 作成不要
             return {
                 categoryId,
                 channelId: existingTextChannel.id,
@@ -83,49 +125,34 @@ export class ChannelManager {
             };
         }
 
-        // テキストチャンネルを新規作成
-        const newTextChannel = await guild.channels.create({
-            name: DEFAULT_CHANNEL_NAME,
-            type: ChannelType.GuildText,
-            parent: categoryId,
-        });
+        const sessionResult = await this.createSessionChannel(guild, categoryId, DEFAULT_CHANNEL_NAME);
 
         return {
             categoryId,
-            channelId: newTextChannel.id,
+            channelId: sessionResult.channelId,
             created: true,
         };
     }
 
     /**
+     * テキストをDiscordチャンネル名に適した形式にサニタイズする（公開ユーティリティ）。
+     */
+    public sanitizeChannelName(name: string): string {
+        return this.sanitizeCategoryName(name);
+    }
+
+    /**
      * ワークスペースパスをDiscordカテゴリ名として使用可能な形式にサニタイズする。
-     *
-     * - 小文字に変換
-     * - 末尾のスラッシュを除去
-     * - スラッシュをハイフンに変換
-     * - Discordチャンネル名で使えない文字を除去
-     * - 連続するハイフンを1つにまとめる
-     * - 100文字に切り詰め
-     *
-     * @param name - サニタイズ前のワークスペースパス
-     * @returns サニタイズ後の文字列
      */
     public sanitizeCategoryName(name: string): string {
         let sanitized = name
-            // 小文字に変換
             .toLowerCase()
-            // 末尾のスラッシュを除去
             .replace(/\/+$/, '')
-            // スラッシュをハイフンに変換
             .replace(/\//g, '-')
-            // Discordチャンネル名では英数字、ハイフン、アンダースコアのみ許可
             .replace(/[^a-z0-9\-_\u3000-\u303f\u3040-\u309f\u30a0-\u30ff\uff00-\uff9f\u4e00-\u9faf]/g, '-')
-            // 連続するハイフンを1つにまとめる
             .replace(/-{2,}/g, '-')
-            // 先頭・末尾のハイフンを除去
             .replace(/^-+|-+$/g, '');
 
-        // 100文字制限
         if (sanitized.length > 100) {
             sanitized = sanitized.substring(0, 100);
         }
