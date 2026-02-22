@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+
+# Environment (secrets)
+.env
+.env.local
+.env.*.local
+
+# Database (runtime data)
+*.db
+*.db-journal
+
+# Build output
+dist/
+build/
+*.js.map
+*.d.ts
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Temporary files
+tmp_*
+*.tmp
+
+# Personal / internal docs (not for public)
+plans/
+.gemini/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Coverage
+coverage/
