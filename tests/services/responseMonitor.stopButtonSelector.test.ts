@@ -34,6 +34,9 @@ function createScope(button: MockButton, extraControls: MockButton[] = [], input
     const controls = [button, ...extraControls];
     return {
         querySelector: (selector: string) => {
+            if (selector.includes('input-send-button-cancel-tooltip')) {
+                return controls.find((control) => (control.getAttribute('data-tooltip-id') || '') === 'input-send-button-cancel-tooltip') || null;
+            }
             if (selector.includes('Stop generating')) {
                 return controls.find((control) => (control.getAttribute('aria-label') || '') === 'Stop generating') || null;
             }
@@ -117,6 +120,21 @@ describe('ResponseMonitor stop selector robustness', () => {
 
         expect(result.ok).toBe(true);
         expect(button.click).toHaveBeenCalledTimes(1);
+    });
+
+    it('data-tooltip-idベースのキャンセルボタンを生成中として検出できること', () => {
+        const button: MockButton = {
+            offsetParent: null,
+            click: jest.fn(),
+            getAttribute: (name: string) => (name === 'data-tooltip-id' ? 'input-send-button-cancel-tooltip' : null),
+            querySelector: () => null,
+            getBoundingClientRect: () => ({ top: 420, left: 300, width: 120, height: 32 }),
+        };
+
+        const panel = createScope(button);
+        const isStopVisible = runStopSelector(panel);
+
+        expect(isStopVisible).toBe(true);
     });
 
     it('role=buttonが無い赤い四角アイコンでも停止操作できること', () => {
