@@ -820,7 +820,8 @@ export class ResponseMonitor {
         logger.info(
             `[ResponseMonitor] start: pollInterval=${this.pollIntervalMs}ms maxDuration=${this.maxDurationMs}ms ` +
             `stopGoneConfirm=${this.stopButtonGoneConfirmCount} completionStability=${this.completionStabilityMs}ms ` +
-            `textStability=${this.textStabilityCompleteMs}ms noUpdateTimeout=${this.noUpdateTimeoutMs}ms ` +
+            `textStability=${this.textStabilityCompleteMs}ms noTextDelay=${this.noTextCompletionDelayMs}ms ` +
+            `noUpdateTimeout=${this.noUpdateTimeoutMs}ms ` +
             `networkDelay=${this.networkCompleteDelayMs}ms`,
         );
 
@@ -1381,6 +1382,31 @@ export class ResponseMonitor {
                     await this.invokeCompleteCallback(finalText, 'text-stability');
                     return;
                 }
+            }
+
+            // ───────────────────────────────────────────────────
+            // 完了判定パス 2b (本文未取得フォールバック): noTextCompletionDelay
+            // 本文抽出に失敗しているが、生成開始シグナルは観測済みで、
+            // 活動表示も消えて進捗シグナルが一定時間静穏なら完了とみなす。
+            // ───────────────────────────────────────────────────
+            const noTextQuietThresholdMs = Math.max(this.noTextCompletionDelayMs, this.pollIntervalMs * 2);
+            if (
+                this.noTextCompletionDelayMs > 0 &&
+                this.generationStarted &&
+                this.activitySeen &&
+                !hasAnyText &&
+                !isGenerating &&
+                signalStalledFor >= noTextQuietThresholdMs
+            ) {
+                logger.info(
+                    `[ResponseMonitor] 本文未取得のまま進捗静穏 ${signalStalledFor}ms ` +
+                    `（閾値 ${noTextQuietThresholdMs}ms）→ 完了と判定`,
+                );
+                const finalText = this.lastText ?? '';
+                this.setPhase('complete', finalText);
+                await this.stop();
+                await this.invokeCompleteCallback(finalText, 'no-text-stability');
+                return;
             }
 
             // ───────────────────────────────────────────────────

@@ -883,6 +883,84 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     });
 
     // ──────────────────────────────────────────────────────
+    // テスト 18d: 本文未取得かつ活動が静穏化したら noTextCompletionDelay で完了すること
+    // ──────────────────────────────────────────────────────
+    it('本文未取得 + activity消失後は noTextCompletionDelayMs で complete すること', async () => {
+        const onComplete = jest.fn();
+
+        mockCdpService.call.mockResolvedValueOnce({ result: { value: null } }); // baseline
+
+        // poll1-2: activityあり（生成中シグナル）
+        mockPollResult(mockCdpService, false, null, ['Analyzed 1 file']);
+        mockPollResult(mockCdpService, false, null, ['Analyzed 2 files']);
+        // poll3-4: activity消失・本文未取得
+        mockPollResult(mockCdpService, false, null, []);
+        mockPollResult(mockCdpService, false, null, []);
+
+        monitor = new ResponseMonitor({
+            cdpService: mockCdpService,
+            pollIntervalMs: 500,
+            noTextCompletionDelayMs: 900,
+            textStabilityCompleteMs: 0,
+            noUpdateTimeoutMs: 60000,
+            onComplete,
+        });
+        await monitor.start();
+
+        await jest.advanceTimersByTimeAsync(500);  // poll1
+        expect(onComplete).not.toHaveBeenCalled();
+
+        await jest.advanceTimersByTimeAsync(500);  // poll2
+        expect(onComplete).not.toHaveBeenCalled();
+
+        await jest.advanceTimersByTimeAsync(500);  // poll3
+        expect(onComplete).not.toHaveBeenCalled();
+
+        await jest.advanceTimersByTimeAsync(500);  // poll4
+        expect(onComplete).toHaveBeenCalledWith('');
+        expect(monitor.getPhase()).toBe('complete');
+    });
+
+    // ──────────────────────────────────────────────────────
+    // テスト 18e: 本文未取得で activity文言が残存しても更新停止なら noTextCompletionDelay で完了
+    // ──────────────────────────────────────────────────────
+    it('本文未取得 + activity残存(更新なし)でも noTextCompletionDelayMs で complete すること', async () => {
+        const onComplete = jest.fn();
+
+        mockCdpService.call.mockResolvedValueOnce({ result: { value: null } }); // baseline
+
+        // poll1: activityあり（生成開始）
+        mockPollResult(mockCdpService, false, null, ['Analyzed 1 file']);
+        // poll2-4: 同じactivityが残存（更新は無い）
+        mockPollResult(mockCdpService, false, null, ['Analyzed 1 file']);
+        mockPollResult(mockCdpService, false, null, ['Analyzed 1 file']);
+        mockPollResult(mockCdpService, false, null, ['Analyzed 1 file']);
+
+        monitor = new ResponseMonitor({
+            cdpService: mockCdpService,
+            pollIntervalMs: 500,
+            noTextCompletionDelayMs: 1200,
+            textStabilityCompleteMs: 0,
+            noUpdateTimeoutMs: 60000,
+            onComplete,
+        });
+        await monitor.start();
+
+        await jest.advanceTimersByTimeAsync(500);  // poll1
+        expect(onComplete).not.toHaveBeenCalled();
+
+        await jest.advanceTimersByTimeAsync(500);  // poll2
+        expect(onComplete).not.toHaveBeenCalled();
+
+        await jest.advanceTimersByTimeAsync(500);  // poll3
+        expect(onComplete).not.toHaveBeenCalled();
+
+        await jest.advanceTimersByTimeAsync(500);  // poll4
+        expect(onComplete).toHaveBeenCalledWith('');
+        expect(monitor.getPhase()).toBe('complete');
+    });
+
+    // ──────────────────────────────────────────────────────
     // テスト 18: stop()でネットワークリスナーが解除されること
     // ──────────────────────────────────────────────────────
     it('stop()呼び出し時にネットワークイベントリスナーが解除されること', async () => {
