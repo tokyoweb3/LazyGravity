@@ -218,7 +218,6 @@ export const RESPONSE_SELECTORS = {
         };
 
         const stopSelectors = [
-            '[data-tooltip-id="input-send-button-cancel-tooltip"]',
             'button[aria-label="Stop generating"]',
             'button[aria-label*="Stop" i]',
             '[role="button"][aria-label*="Stop" i]',
@@ -442,7 +441,6 @@ export const RESPONSE_SELECTORS = {
         }
 
         const stopSelectors = [
-            '[data-tooltip-id="input-send-button-cancel-tooltip"]',
             'button[aria-label="Stop generating"]',
             'button[aria-label*="Stop" i]',
             '[role="button"][aria-label*="Stop" i]',
