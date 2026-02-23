@@ -37,7 +37,17 @@ jest.mock('discord.js', () => {
         },
         SlashCommandBuilder: jest.fn().mockImplementation(() => {
             const builder: any = {};
-            const methods = ['setName', 'setDescription', 'addStringOption', 'addSubcommand', 'addChoices', 'setRequired'];
+            const methods = [
+                'setName',
+                'setDescription',
+                'addStringOption',
+                'addIntegerOption',
+                'addSubcommand',
+                'addChoices',
+                'setRequired',
+                'setMinValue',
+                'setMaxValue'
+            ];
             for (const m of methods) {
                 builder[m] = jest.fn().mockImplementation((fnOrVal) => {
                     if (typeof fnOrVal === 'function') {
@@ -96,6 +106,18 @@ jest.mock('../src/services/cdpService', () => {
     };
 });
 
+jest.mock('../src/services/promptDispatcher', () => {
+    return {
+        PromptDispatcher: jest.fn().mockImplementation(() => {
+            return {
+                send: jest.fn().mockImplementation(async (req: any) => {
+                    await req.cdp.injectMessage(req.prompt);
+                }),
+            };
+        }),
+    };
+});
+
 jest.mock('../src/services/approvalDetector', () => {
     return {
         ApprovalDetector: jest.fn().mockImplementation(() => {
@@ -148,7 +170,7 @@ describe('Bot E2E Flow', () => {
 
         expect(mockReply).toHaveBeenCalledWith({
             content: expect.stringMatching(/権限がありません/),
-            ephemeral: true,
+            flags: 64,
         });
     });
 

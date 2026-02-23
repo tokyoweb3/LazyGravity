@@ -72,6 +72,11 @@ describe('CdpService - メッセージ注入 (Step 5)', () => {
                     return;
                 }
 
+                if (req.method === 'Network.enable') {
+                    ws.send(JSON.stringify({ id: req.id, result: {} }));
+                    return;
+                }
+
                 if (req.method === 'Runtime.evaluate') {
                     const result = evaluateResponder
                         ? evaluateResponder(req)

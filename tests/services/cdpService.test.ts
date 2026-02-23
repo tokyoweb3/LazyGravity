@@ -59,6 +59,11 @@ describe('CdpService - Target Detection & Connection', () => {
                     }));
                     // Reply to the enable request
                     ws.send(JSON.stringify({ id: req.id, result: {} }));
+                    return;
+                }
+
+                if (req.method === 'Network.enable') {
+                    ws.send(JSON.stringify({ id: req.id, result: {} }));
                 }
             });
         });
