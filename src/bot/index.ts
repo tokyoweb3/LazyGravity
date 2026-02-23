@@ -235,7 +235,7 @@ const PHASE_ICONS = {
 const MAX_INBOUND_IMAGE_ATTACHMENTS = 4;
 const MAX_OUTBOUND_GENERATED_IMAGES = 4;
 const IMAGE_EXT_PATTERN = /\.(png|jpe?g|webp|gif|bmp)$/i;
-const TEMP_IMAGE_DIR = path.join(os.tmpdir(), 'antigravity-discord-claw-images');
+const TEMP_IMAGE_DIR = path.join(os.tmpdir(), 'lazy-gravity-images');
 
 interface InboundImageAttachment {
     localPath: string;
@@ -854,7 +854,7 @@ async function sendPromptToAntigravity(
             maxDurationMs: 300000, // 5分タイムアウト
             stopButtonGoneConfirmCount: 1, // Stop消失を1回確認で完了判定へ
             completionStabilityMs: 10000, // GitHub版に合わせて10秒安定で完了
-            noUpdateTimeoutMs: 60000, // GitHub版に合わせて60秒更新停止でフォールバック完了
+            noUpdateTimeoutMs: 180000, // 3分更新停止でフォールバック完了（長文生成対応）
             noTextCompletionDelayMs: 15000, // 本文未取得時の早すぎる完了判定を抑制
 
             onProgress: (text) => {
@@ -1671,7 +1671,7 @@ async function handleSlashInteraction(
     switch (commandName) {
         case 'help': {
             const embed = new EmbedBuilder()
-                .setTitle('📖 AntigravityClaw コマンド一覧')
+                .setTitle('📖 LazyGravity コマンド一覧')
                 .setColor(0x5865F2)
                 .setDescription('Antigravity を Discord から操作するためのコマンドです。')
                 .addFields(

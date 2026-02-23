@@ -1,11 +1,11 @@
 # Architecture & Core Design
 
 ## 1. システム全体構成 / System Overview
-AntigravityClaw は外部の中間サーバーを経由せず、ユーザーのローカルPC内で完結してDiscord API（WSS経由）とやり取りします。
+LazyGravity は外部の中間サーバーを経由せず、ユーザーのローカルPC内で完結してDiscord API（WSS経由）とやり取りします。
 
 ```mermaid
 graph TD
-    A[📱 Discord アプリ (スマホ/PC)] -->|WebSocket (Gateway)| B[🔒 Local PC (AntigravityClaw Bot)]
+    A[📱 Discord アプリ (スマホ/PC)] -->|WebSocket (Gateway)| B[🔒 Local PC (LazyGravity Bot)]
     B -->|REST API| A
     
     subgraph Local Environment (Your PC)
@@ -69,7 +69,8 @@ LLMエージェントへの指示と実行結果を、Discordの「リプライ�
 - **リプライ(Reply)による後続指示:**
   - ユーザーがBotの出力したEmbedに対して「返信」を行った場合、Botは親メッセージに含まれるメタデータ（あるいはSQLiteから引いた文脈）を元に、「続きから作業している」状態として元のディレクトリとコンテキストをAntigravityに渡す。
 
-## 5. 定期実行タスク (Cron / Scheduling)
+## 5. 定期実行タスク (Cron / Scheduling) **※将来実装予定 (Coming Soon)**
+- コードレベルでのバックエンドは実装が進んでいますが、Discordコマンドとの接合は今後のフェーズで対応予定です。
 - ローカルPCの `node-cron` を使用。
 - SQLiteでスケジュール設定を永続化（`id`, `cron_expression`, `prompt`, `workspace_id`, `status`）。
 - Bot起動時にSQLiteから定義を読み込み、オンメモリのnode-cronに再スケジュールする機能が必要。

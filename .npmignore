@@ -1,0 +1,29 @@
+# Test files
+tests/
+coverage/
+jest.config.js
+tsconfig.json
+
+# Development & Documentation
+plans/
+docs/assets/
+.github/
+
+# Logs & Environment
+*.log
+logs/
+.env
+.env.*
+!.env.example
+
+# Local Data
+antigravity.db
+*.sqlite
+*.sqlite3
+
+# Scripts
+start_antigravity_mac.command
+start_antigravity_win.bat
+
+# Misc
+.DS_Store

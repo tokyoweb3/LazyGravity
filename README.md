@@ -1,6 +1,10 @@
-# 🐾 AntigravityClaw (仮)
+# 🐾 LazyGravity (仮)
 
-**AntigravityClaw** は、どこからでもスマホのDiscordアプリを使って、自宅PCで稼働する AI コーディング起動ツール (Antigravity 等) を遠隔操作・対話できるローカル完結型のセキュアなDiscord Botです。
+<p align="center">
+  <img src="docs/assets/LazyGravity.png" alt="LazyGravity Logo" width="300" />
+</p>
+
+**LazyGravity** は、どこからでもスマホのDiscordアプリを使って、自宅PCで稼働する AI コーディング起動ツール (Antigravity 等) を遠隔操作・対話できるローカル完結型のセキュアなDiscord Botです。
 
 外出先からの「あの件、直しておいて」「新しい機能の設計を始めて」といった自然言語の依頼を、自宅PCのマシンパワーとローカル環境で直接・安全に実行し、結果をDiscordで受け取ることができます。
 
@@ -31,8 +35,8 @@
 ## 🚀 使い方とコマンド一覧
 
 ### 🪄 メッセージでの自然言語指示
-チャンネル内でBotに向けてメンション(`@AntigravityClaw`)して自然言語で指示を出すだけです。
-> `@AntigravityClaw src/components 配下をリファクタリングして。昨日のスクショみたいなレイアウトにして` (画像添付)
+チャンネル内でBotに向けてメンション(`@LazyGravity`)して自然言語で指示を出すだけです。
+> `@LazyGravity src/components 配下をリファクタリングして。昨日のスクショみたいなレイアウトにして` (画像添付)
 
 ### 💻 スラッシュコマンド（クイックアクション）
 
@@ -87,8 +91,8 @@ Antigravity本体を再起動した場合は、Botが自動でCDPの再接続を
 
 1. **インストール & 起動**
    ```bash
-   git clone https://github.com/yourusername/antigravity-claw.git
-   cd antigravity-claw
+   git clone https://github.com/yourusername/lazy-gravity.git
+   cd lazy-gravity
    npm install
    ```
 
@@ -106,7 +110,7 @@ Antigravity本体を再起動した場合は、Botが自動でCDPの再接続を
 
 3. **Antigravityをデバッグモードで起動（CDP接続に必要）**
 
-   AntigravityClawはChrome DevTools Protocol (CDP) を使ってAntigravityのUIを直接操作します。
+   LazyGravityはChrome DevTools Protocol (CDP) を使ってAntigravityのUIを直接操作します。
    そのため、**Antigravity（VSCode/Electron系）をリモートデバッグポート付きで起動**する必要があります。
 
    毎回コマンドを打つのは手間なため、**リポジトリ内に用意されている起動用スクリプトをご利用ください**。
@@ -158,10 +162,10 @@ Antigravity本体を再起動した場合は、Botが自動でCDPの再接続を
 
 ## 🔗 CDP接続の仕組み
 
-AntigravityClawは以下のようにAntigravityのUIへ接続します:
+LazyGravityは以下のようにAntigravityのUIへ接続します:
 
 ```
-Discord (スマホ) ←→ AntigravityClaw Bot ←→ CDP (WebSocket) ←→ Antigravity UI
+Discord (スマホ) ←→ LazyGravity Bot ←→ CDP (WebSocket) ←→ Antigravity UI
 ```
 
 1. Botがデバッグポート（デフォルト: 9222）をスキャンし、Antigravityのターゲットを自動検出

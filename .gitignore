@@ -34,12 +34,12 @@ tmp_*
 # Personal / internal docs (not for public)
 plans/
 .gemini/
+.claude/
 
 # Debug / inspection scripts (development only)
 inspect_dom.js
 inspect_dom.ts
 scripts/
-HARVEST FLOW
 
 # Logs
 *.log
