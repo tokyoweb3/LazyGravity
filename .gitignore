@@ -28,9 +28,18 @@ Thumbs.db
 tmp_*
 *.tmp
 
+# Bot lock file (duplicate start prevention)
+.bot.lock
+
 # Personal / internal docs (not for public)
 plans/
 .gemini/
+
+# Debug / inspection scripts (development only)
+inspect_dom.js
+inspect_dom.ts
+scripts/
+HARVEST FLOW
 
 # Logs
 *.log

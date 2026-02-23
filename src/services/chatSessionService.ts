@@ -8,148 +8,98 @@ export interface ChatSessionInfo {
     hasActiveChat: boolean;
 }
 
-export interface ChatSessionServiceOptions {
-    cdpService: CdpService;
-}
-
-/**
- * Antigravity UIの「新規チャット」ボタンをCDPでクリックするスクリプト。
- *
- * 候補セレクタ:
- *   1. aria-label による直接検索
- *   2. ボタンテキスト検索
- *   3. SVGアイコンベース（lucide-plus, lucide-message-square-plus）
- */
-const START_NEW_CHAT_SCRIPT = `(async () => {
-    // 1. aria-label ベース
-    const ariaSelectors = [
-        'button[aria-label="New Chat"]',
-        'button[aria-label="新しいチャット"]',
-        'button[aria-label="New Conversation"]',
-    ];
-    for (const sel of ariaSelectors) {
-        const btn = document.querySelector(sel);
-        if (btn && btn.offsetParent !== null) {
-            btn.click();
-            await new Promise(r => setTimeout(r, 300));
-            return { ok: true, method: 'aria-label', selector: sel };
-        }
-    }
-
-    // 2. ボタンテキスト検索
-    const textPatterns = ['new chat', 'new conversation', '新しいチャット', '新規チャット'];
-    const allButtons = Array.from(document.querySelectorAll('button'));
-    for (const btn of allButtons) {
-        if (!btn.offsetParent) continue;
-        const text = (btn.textContent || '').trim().toLowerCase();
-        if (textPatterns.some(p => text.includes(p))) {
-            btn.click();
-            await new Promise(r => setTimeout(r, 300));
-            return { ok: true, method: 'text', text };
-        }
-    }
-
-    // 3. SVGアイコンベース
-    const svgClasses = ['lucide-plus', 'lucide-message-square-plus', 'lucide-square-pen'];
-    for (const cls of svgClasses) {
-        const svg = document.querySelector('svg.' + cls);
-        if (!svg) continue;
-        const btn = svg.closest('button');
-        if (btn && btn.offsetParent !== null) {
-            btn.click();
-            await new Promise(r => setTimeout(r, 300));
-            return { ok: true, method: 'svg-icon', class: cls };
-        }
-    }
-
-    return { ok: false, error: '新規チャットボタンが見つかりませんでした' };
+/** 新規チャットボタンの状態を取得するスクリプト */
+const GET_NEW_CHAT_BUTTON_SCRIPT = `(() => {
+    const btn = document.querySelector('[data-tooltip-id="new-conversation-tooltip"]');
+    if (!btn) return { found: false };
+    const cursor = window.getComputedStyle(btn).cursor;
+    const rect = btn.getBoundingClientRect();
+    return {
+        found: true,
+        enabled: cursor === 'pointer',
+        cursor,
+        x: Math.round(rect.x + rect.width / 2),
+        y: Math.round(rect.y + rect.height / 2),
+    };
 })()`;
 
 /**
- * 現在のチャット情報を取得するスクリプト。
- * タイトル要素やアクティブなチャットの有無をDOMから推定する。
+ * Cascade panel ヘッダーからチャットタイトルを取得するスクリプト。
+ * ヘッダー内の text-ellipsis クラスを持つ div がタイトル要素。
  */
-const GET_SESSION_INFO_SCRIPT = `(() => {
-    // タイトル要素の候補
-    const titleSelectors = [
-        '[data-testid="chat-title"]',
-        '.chat-title',
-        'h1',
-        'h2',
-        '[aria-label="Chat title"]',
-    ];
-
-    let title = '';
-    for (const sel of titleSelectors) {
-        const el = document.querySelector(sel);
-        if (el && el.textContent) {
-            const t = el.textContent.trim();
-            if (t.length > 0 && t.length < 200) {
-                title = t;
-                break;
-            }
-        }
-    }
-
-    // チャットメッセージの存在確認
-    const messageSelectors = [
-        '[data-testid="message"]',
-        '.message',
-        '.chat-message',
-        '[role="log"] > div',
-    ];
-    let hasActiveChat = false;
-    for (const sel of messageSelectors) {
-        if (document.querySelectorAll(sel).length > 0) {
-            hasActiveChat = true;
-            break;
-        }
-    }
-
-    // テキストエディタの存在でもアクティブ判定
-    if (!hasActiveChat) {
-        const editor = document.querySelector('div[role="textbox"]:not(.xterm-helper-textarea)');
-        if (editor && editor.offsetParent !== null) {
-            hasActiveChat = true;
-        }
-    }
-
+const GET_CHAT_TITLE_SCRIPT = `(() => {
+    const panel = document.querySelector('.antigravity-agent-side-panel');
+    if (!panel) return { title: '', hasActiveChat: false };
+    const header = panel.querySelector('div[class*="border-b"]');
+    if (!header) return { title: '', hasActiveChat: false };
+    const titleEl = header.querySelector('div[class*="text-ellipsis"]');
+    const title = titleEl ? (titleEl.textContent || '').trim() : '';
+    // "Agent" はデフォルトの空チャットタイトル
+    const hasActiveChat = title.length > 0 && title !== 'Agent';
     return { title: title || '(無題)', hasActiveChat };
 })()`;
 
 /**
  * Antigravity上のチャットセッションをCDP経由で操作するサービス。
+ *
+ * CDP依存はメソッド引数で受け取る（接続プール対応）。
  */
 export class ChatSessionService {
-    private cdpService: CdpService;
-
-    constructor(options: ChatSessionServiceOptions) {
-        this.cdpService = options.cdpService;
-    }
-
     /**
      * Antigravity UIで新しいチャットセッションを開始する。
+     *
+     * 戦略:
+     *   1. 新規チャットボタンの状態を確認
+     *   2. cursor: not-allowed → 既に空チャット（何もしない）
+     *   3. cursor: pointer → Input.dispatchMouseEvent で座標クリック
+     *   4. ボタンが見つからない場合 → エラー
+     *
+     * @param cdpService 使用するCdpServiceインスタンス
      * @returns 成功時 { ok: true }, 失敗時 { ok: false, error: string }
      */
-    async startNewChat(): Promise<{ ok: boolean; error?: string }> {
+    async startNewChat(cdpService: CdpService): Promise<{ ok: boolean; error?: string }> {
         try {
-            const contextId = this.cdpService.getPrimaryContextId();
-            const callParams: Record<string, unknown> = {
-                expression: START_NEW_CHAT_SCRIPT,
-                returnByValue: true,
-                awaitPromise: true,
-            };
-            if (contextId !== null) {
-                callParams.contextId = contextId;
+            const contexts = cdpService.getContexts();
+            if (contexts.length === 0) {
+                return { ok: false, error: 'コンテキストがありません' };
             }
 
-            const result = await this.cdpService.call('Runtime.evaluate', callParams);
-            const value = result?.result?.value;
+            // 任意のコンテキストでボタン状態を取得
+            const btnState = await this.getNewChatButtonState(cdpService, contexts);
 
-            if (value?.ok) {
+            if (!btnState.found) {
+                return { ok: false, error: '新規チャットボタンが見つかりませんでした' };
+            }
+
+            // cursor: not-allowed → 既に空チャット（新規作成不要）
+            if (!btnState.enabled) {
                 return { ok: true };
             }
-            return { ok: false, error: value?.error || '新規チャットの開始に失敗しました' };
+
+            // cursor: pointer → CDP Input API で座標クリック
+            await cdpService.call('Input.dispatchMouseEvent', {
+                type: 'mouseMoved', x: btnState.x, y: btnState.y,
+            });
+            await cdpService.call('Input.dispatchMouseEvent', {
+                type: 'mousePressed', x: btnState.x, y: btnState.y,
+                button: 'left', clickCount: 1,
+            });
+            await cdpService.call('Input.dispatchMouseEvent', {
+                type: 'mouseReleased', x: btnState.x, y: btnState.y,
+                button: 'left', clickCount: 1,
+            });
+
+            // クリック後、UI反映を待機
+            await new Promise(r => setTimeout(r, 1500));
+
+            // ボタンが not-allowed に変わったか確認（新チャットが開かれた証拠）
+            const afterState = await this.getNewChatButtonState(cdpService, contexts);
+            if (afterState.found && !afterState.enabled) {
+                return { ok: true };
+            }
+
+            // ボタンがまだ有効 → クリックが効かなかった可能性
+            return { ok: false, error: '新規チャットボタンをクリックしましたが、状態が変化しませんでした' };
         } catch (error: unknown) {
             const message = error instanceof Error ? error.message : String(error);
             return { ok: false, error: message };
@@ -158,32 +108,54 @@ export class ChatSessionService {
 
     /**
      * 現在のチャットセッション情報を取得する。
+     * @param cdpService 使用するCdpServiceインスタンス
      * @returns チャットセッション情報
      */
-    async getCurrentSessionInfo(): Promise<ChatSessionInfo> {
+    async getCurrentSessionInfo(cdpService: CdpService): Promise<ChatSessionInfo> {
         try {
-            const contextId = this.cdpService.getPrimaryContextId();
-            const callParams: Record<string, unknown> = {
-                expression: GET_SESSION_INFO_SCRIPT,
-                returnByValue: true,
-                awaitPromise: false,
-            };
-            if (contextId !== null) {
-                callParams.contextId = contextId;
-            }
-
-            const result = await this.cdpService.call('Runtime.evaluate', callParams);
-            const value = result?.result?.value;
-
-            if (value) {
-                return {
-                    title: value.title || '(無題)',
-                    hasActiveChat: value.hasActiveChat ?? false,
-                };
+            const contexts = cdpService.getContexts();
+            for (const ctx of contexts) {
+                try {
+                    const result = await cdpService.call('Runtime.evaluate', {
+                        expression: GET_CHAT_TITLE_SCRIPT,
+                        returnByValue: true,
+                        contextId: ctx.id,
+                    });
+                    const value = result?.result?.value;
+                    if (value && value.title) {
+                        return {
+                            title: value.title,
+                            hasActiveChat: value.hasActiveChat ?? false,
+                        };
+                    }
+                } catch (_) { /* 次のコンテキストへ */ }
             }
             return { title: '(取得失敗)', hasActiveChat: false };
         } catch (error) {
             return { title: '(取得失敗)', hasActiveChat: false };
         }
+    }
+
+    /**
+     * 新規チャットボタンの状態（有効/無効、座標）を取得する。
+     */
+    private async getNewChatButtonState(
+        cdpService: CdpService,
+        contexts: { id: number; name: string; url: string }[],
+    ): Promise<{ found: boolean; enabled: boolean; x: number; y: number }> {
+        for (const ctx of contexts) {
+            try {
+                const res = await cdpService.call('Runtime.evaluate', {
+                    expression: GET_NEW_CHAT_BUTTON_SCRIPT,
+                    returnByValue: true,
+                    contextId: ctx.id,
+                });
+                const value = res?.result?.value;
+                if (value?.found) {
+                    return { found: true, enabled: value.enabled, x: value.x, y: value.y };
+                }
+            } catch (_) { /* 次のコンテキストへ */ }
+        }
+        return { found: false, enabled: false, x: 0, y: 0 };
     }
 }
