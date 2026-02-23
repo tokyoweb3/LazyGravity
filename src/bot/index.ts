@@ -1,3 +1,5 @@
+import { t } from "../utils/i18n";
+import { logger } from '../utils/logger';
 import {
     Client, GatewayIntentBits, Events, Message,
     ChatInputCommandInteraction, Interaction,
@@ -6,13 +8,16 @@ import {
     StringSelectMenuBuilder,
 } from 'discord.js';
 import Database from 'better-sqlite3';
+import * as fs from 'fs/promises';
+import * as os from 'os';
+import * as path from 'path';
 
 import { loadConfig } from '../utils/config';
 import { parseMessageContent } from '../commands/messageParser';
 import { SlashCommandHandler } from '../commands/slashCommandHandler';
 import { registerSlashCommands } from '../commands/registerSlashCommands';
 
-import { ModeService, AVAILABLE_MODES, MODE_DISPLAY_NAMES, MODE_DESCRIPTIONS } from '../services/modeService';
+import { ModeService, AVAILABLE_MODES, MODE_DISPLAY_NAMES, MODE_DESCRIPTIONS, MODE_UI_NAMES } from '../services/modeService';
 import { ModelService } from '../services/modelService';
 import { TemplateRepository } from '../database/templateRepository';
 import { WorkspaceBindingRepository } from '../database/workspaceBindingRepository';
@@ -28,7 +33,7 @@ import { ChannelManager } from '../services/channelManager';
 import { TitleGeneratorService } from '../services/titleGeneratorService';
 
 // CDP連携サービス
-import { CdpService } from '../services/cdpService';
+import { CdpService, ExtractedResponseImage } from '../services/cdpService';
 import { CdpConnectionPool } from '../services/cdpConnectionPool';
 import { ChatSessionService } from '../services/chatSessionService';
 import { ResponseMonitor, RESPONSE_SELECTORS } from '../services/responseMonitor';
@@ -36,6 +41,8 @@ import { ScreenshotService } from '../services/screenshotService';
 import { ApprovalDetector, ApprovalInfo } from '../services/approvalDetector';
 import { QuotaService } from '../services/quotaService';
 import { ensureAntigravityRunning } from '../services/antigravityLauncher';
+import { AutoAcceptService } from '../services/autoAcceptService';
+import { buildModeModelLines, splitForEmbedDescription } from '../utils/streamMessageFormatter';
 
 // =============================================================================
 // CDP ブリッジ: Discord ↔ Antigravity の結線
@@ -45,14 +52,50 @@ import { ensureAntigravityRunning } from '../services/antigravityLauncher';
 interface CdpBridge {
     pool: CdpConnectionPool;
     quota: QuotaService;
+    autoAccept: AutoAcceptService;
     /** 最後にメッセージを送信したワークスペースのディレクトリ名 */
     lastActiveWorkspace: string | null;
     /** 最後にメッセージを送信したチャンネル（承認通知の送信先） */
     lastActiveChannel: Message['channel'] | null;
 }
 
+const APPROVE_ACTION_PREFIX = 'approve_action';
+const ALWAYS_ALLOW_ACTION_PREFIX = 'always_allow_action';
+const DENY_ACTION_PREFIX = 'deny_action';
+
+function buildApprovalCustomId(action: 'approve' | 'always_allow' | 'deny', workspaceDirName: string): string {
+    const prefix = action === 'approve'
+        ? APPROVE_ACTION_PREFIX
+        : action === 'always_allow'
+            ? ALWAYS_ALLOW_ACTION_PREFIX
+            : DENY_ACTION_PREFIX;
+    return `${prefix}:${workspaceDirName}`;
+}
+
+function parseApprovalCustomId(customId: string): { action: 'approve' | 'always_allow' | 'deny'; workspaceDirName: string | null } | null {
+    if (customId === APPROVE_ACTION_PREFIX) {
+        return { action: 'approve', workspaceDirName: null };
+    }
+    if (customId === ALWAYS_ALLOW_ACTION_PREFIX) {
+        return { action: 'always_allow', workspaceDirName: null };
+    }
+    if (customId === DENY_ACTION_PREFIX) {
+        return { action: 'deny', workspaceDirName: null };
+    }
+    if (customId.startsWith(`${APPROVE_ACTION_PREFIX}:`)) {
+        return { action: 'approve', workspaceDirName: customId.substring(`${APPROVE_ACTION_PREFIX}:`.length) || null };
+    }
+    if (customId.startsWith(`${ALWAYS_ALLOW_ACTION_PREFIX}:`)) {
+        return { action: 'always_allow', workspaceDirName: customId.substring(`${ALWAYS_ALLOW_ACTION_PREFIX}:`.length) || null };
+    }
+    if (customId.startsWith(`${DENY_ACTION_PREFIX}:`)) {
+        return { action: 'deny', workspaceDirName: customId.substring(`${DENY_ACTION_PREFIX}:`.length) || null };
+    }
+    return null;
+}
+
 /** CDPブリッジを初期化する（遅延接続: プール作成のみ） */
-function initCdpBridge(): CdpBridge {
+function initCdpBridge(autoApproveDefault: boolean): CdpBridge {
     const pool = new CdpConnectionPool({
         cdpCallTimeout: 15000,
         maxReconnectAttempts: 5,
@@ -60,10 +103,12 @@ function initCdpBridge(): CdpBridge {
     });
 
     const quota = new QuotaService();
+    const autoAccept = new AutoAcceptService(autoApproveDefault);
 
     return {
         pool,
         quota,
+        autoAccept,
         lastActiveWorkspace: null,
         lastActiveChannel: null,
     };
@@ -95,57 +140,75 @@ function ensureApprovalDetector(
         cdpService: cdp,
         pollIntervalMs: 2000,
         onApprovalRequired: async (info: ApprovalInfo) => {
-            console.error(`[ApprovalDetector:${workspaceDirName}] 承認ボタン検出:`, info.approveText, '/', info.denyText, '-', info.description);
+            logger.info(`[ApprovalDetector:${workspaceDirName}] 承認ボタン検出 (allow="${info.approveText}", deny="${info.denyText}")`);
+
+            if (bridge.autoAccept.isEnabled()) {
+                const accepted = await detector.alwaysAllowButton() || await detector.approveButton();
+
+                const targetChannel = bridge.lastActiveChannel;
+                if (targetChannel && 'send' in targetChannel) {
+                    const autoEmbed = new EmbedBuilder()
+                        .setTitle(accepted ? t('Auto-approved') : t('Auto-approve failed'))
+                        .setDescription(info.description || t('Antigravity is requesting approval for an action'))
+                        .setColor(accepted ? 0x2ECC71 : 0xF39C12)
+                        .addFields(
+                            { name: t('Auto-approve mode'), value: t('ON'), inline: true },
+                            { name: t('Workspace'), value: workspaceDirName, inline: true },
+                            { name: t('Result'), value: accepted ? t('Executed Always Allow/Allow') : t('Manual approval required'), inline: true },
+                        )
+                        .setTimestamp();
+                    await (targetChannel as any).send({ embeds: [autoEmbed] }).catch(logger.error);
+                }
+
+                if (accepted) {
+                    return;
+                }
+            }
 
             const embed = new EmbedBuilder()
-                .setTitle('承認が必要です')
-                .setDescription(info.description || 'Antigravityがアクションの承認を求めています')
+                .setTitle(t('Approval Required'))
+                .setDescription(info.description || t('Antigravity is requesting approval for an action'))
                 .setColor(0xFFA500)
                 .addFields(
-                    { name: '許可ボタン', value: info.approveText, inline: true },
-                    { name: '拒否ボタン', value: info.denyText || '(なし)', inline: true },
-                    { name: 'ワークスペース', value: workspaceDirName, inline: true },
+                    { name: t('Allow button'), value: info.approveText, inline: true },
+                    { name: t('Allow Chat button'), value: info.alwaysAllowText || t('In Dropdown'), inline: true },
+                    { name: t('Deny button'), value: info.denyText || t('(None)'), inline: true },
+                    { name: t('Workspace'), value: workspaceDirName, inline: true },
                 )
                 .setTimestamp();
 
             const approveBtn = new ButtonBuilder()
-                .setCustomId('approve_action')
-                .setLabel('許可')
+                .setCustomId(buildApprovalCustomId('approve', workspaceDirName))
+                .setLabel(t('Allow'))
                 .setStyle(ButtonStyle.Success);
 
+            const alwaysAllowBtn = new ButtonBuilder()
+                .setCustomId(buildApprovalCustomId('always_allow', workspaceDirName))
+                .setLabel(t('Allow Chat'))
+                .setStyle(ButtonStyle.Primary);
+
             const denyBtn = new ButtonBuilder()
-                .setCustomId('deny_action')
-                .setLabel('拒否')
+                .setCustomId(buildApprovalCustomId('deny', workspaceDirName))
+                .setLabel(t('Deny'))
                 .setStyle(ButtonStyle.Danger);
 
-            const row = new ActionRowBuilder<ButtonBuilder>().addComponents(approveBtn, denyBtn);
+            const row = new ActionRowBuilder<ButtonBuilder>().addComponents(approveBtn, alwaysAllowBtn, denyBtn);
 
             const targetChannel = bridge.lastActiveChannel;
             if (targetChannel && 'send' in targetChannel) {
                 (targetChannel as any).send({
                     embeds: [embed],
                     components: [row],
-                }).catch(console.error);
+                }).catch(logger.error);
             } else {
-                for (const guild of client.guilds.cache.values()) {
-                    const channel = guild.channels.cache.find(
-                        ch => ch.isTextBased() && !ch.isDMBased()
-                    );
-                    if (channel && channel.isTextBased() && 'send' in channel) {
-                        (channel as any).send({
-                            embeds: [embed],
-                            components: [row],
-                        }).catch(console.error);
-                        break;
-                    }
-                }
+                logger.warn(`[ApprovalDetector:${workspaceDirName}] 送信先チャンネル未確定のため承認通知をスキップしました`);
             }
         },
     });
 
     detector.start();
     bridge.pool.registerApprovalDetector(workspaceDirName, detector);
-    console.error(`[ApprovalDetector:${workspaceDirName}] 承認ボタン検出を開始しました`);
+    logger.info(`[ApprovalDetector:${workspaceDirName}] 承認ボタン検出を開始しました`);
 }
 
 // =============================================================================
@@ -169,10 +232,16 @@ const PHASE_ICONS = {
     error: '❌',
 } as const;
 
-/** テキストをEmbed用にトランケート（末尾を残す） */
-function truncateForEmbed(text: string, maxLen: number = 4000): string {
-    if (text.length <= maxLen) return text;
-    return '… (先頭を省略)\n' + text.substring(text.length - maxLen + 30);
+const MAX_INBOUND_IMAGE_ATTACHMENTS = 4;
+const MAX_OUTBOUND_GENERATED_IMAGES = 4;
+const IMAGE_EXT_PATTERN = /\.(png|jpe?g|webp|gif|bmp)$/i;
+const TEMP_IMAGE_DIR = path.join(os.tmpdir(), 'antigravity-discord-claw-images');
+
+interface InboundImageAttachment {
+    localPath: string;
+    url: string;
+    name: string;
+    mimeType: string;
 }
 
 /**
@@ -228,338 +297,706 @@ function formatForDiscord(text: string): string {
     return result.join('\n');
 }
 
+function isImageAttachment(contentType: string | null | undefined, fileName: string | null | undefined): boolean {
+    if ((contentType || '').toLowerCase().startsWith('image/')) return true;
+    return IMAGE_EXT_PATTERN.test(fileName || '');
+}
+
+function mimeTypeToExtension(mimeType: string): string {
+    const normalized = (mimeType || '').toLowerCase();
+    if (normalized.includes('jpeg') || normalized.includes('jpg')) return 'jpg';
+    if (normalized.includes('webp')) return 'webp';
+    if (normalized.includes('gif')) return 'gif';
+    if (normalized.includes('bmp')) return 'bmp';
+    return 'png';
+}
+
+function sanitizeFileName(fileName: string): string {
+    const sanitized = fileName.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '');
+    return sanitized || `image-${Date.now()}.png`;
+}
+
+function buildPromptWithAttachmentUrls(prompt: string, attachments: InboundImageAttachment[]): string {
+    const base = prompt.trim() || '添付画像を確認して対応してください。';
+    if (attachments.length === 0) return base;
+
+    const lines = attachments.map((image, index) =>
+        `${index + 1}. ${image.name}\nURL: ${image.url}`,
+    );
+
+    return `${base}\n\n[Discord添付画像]\n${lines.join('\n\n')}\n\n上記の添付画像を参照して回答してください。`;
+}
+
+async function downloadInboundImageAttachments(message: Message): Promise<InboundImageAttachment[]> {
+    const allAttachments = Array.from(message.attachments.values());
+    const imageAttachments = allAttachments
+        .filter((attachment) => isImageAttachment(attachment.contentType, attachment.name))
+        .slice(0, MAX_INBOUND_IMAGE_ATTACHMENTS);
+
+    if (imageAttachments.length === 0) return [];
+
+    await fs.mkdir(TEMP_IMAGE_DIR, { recursive: true });
+
+    const downloaded: InboundImageAttachment[] = [];
+    let index = 0;
+    for (const attachment of imageAttachments) {
+        try {
+            const response = await fetch(attachment.url);
+            if (!response.ok) {
+                logger.warn(`[ImageBridge] 添付画像ダウンロード失敗 (id=${attachment.id || 'unknown'}, status=${response.status})`);
+                continue;
+            }
+
+            const bytes = Buffer.from(await response.arrayBuffer());
+            if (bytes.length === 0) continue;
+
+            const mimeType = attachment.contentType || 'image/png';
+            const hasExt = IMAGE_EXT_PATTERN.test(attachment.name || '');
+            const ext = mimeTypeToExtension(mimeType);
+            const originalName = sanitizeFileName(attachment.name || `discord-image-${index + 1}.${ext}`);
+            const name = hasExt ? originalName : `${originalName}.${ext}`;
+            const localPath = path.join(
+                TEMP_IMAGE_DIR,
+                `${Date.now()}-${message.id}-${index}-${name}`,
+            );
+
+            await fs.writeFile(localPath, bytes);
+            downloaded.push({
+                localPath,
+                url: attachment.url,
+                name,
+                mimeType,
+            });
+            index += 1;
+        } catch (error: any) {
+            logger.warn(`[ImageBridge] 添付画像処理失敗 (id=${attachment.id || 'unknown'})`, error?.message || error);
+        }
+    }
+
+    return downloaded;
+}
+
+async function cleanupInboundImageAttachments(attachments: InboundImageAttachment[]): Promise<void> {
+    for (const image of attachments) {
+        await fs.unlink(image.localPath).catch(() => { });
+    }
+}
+
+async function toDiscordAttachment(image: ExtractedResponseImage, index: number): Promise<AttachmentBuilder | null> {
+    let buffer: Buffer | null = null;
+    let mimeType = image.mimeType || 'image/png';
+
+    if (image.base64Data) {
+        try {
+            buffer = Buffer.from(image.base64Data, 'base64');
+        } catch {
+            buffer = null;
+        }
+    } else if (image.url && /^https?:\/\//i.test(image.url)) {
+        try {
+            const response = await fetch(image.url);
+            if (response.ok) {
+                buffer = Buffer.from(await response.arrayBuffer());
+                mimeType = response.headers.get('content-type') || mimeType;
+            }
+        } catch {
+            buffer = null;
+        }
+    }
+
+    if (!buffer || buffer.length === 0) return null;
+
+    const fallbackExt = mimeTypeToExtension(mimeType);
+    const baseName = sanitizeFileName(image.name || `generated-image-${index + 1}.${fallbackExt}`);
+    const finalName = IMAGE_EXT_PATTERN.test(baseName) ? baseName : `${baseName}.${fallbackExt}`;
+    return new AttachmentBuilder(buffer, { name: finalName });
+}
+
 /**
  * Discordのメッセージ（プロンプト）をAntigravityに送信し、応答を待ってDiscordに返す
  *
  * メッセージ戦略:
- *   - statusMsg: 現在のフェーズを表示（常に最新状態に編集）
- *   - thinkingLogMsg: 思考フェーズのログ（生成開始時に別メッセージとして確定）
- *   - 完了時に最終レスポンスをstatusMsg上に表示
+ *   - 編集ではなく工程ごとに新規メッセージを送信して履歴を残す
+ *   - 計画/分析/実行確認/実装内容の流れをログとして可視化する
  */
 async function sendPromptToAntigravity(
     bridge: CdpBridge,
     message: Message,
     prompt: string,
     cdp: CdpService,
+    modeService: ModeService,
+    modelService: ModelService,
+    inboundImages: InboundImageAttachment[] = [],
+    options?: {
+        chatSessionService: ChatSessionService;
+        chatSessionRepo: ChatSessionRepository;
+        channelManager: ChannelManager;
+        titleGenerator: TitleGeneratorService;
+    }
 ): Promise<void> {
     // コマンド受付のリアクションを追加
     await message.react('👀').catch(() => { });
 
-    if (!cdp.isConnected()) {
-        const errorEmbed = new EmbedBuilder()
-            .setTitle(`${PHASE_ICONS.error} 接続エラー`)
-            .setDescription('Antigravityに接続されていません。\n`open -a Antigravity --args --remote-debugging-port=9223` で起動後、メッセージを送信すると自動接続されます。')
-            .setColor(PHASE_COLORS.error)
-            .setTimestamp();
-        await message.reply({ embeds: [errorEmbed] });
+    const channel = (message.channel && 'send' in message.channel) ? message.channel as any : null;
+    const enqueueSend = (() => {
+        let queue: Promise<void> = Promise.resolve();
+        return (task: () => Promise<void>) => {
+            queue = queue.then(task).catch((err: Error) => {
+                logger.error('[sendPromptToAntigravity] 送信キューエラー:', err.message);
+            });
+            return queue;
+        };
+    })();
 
+    const sendEmbed = (
+        title: string,
+        description: string,
+        color: number,
+        fields?: { name: string; value: string; inline?: boolean }[],
+        footerText?: string,
+    ): Promise<void> => enqueueSend(async () => {
+        if (!channel) return;
+        const embed = new EmbedBuilder()
+            .setTitle(title)
+            .setDescription(description)
+            .setColor(color)
+            .setTimestamp();
+        if (fields && fields.length > 0) {
+            embed.addFields(...fields);
+        }
+        if (footerText) {
+            embed.setFooter({ text: footerText });
+        }
+        await channel.send({ embeds: [embed] }).catch(() => { });
+    });
+
+    const shouldTryGeneratedImages = (inputPrompt: string, responseText: string): boolean => {
+        const prompt = (inputPrompt || '').toLowerCase();
+        const response = (responseText || '').toLowerCase();
+        const imageIntentPattern = /(image|images|png|jpg|jpeg|gif|webp|illustration|diagram|render|画像|イメージ|図|描いて|生成して)/i;
+        const imageUrlPattern = /https?:\/\/\S+\.(png|jpg|jpeg|gif|webp)/i;
+
+        if (imageIntentPattern.test(prompt)) return true;
+        if (response.includes('![') || imageUrlPattern.test(response)) return true;
+        return false;
+    };
+
+    const sendGeneratedImages = async (responseText: string): Promise<void> => {
+        if (!channel) return;
+        if (!shouldTryGeneratedImages(prompt, responseText)) return;
+
+        const extracted = await cdp.extractLatestResponseImages(MAX_OUTBOUND_GENERATED_IMAGES);
+        if (extracted.length === 0) return;
+
+        const files: AttachmentBuilder[] = [];
+        for (let i = 0; i < extracted.length; i++) {
+            const attachment = await toDiscordAttachment(extracted[i], i);
+            if (attachment) files.push(attachment);
+        }
+        if (files.length === 0) return;
+
+        await enqueueSend(async () => {
+            await channel.send({
+                content: t(`🖼️ Detected generated images (${files.length})`),
+                files,
+            }).catch(() => { });
+        });
+    };
+
+    const tryEmergencyExtractText = async (): Promise<string> => {
+        try {
+            const contextId = cdp.getPrimaryContextId();
+            const expression = `(() => {
+                const panel = document.querySelector('.antigravity-agent-side-panel');
+                const scope = panel || document;
+
+                const candidateSelectors = [
+                    '.rendered-markdown',
+                    '.leading-relaxed.select-text',
+                    '.flex.flex-col.gap-y-3',
+                    '[data-message-author-role="assistant"]',
+                    '[data-message-role="assistant"]',
+                    '[class*="assistant-message"]',
+                    '[class*="message-content"]',
+                    '[class*="markdown-body"]',
+                    '.prose',
+                ];
+
+                const looksLikeActivity = (text) => {
+                    const normalized = (text || '').trim().toLowerCase();
+                    if (!normalized) return true;
+                    const activityPattern = /^(?:analy[sz]ing|reading|writing|running|searching|planning|thinking|processing|loading|executing|testing|debugging|analyzed|read|wrote|ran|処理中|実行中|生成中|思考中|分析中|解析中|読み込み中|書き込み中|待機中)/i;
+                    return activityPattern.test(normalized) && normalized.length <= 220;
+                };
+
+                const clean = (text) => (text || '').replace(/\\r/g, '').replace(/\\n{3,}/g, '\\n\\n').trim();
+
+                const candidates = [];
+                const seen = new Set();
+                for (const selector of candidateSelectors) {
+                    const nodes = scope.querySelectorAll(selector);
+                    for (const node of nodes) {
+                        if (!node || seen.has(node)) continue;
+                        seen.add(node);
+                        candidates.push(node);
+                    }
+                }
+
+                for (let i = candidates.length - 1; i >= 0; i--) {
+                    const node = candidates[i];
+                    const text = clean(node.innerText || node.textContent || '');
+                    if (!text || text.length < 20) continue;
+                    if (looksLikeActivity(text)) continue;
+                    if (/^(good|bad)$/i.test(text)) continue;
+                    return text;
+                }
+
+                return '';
+            })()`;
+
+            const callParams: Record<string, unknown> = {
+                expression,
+                returnByValue: true,
+                awaitPromise: true,
+            };
+            if (contextId !== null) callParams.contextId = contextId;
+            const res = await cdp.call('Runtime.evaluate', callParams);
+            const value = res?.result?.value;
+            return typeof value === 'string' ? value.trim() : '';
+        } catch {
+            return '';
+        }
+    };
+
+    const clearWatchingReaction = async (): Promise<void> => {
         const botId = message.client.user?.id;
         if (botId) {
             await message.reactions.resolve('👀')?.users.remove(botId).catch(() => { });
         }
+    };
+
+    if (!cdp.isConnected()) {
+        await sendEmbed(
+            `${PHASE_ICONS.error} 接続エラー`,
+            'Antigravityに接続されていません。\n`open -a Antigravity --args --remote-debugging-port=9223` で起動後、メッセージを送信すると自動接続されます。',
+            PHASE_COLORS.error,
+        );
+        await clearWatchingReaction();
         await message.react('❌').catch(() => { });
         return;
     }
 
-    // フェーズ1: 送信中 Embed
-    const sendingEmbed = new EmbedBuilder()
-        .setTitle(`${PHASE_ICONS.sending} プロンプト送信中...`)
-        .setDescription('Antigravityにメッセージを送信しています')
-        .setColor(PHASE_COLORS.sending)
-        .addFields({ name: '📝 プロンプト', value: prompt.length > 200 ? prompt.substring(0, 200) + '...' : prompt })
-        .setTimestamp();
+    const localMode = modeService.getCurrentMode();
+    const modeName = MODE_UI_NAMES[localMode] || localMode;
+    const currentModel = (await cdp.getCurrentModel()) || modelService.getCurrentModel();
+    const fastModel = currentModel;
+    const planModel = currentModel;
 
-    const statusMsg = await message.reply({ embeds: [sendingEmbed] });
+    await sendEmbed(
+        `${PHASE_ICONS.sending} [${modeName} - ${currentModel}${localMode === 'plan' ? ' (Thinking)' : ''}] 伝達中...`,
+        buildModeModelLines(modeName, fastModel, planModel).join('\n'),
+        PHASE_COLORS.sending,
+    );
 
-    // 完了フラグ: trueになったらそれ以降statusMsgの編集を行わない
     let isFinalized = false;
-    let lastEditTime = 0;
-    const MIN_EDIT_INTERVAL_MS = 3000;
-    let pendingEditTimer: NodeJS.Timeout | null = null;
-    // アクティビティ
-    let currentActivities: string[] = [];
-    // アクティビティ全履歴（ログ保持用）
-    const activityHistory: string[] = [];
-    // 思考フェーズのログを確定済みか
-    let thinkingLogSent = false;
+    let lastProgressText = '';
+    let lastActivityLogText = '';
+    const LIVE_RESPONSE_MAX_LEN = 3800;
+    const LIVE_ACTIVITY_MAX_LEN = 3800;
+    const liveResponseMessages: any[] = [];
+    const liveActivityMessages: any[] = [];
+    let lastLiveResponseKey = '';
+    let lastLiveActivityKey = '';
 
-    /** statusMsgを安全にEmbed更新 */
-    async function safeEditEmbed(embed: EmbedBuilder, immediate = false): Promise<void> {
-        if (isFinalized) return;
+    const PROCESS_LINE_PATTERN = /^(?:\[[A-Z]+\]|\[(?:ResponseMonitor|CdpService|ApprovalDetector|AntigravityLauncher)[^\]]*\]|(?:analy[sz]ing|reading|writing|running|searching|planning|thinking|processing|loading|executing|testing|debugging|analyzed|read|wrote|ran)\b|(?:処理中|実行中|生成中|思考中|分析中|解析中|読み込み中|書き込み中|待機中))/i;
+    const PROCESS_KEYWORD_PATTERN = /\b(?:run|running|read|reading|write|writing|search|searching|analy[sz]e?|plan(?:ning)?|debug|test|compile|execute)\b/i;
+    const PROCESS_PARAGRAPH_PATTERN = /(?:thought for\s*<?\d+s|initiating step[- ]by[- ]step action|advancing toward a goal|i[' ]?m now focused|i am now focused|i[' ]?m now zeroing in|i am now zeroing in|carefully considering|analyzing the data|refining my approach|planned execution|next milestone|subsequent stage|plan is forming|progressing steadily|actions to take|aim is to make definitive steps|思考中|これから実行|次の手順|方針を検討)/i;
+    const FIRST_PERSON_PATTERN = /\b(?:i|i'm|i’ve|i'll|i am|my|we|we're|our)\b|(?:私|僕|わたし|我々)/i;
+    const ABSTRACT_PROGRESS_PATTERN = /\b(?:focus|focusing|plan|planning|progress|goal|milestone|subsequent|approach|action|execution|execute|next step|aim|zeroing in|steadily)\b|(?:方針|手順|進捗|目標|計画|実行方針|次の段階)/i;
+    const ACTIVITY_PLACEHOLDER = t('Collecting process logs...');
 
-        if (pendingEditTimer) {
-            clearTimeout(pendingEditTimer);
-            pendingEditTimer = null;
+    const splitOutputAndLogs = (rawText: string): { output: string; logs: string } => {
+        const normalized = (rawText || '').replace(/\r/g, '');
+        if (!normalized.trim()) {
+            return { output: '', logs: '' };
         }
 
-        const now = Date.now();
-        const elapsed = now - lastEditTime;
+        const outputLines: string[] = [];
+        const logLines: string[] = [];
+        let inCodeBlock = false;
 
-        if (immediate || elapsed >= MIN_EDIT_INTERVAL_MS) {
-            lastEditTime = Date.now();
-            await statusMsg.edit({ content: '', embeds: [embed] }).catch((err: Error) => {
-                console.error('[sendPromptToAntigravity] Embed更新失敗:', err.message);
+        const lines = normalized.split('\n');
+        for (const originalLine of lines) {
+            const line = originalLine ?? '';
+            const trimmed = line.trim();
+
+            if (trimmed.startsWith('```')) {
+                inCodeBlock = !inCodeBlock;
+                outputLines.push(line);
+                continue;
+            }
+
+            if (inCodeBlock) {
+                outputLines.push(line);
+                continue;
+            }
+
+            if (!trimmed) {
+                outputLines.push(line);
+                continue;
+            }
+
+            const looksProcess =
+                PROCESS_LINE_PATTERN.test(trimmed) ||
+                PROCESS_PARAGRAPH_PATTERN.test(trimmed) ||
+                (/^\[[^\]]+\]/.test(trimmed) && trimmed.length <= 280) ||
+                (/^(?:\d+\.\s*)?(?:tool|step|action|task)\b/i.test(trimmed) && trimmed.length <= 280) ||
+                (/^(?:ran|read|wrote|executed|searching|planning|thinking|processing)\b/i.test(trimmed) && trimmed.length <= 280) ||
+                (trimmed.length <= 120 && PROCESS_KEYWORD_PATTERN.test(trimmed) && /[:`\-\[]/.test(trimmed));
+
+            if (looksProcess) {
+                logLines.push(trimmed);
+            } else {
+                outputLines.push(line);
+            }
+        }
+
+        const normalizeText = (text: string): string =>
+            text
+                .replace(/\n{3,}/g, '\n\n')
+                .trim();
+
+        // 第2段階: 行分類後の本文を段落単位で再評価し、抽象的な思考文をログへ移動
+        const outputText = normalizeText(outputLines.join('\n'));
+        const movedLogBlocks: string[] = [];
+        const keptOutputBlocks: string[] = [];
+        const outputBlocks = outputText ? outputText.split(/\n{2,}/) : [];
+        for (const block of outputBlocks) {
+            const trimmed = (block || '').trim();
+            if (!trimmed) continue;
+
+            const lower = trimmed.toLowerCase();
+            const looksAbstractProcess =
+                PROCESS_PARAGRAPH_PATTERN.test(trimmed) ||
+                (
+                    FIRST_PERSON_PATTERN.test(trimmed) &&
+                    ABSTRACT_PROGRESS_PATTERN.test(trimmed) &&
+                    trimmed.length >= 40 &&
+                    !/```|`[^`]+`/.test(trimmed)
+                ) ||
+                (/^advancing toward /i.test(trimmed) && trimmed.length <= 120) ||
+                (/^initiating /i.test(trimmed) && trimmed.length <= 120);
+
+            if (looksAbstractProcess) {
+                movedLogBlocks.push(trimmed);
+                continue;
+            }
+            keptOutputBlocks.push(trimmed);
+        }
+
+        const dedupedLogs = Array.from(
+            new Set(
+                [...logLines, ...movedLogBlocks]
+                    .map((line) => line.trim())
+                    .filter((line) => line.length > 0),
+            ),
+        );
+
+        return {
+            output: normalizeText(keptOutputBlocks.join('\n\n')),
+            logs: normalizeText(dedupedLogs.join('\n')),
+        };
+    };
+
+    const buildLiveResponseDescriptions = (text: string): string[] => {
+        const normalized = (text || '').trim();
+        if (!normalized) {
+            return [t('Waiting for output...')];
+        }
+        return splitForEmbedDescription(formatForDiscord(normalized), LIVE_RESPONSE_MAX_LEN);
+    };
+
+    const buildLiveActivityDescriptions = (text: string): string[] => {
+        const normalized = (text || '').trim();
+        if (!normalized) return [ACTIVITY_PLACEHOLDER];
+        return splitForEmbedDescription(formatForDiscord(normalized), LIVE_ACTIVITY_MAX_LEN);
+    };
+
+    const upsertLiveResponseEmbeds = (
+        title: string,
+        rawText: string,
+        color: number,
+        footerText: string,
+    ): Promise<void> => enqueueSend(async () => {
+        if (!channel) return;
+        const descriptions = buildLiveResponseDescriptions(rawText);
+        const renderKey = `${title}|${color}|${footerText}|${descriptions.join('\n<<<PAGE_BREAK>>>\n')}`;
+        if (renderKey === lastLiveResponseKey && liveResponseMessages.length > 0) {
+            return;
+        }
+        lastLiveResponseKey = renderKey;
+
+        for (let i = 0; i < descriptions.length; i++) {
+            const embed = new EmbedBuilder()
+                .setTitle(descriptions.length > 1 ? `${title} (${i + 1}/${descriptions.length})` : title)
+                .setDescription(descriptions[i])
+                .setColor(color)
+                .setFooter({ text: footerText })
+                .setTimestamp();
+
+            if (!liveResponseMessages[i]) {
+                liveResponseMessages[i] = await channel.send({ embeds: [embed] }).catch(() => null);
+                continue;
+            }
+
+            await liveResponseMessages[i].edit({ embeds: [embed] }).catch(async () => {
+                liveResponseMessages[i] = await channel.send({ embeds: [embed] }).catch(() => null);
             });
-        } else {
-            const delay = MIN_EDIT_INTERVAL_MS - elapsed;
-            pendingEditTimer = setTimeout(async () => {
-                pendingEditTimer = null;
-                if (isFinalized) return;
-                lastEditTime = Date.now();
-                await statusMsg.edit({ content: '', embeds: [embed] }).catch((err: Error) => {
-                    console.error('[sendPromptToAntigravity] 遅延Embed更新失敗:', err.message);
-                });
-            }, delay);
-        }
-    }
-
-    /** 思考フェーズのログを別メッセージとして確定送信する */
-    async function sendThinkingLog(elapsed: number): Promise<void> {
-        if (thinkingLogSent) return;
-        thinkingLogSent = true;
-
-        const logEmbed = new EmbedBuilder()
-            .setTitle(`${PHASE_ICONS.thinking} 思考ログ`)
-            .setColor(PHASE_COLORS.thinking)
-            .setFooter({ text: `⏱️ 思考時間: ${elapsed}秒` })
-            .setTimestamp();
-
-        if (activityHistory.length > 0) {
-            const actText = activityHistory.slice(-15).join('\n');
-            logEmbed.setDescription(actText.length > 4000 ? actText.substring(actText.length - 4000) : actText);
-        } else {
-            logEmbed.setDescription('AIが応答を生成中...');
         }
 
-        const ch = message.channel;
-        if (ch && 'send' in ch) {
-            await (ch as any).send({ embeds: [logEmbed] }).catch(() => { });
+        // 以前よりページ数が減った場合は余剰メッセージを削除
+        while (liveResponseMessages.length > descriptions.length) {
+            const extra = liveResponseMessages.pop();
+            if (!extra) continue;
+            await extra.delete().catch(() => { });
         }
-    }
+    });
+
+    const upsertLiveActivityEmbeds = (
+        title: string,
+        rawText: string,
+        color: number,
+        footerText: string,
+    ): Promise<void> => enqueueSend(async () => {
+        if (!channel) return;
+
+        const descriptions = buildLiveActivityDescriptions(rawText);
+        const renderKey = `${title}|${color}|${footerText}|${descriptions.join('\n<<<PAGE_BREAK>>>\n')}`;
+        if (renderKey === lastLiveActivityKey && liveActivityMessages.length > 0) {
+            return;
+        }
+        lastLiveActivityKey = renderKey;
+
+        for (let i = 0; i < descriptions.length; i++) {
+            const embed = new EmbedBuilder()
+                .setTitle(descriptions.length > 1 ? `${title} (${i + 1}/${descriptions.length})` : title)
+                .setDescription(descriptions[i])
+                .setColor(color)
+                .setFooter({ text: footerText })
+                .setTimestamp();
+
+            if (!liveActivityMessages[i]) {
+                liveActivityMessages[i] = await channel.send({ embeds: [embed] }).catch(() => null);
+                continue;
+            }
+
+            await liveActivityMessages[i].edit({ embeds: [embed] }).catch(async () => {
+                liveActivityMessages[i] = await channel.send({ embeds: [embed] }).catch(() => null);
+            });
+        }
+
+        while (liveActivityMessages.length > descriptions.length) {
+            const extra = liveActivityMessages.pop();
+            if (!extra) continue;
+            await extra.delete().catch(() => { });
+        }
+    });
 
     try {
-        const injectResult = await cdp.injectMessage(prompt);
+        let injectResult;
+        if (inboundImages.length > 0) {
+            injectResult = await cdp.injectMessageWithImageFiles(
+                prompt,
+                inboundImages.map((image) => image.localPath),
+            );
+
+            if (!injectResult.ok) {
+                await sendEmbed(
+                    t('🖼️ Attached image fallback'),
+                    t('Failed to attach image directly, resending via URL reference.'),
+                    PHASE_COLORS.thinking,
+                );
+                injectResult = await cdp.injectMessage(buildPromptWithAttachmentUrls(prompt, inboundImages));
+            }
+        } else {
+            injectResult = await cdp.injectMessage(prompt);
+        }
+
         if (!injectResult.ok) {
             isFinalized = true;
-            const errorEmbed = new EmbedBuilder()
-                .setTitle(`${PHASE_ICONS.error} メッセージ注入失敗`)
-                .setDescription(`メッセージの送信に失敗しました: ${injectResult.error}`)
-                .setColor(PHASE_COLORS.error)
-                .setTimestamp();
-            await statusMsg.edit({ content: '', embeds: [errorEmbed] });
-
-            const botId = message.client.user?.id;
-            if (botId) {
-                await message.reactions.resolve('👀')?.users.remove(botId).catch(() => { });
-            }
+            await sendEmbed(
+                `${PHASE_ICONS.error} メッセージ注入失敗`,
+                `メッセージの送信に失敗しました: ${injectResult.error}`,
+                PHASE_COLORS.error,
+            );
+            await clearWatchingReaction();
             await message.react('❌').catch(() => { });
             return;
         }
 
-        // フェーズ2: 伝達完了
-        const waitingEmbed = new EmbedBuilder()
-            .setTitle(`${PHASE_ICONS.sending} 伝達完了。応答を待っています...`)
-            .setDescription('Antigravityがリクエストを処理しています')
-            .setColor(PHASE_COLORS.sending)
-            .setFooter({ text: '⏱️ レスポンスを監視中...' })
-            .setTimestamp();
-        await safeEditEmbed(waitingEmbed, true);
-
         const startTime = Date.now();
+        await upsertLiveActivityEmbeds(
+            `${PHASE_ICONS.thinking} 生成プロセスログ`,
+            '',
+            PHASE_COLORS.thinking,
+            t('⏱️ Elapsed: 0s | Process log'),
+        );
+        await upsertLiveResponseEmbeds(
+            `${PHASE_ICONS.generating} 生成中アウトプット`,
+            '',
+            PHASE_COLORS.generating,
+            t('⏱️ Elapsed: 0s | Waiting to start'),
+        );
 
         const monitor = new ResponseMonitor({
             cdpService: cdp,
             pollIntervalMs: 2000,
             maxDurationMs: 300000, // 5分タイムアウト
-            stopButtonGoneConfirmCount: 3, // 連続3回ストップボタン消失で完了
+            stopButtonGoneConfirmCount: 1, // Stop消失を1回確認で完了判定へ
+            completionStabilityMs: 10000, // GitHub版に合わせて10秒安定で完了
+            noUpdateTimeoutMs: 60000, // GitHub版に合わせて60秒更新停止でフォールバック完了
+            noTextCompletionDelayMs: 15000, // 本文未取得時の早すぎる完了判定を抑制
 
-            onPhaseChange: (phase, text) => {
+            onProgress: (text) => {
                 if (isFinalized) return;
-                const elapsed = Math.round((Date.now() - startTime) / 1000);
-
-                switch (phase) {
-                    case 'thinking': {
-                        const thinkEmbed = new EmbedBuilder()
-                            .setTitle(`${PHASE_ICONS.thinking} Thinking...`)
-                            .setDescription('AIが思考中です。応答の生成を準備しています。')
-                            .setColor(PHASE_COLORS.thinking)
-                            .setFooter({ text: `⏱️ 経過時間: ${elapsed}秒` })
-                            .setTimestamp();
-                        if (currentActivities.length > 0) {
-                            thinkEmbed.addFields({ name: '🔧 アクティビティ', value: currentActivities.join('\n') });
-                        }
-                        safeEditEmbed(thinkEmbed, true);
-                        break;
-                    }
-                    case 'generating': {
-                        // 思考→生成に移行: 思考ログを別メッセージとして確定
-                        sendThinkingLog(elapsed).catch(() => { });
-                        break;
-                    }
+                const separated = splitOutputAndLogs(text);
+                if (separated.output && separated.output.trim().length > 0) {
+                    lastProgressText = separated.output;
                 }
+                if (separated.logs && separated.logs.trim().length > 0) {
+                    lastActivityLogText = separated.logs;
+                }
+                const elapsed = Math.round((Date.now() - startTime) / 1000);
+                upsertLiveResponseEmbeds(
+                    `${PHASE_ICONS.generating} 生成中アウトプット`,
+                    separated.output || lastProgressText || '',
+                    PHASE_COLORS.generating,
+                    t(`⏱️ Elapsed: ${elapsed}s | Generating`),
+                ).catch(() => { });
+                upsertLiveActivityEmbeds(
+                    `${PHASE_ICONS.thinking} 生成プロセスログ`,
+                    separated.logs || lastActivityLogText || ACTIVITY_PLACEHOLDER,
+                    PHASE_COLORS.thinking,
+                    t(`⏱️ Elapsed: ${elapsed}s | Process log`),
+                ).catch(() => { });
             },
 
             onActivity: (activities) => {
                 if (isFinalized) return;
-                currentActivities = activities;
                 const elapsed = Math.round((Date.now() - startTime) / 1000);
-
-                // アクティビティ履歴に追加（重複回避）
-                for (const act of activities) {
-                    if (!activityHistory.includes(act)) {
-                        activityHistory.push(act);
-                    }
-                }
-
-                // まだ思考フェーズのstatusMsg上でアクティビティEmbedを表示
-                if (!thinkingLogSent) {
-                    const actEmbed = new EmbedBuilder()
-                        .setTitle(`${PHASE_ICONS.thinking} 処理中...`)
-                        .setColor(PHASE_COLORS.thinking)
-                        .setFooter({ text: `⏱️ 経過時間: ${elapsed}秒` })
-                        .setTimestamp();
-
-                    const actText = activityHistory.slice(-10).join('\n');
-                    actEmbed.addFields({ name: '🔧 アクティビティ', value: actText || '...' });
-                    safeEditEmbed(actEmbed);
-                }
-            },
-
-            onProgress: (text) => {
-                if (isFinalized) return;
-                const elapsed = Math.round((Date.now() - startTime) / 1000);
-                const formatted = formatForDiscord(text);
-                const truncated = truncateForEmbed(formatted, 3800);
-
-                const progressEmbed = new EmbedBuilder()
-                    .setTitle(`${PHASE_ICONS.generating} 生成中...`)
-                    .setDescription(truncated)
-                    .setColor(PHASE_COLORS.generating)
-                    .setFooter({ text: `⏱️ 経過時間: ${elapsed}秒 | 📊 ${text.length}文字` })
-                    .setTimestamp();
-
-                safeEditEmbed(progressEmbed);
+                const activityText = activities
+                    .map((line) => (line || '').trim())
+                    .filter((line) => line.length > 0)
+                    .join('\n');
+                if (!activityText) return;
+                lastActivityLogText = activityText;
+                upsertLiveActivityEmbeds(
+                    `${PHASE_ICONS.thinking} 生成プロセスログ`,
+                    activityText,
+                    PHASE_COLORS.thinking,
+                    t(`⏱️ Elapsed: ${elapsed}s | Process log`),
+                ).catch(() => { });
             },
 
             onComplete: async (finalText) => {
                 isFinalized = true;
-                if (pendingEditTimer) {
-                    clearTimeout(pendingEditTimer);
-                    pendingEditTimer = null;
-                }
-
                 const elapsed = Math.round((Date.now() - startTime) / 1000);
+                const responseText = (finalText && finalText.trim().length > 0)
+                    ? finalText
+                    : lastProgressText;
+                const emergencyText = (!responseText || responseText.trim().length === 0)
+                    ? await tryEmergencyExtractText()
+                    : '';
+                const finalResponseText = responseText && responseText.trim().length > 0
+                    ? responseText
+                    : emergencyText;
+                const separated = splitOutputAndLogs(finalResponseText);
+                const finalOutputText = separated.output || finalResponseText;
+                const finalLogText = separated.logs || lastActivityLogText;
 
-                // まだ思考ログを送信していなければここで送る
-                if (!thinkingLogSent && activityHistory.length > 0) {
-                    await sendThinkingLog(elapsed);
-                }
+                await upsertLiveActivityEmbeds(
+                    `${PHASE_ICONS.thinking} プロセスログ`,
+                    finalLogText || ACTIVITY_PLACEHOLDER,
+                    PHASE_COLORS.thinking,
+                    t(`⏱️ Time: ${elapsed}s | Process log`),
+                );
 
-                if (!finalText || finalText.trim().length === 0) {
-                    const emptyEmbed = new EmbedBuilder()
-                        .setTitle(`${PHASE_ICONS.complete} 処理完了`)
-                        .setDescription('レスポンスの抽出に失敗しました。`/screenshot` で確認してください。')
-                        .setColor(PHASE_COLORS.complete)
-                        .setFooter({ text: `⏱️ 所要時間: ${elapsed}秒` })
-                        .setTimestamp();
-                    await statusMsg.edit({ content: '', embeds: [emptyEmbed] }).catch(() => { });
-
-                    const botId = message.client.user?.id;
-                    if (botId) {
-                        await message.reactions.resolve('👀')?.users.remove(botId).catch(() => { });
-                    }
-                    await message.react('⚠️').catch(() => { });
-                    return;
-                }
-
-                const formatted = formatForDiscord(finalText);
-
-                // Embedのdescription上限は4096文字
-                if (formatted.length <= 3800) {
-                    const completeEmbed = new EmbedBuilder()
-                        .setTitle(`${PHASE_ICONS.complete} 完了`)
-                        .setDescription(formatted)
-                        .setColor(PHASE_COLORS.complete)
-                        .setFooter({ text: `⏱️ 所要時間: ${elapsed}秒 | 📊 ${finalText.length}文字` })
-                        .setTimestamp();
-                    await statusMsg.edit({ content: '', embeds: [completeEmbed] }).catch(() => { });
-                } else {
-                    // 長いレスポンスはファイルとして添付
-                    const previewFormatted = formatForDiscord(finalText.substring(0, 500));
-                    const summaryEmbed = new EmbedBuilder()
-                        .setTitle(`${PHASE_ICONS.complete} 完了`)
-                        .setDescription(`レスポンスが長いためファイルで送信します。\n\n**プレビュー:**\n${previewFormatted}...`)
-                        .setColor(PHASE_COLORS.complete)
-                        .setFooter({ text: `⏱️ 所要時間: ${elapsed}秒 | 📊 ${finalText.length}文字` })
-                        .setTimestamp();
-                    await statusMsg.edit({ content: '', embeds: [summaryEmbed] }).catch(() => { });
-
-                    const attachment = new AttachmentBuilder(
-                        Buffer.from(finalText, 'utf-8'),
-                        { name: 'response.md' }
+                if (finalOutputText && finalOutputText.trim().length > 0) {
+                    await upsertLiveResponseEmbeds(
+                        `${PHASE_ICONS.complete} 最終アウトプット`,
+                        finalOutputText,
+                        PHASE_COLORS.complete,
+                        t(`⏱️ Time: ${elapsed}s | Complete`),
                     );
-                    await message.reply({ files: [attachment] }).catch(() => { });
+                } else {
+                    await upsertLiveResponseEmbeds(
+                        `${PHASE_ICONS.complete} 完了`,
+                        t('Failed to extract response. Use `/screenshot` to verify.'),
+                        PHASE_COLORS.complete,
+                        t(`⏱️ Time: ${elapsed}s | Complete`),
+                    );
                 }
 
-                const botId = message.client.user?.id;
-                if (botId) {
-                    await message.reactions.resolve('👀')?.users.remove(botId).catch(() => { });
+                if (options && message.guild) {
+                    try {
+                        const sessionInfo = await options.chatSessionService.getCurrentSessionInfo(cdp);
+                        if (sessionInfo && sessionInfo.hasActiveChat && sessionInfo.title && sessionInfo.title !== t('(Untitled)')) {
+                            const newName = options.titleGenerator.sanitizeForChannelName(sessionInfo.title);
+                            const session = options.chatSessionRepo.findByChannelId(message.channelId);
+                            if (session && session.displayName !== sessionInfo.title) {
+                                const formattedName = `${session.sessionNumber}-${newName}`;
+                                await options.channelManager.renameChannel(message.guild, message.channelId, formattedName);
+                                options.chatSessionRepo.updateDisplayName(message.channelId, sessionInfo.title);
+                            }
+                        }
+                    } catch (e) {
+                        logger.error('[Rename] Antigravityからのタイトル取得とリネームに失敗:', e);
+                    }
                 }
-                await message.react('✅').catch(() => { });
+
+                await sendGeneratedImages(finalOutputText || '');
+                await clearWatchingReaction();
+                await message.react(finalOutputText && finalOutputText.trim().length > 0 ? '✅' : '⚠️').catch(() => { });
             },
 
             onTimeout: async (lastText) => {
                 isFinalized = true;
-                if (pendingEditTimer) {
-                    clearTimeout(pendingEditTimer);
-                    pendingEditTimer = null;
-                }
-
                 const elapsed = Math.round((Date.now() - startTime) / 1000);
 
-                // 思考ログが未送信なら送る
-                if (!thinkingLogSent && activityHistory.length > 0) {
-                    await sendThinkingLog(elapsed);
-                }
-
-                const formatted = lastText ? formatForDiscord(truncateForEmbed(lastText, 3000)) : '(テキスト取得なし)';
-
-                const timeoutEmbed = new EmbedBuilder()
-                    .setTitle(`${PHASE_ICONS.timeout} タイムアウト`)
-                    .setDescription(`5分経過により監視を終了しました。\n\n**最後の取得テキスト:**\n${formatted}`)
-                    .setColor(PHASE_COLORS.timeout)
-                    .setFooter({ text: `⏱️ 所要時間: ${elapsed}秒` })
-                    .setTimestamp();
-                await statusMsg.edit({ content: '', embeds: [timeoutEmbed] }).catch(() => { });
-
-                const botId = message.client.user?.id;
-                if (botId) {
-                    await message.reactions.resolve('👀')?.users.remove(botId).catch(() => { });
-                }
+                const timeoutText = (lastText && lastText.trim().length > 0)
+                    ? lastText
+                    : lastProgressText;
+                const separated = splitOutputAndLogs(timeoutText || '');
+                const payload = separated.output && separated.output.trim().length > 0
+                    ? t(`${separated.output}\n\n[Monitor Ended] Timeout after 5 minutes.`)
+                    : '5分経過により監視を終了しました。テキストは取得できませんでした。';
+                await upsertLiveResponseEmbeds(
+                    `${PHASE_ICONS.timeout} タイムアウト`,
+                    payload,
+                    PHASE_COLORS.timeout,
+                    `⏱️ 所要時間: ${elapsed}秒 | タイムアウト`,
+                );
+                await upsertLiveActivityEmbeds(
+                    `${PHASE_ICONS.thinking} プロセスログ`,
+                    separated.logs || lastActivityLogText || ACTIVITY_PLACEHOLDER,
+                    PHASE_COLORS.thinking,
+                    t(`⏱️ Time: ${elapsed}s | Process log`),
+                );
+                await clearWatchingReaction();
                 await message.react('⚠️').catch(() => { });
             },
         });
 
-        monitor.start();
+        await monitor.start();
 
     } catch (e: any) {
         isFinalized = true;
-        if (pendingEditTimer) {
-            clearTimeout(pendingEditTimer);
-            pendingEditTimer = null;
-        }
-
-        const errorEmbed = new EmbedBuilder()
-            .setTitle(`${PHASE_ICONS.error} エラー`)
-            .setDescription(`処理中にエラーが発生しました: ${e.message}`)
-            .setColor(PHASE_COLORS.error)
-            .setTimestamp();
-        await statusMsg.edit({ content: '', embeds: [errorEmbed] }).catch(() => { });
-
-        const botId = message.client.user?.id;
-        if (botId) {
-            await message.reactions.resolve('👀')?.users.remove(botId).catch(() => { });
-        }
+        await sendEmbed(
+            `${PHASE_ICONS.error} エラー`,
+            t(`Error occurred during processing: ${e.message}`),
+            PHASE_COLORS.error,
+        );
+        await clearWatchingReaction();
         await message.react('❌').catch(() => { });
     }
 }
@@ -571,7 +1008,8 @@ async function sendPromptToAntigravity(
 export const startBot = async () => {
     const config = loadConfig();
 
-    const db = new Database('antigravity.db');
+    const dbPath = process.env.NODE_ENV === 'test' ? ':memory:' : 'antigravity.db';
+    const db = new Database(dbPath);
     const modeService = new ModeService();
     const modelService = new ModelService();
     const templateRepo = new TemplateRepository(db);
@@ -584,7 +1022,7 @@ export const startBot = async () => {
     await ensureAntigravityRunning();
 
     // CDPブリッジの初期化（遅延接続: プール作成のみ）
-    const bridge = initCdpBridge();
+    const bridge = initCdpBridge(config.autoApproveFileEdits);
 
     // CDP依存サービスの初期化（コンストラクタCDP依存を除去済み）
     const chatSessionService = new ChatSessionService();
@@ -605,12 +1043,12 @@ export const startBot = async () => {
     });
 
     client.once(Events.ClientReady, async (readyClient) => {
-        console.error(`Ready! Logged in as ${readyClient.user.tag}`);
+        logger.info(`Ready! Logged in as ${readyClient.user.tag}`);
 
         try {
             await registerSlashCommands(config.discordToken, config.clientId, config.guildId);
         } catch (error) {
-            console.error('スラッシュコマンドの登録に失敗しましたが、テキストコマンドは引き続き利用可能です。');
+            logger.warn('スラッシュコマンドの登録に失敗しましたが、テキストコマンドは引き続き利用可能です。');
         }
     });
 
@@ -618,40 +1056,88 @@ export const startBot = async () => {
     client.on(Events.InteractionCreate, async (interaction: Interaction) => {
         if (interaction.isButton()) {
             if (!config.allowedUserIds.includes(interaction.user.id)) {
-                await interaction.reply({ content: '権限がありません。', ephemeral: true }).catch(console.error);
+                await interaction.reply({ content: t('You do not have permission.'), ephemeral: true }).catch(logger.error);
                 return;
             }
 
             try {
-                if (interaction.customId === 'approve_action' || interaction.customId === 'deny_action') {
-                    const detector = bridge.lastActiveWorkspace
-                        ? bridge.pool.getApprovalDetector(bridge.lastActiveWorkspace)
+                const approvalAction = parseApprovalCustomId(interaction.customId);
+                if (approvalAction) {
+                    const workspaceDirName = approvalAction.workspaceDirName ?? bridge.lastActiveWorkspace;
+                    const detector = workspaceDirName
+                        ? bridge.pool.getApprovalDetector(workspaceDirName)
                         : undefined;
 
                     if (!detector) {
                         try {
-                            await interaction.reply({ content: '承認検出器が見つかりません。', ephemeral: true });
+                            await interaction.reply({ content: t('Approval detector not found.'), ephemeral: true });
                         } catch { /* ignore */ }
                         return;
                     }
 
-                    const isApprove = interaction.customId === 'approve_action';
-                    const success = isApprove
-                        ? await detector.approveButton()
-                        : await detector.denyButton();
-
-                    const content = isApprove
-                        ? (success ? '承認しました！' : 'ボタンが見つかりませんでした')
-                        : (success ? '拒否しました' : 'ボタンが見つかりませんでした');
+                    let success = false;
+                    let actionLabel = '';
+                    if (approvalAction.action === 'approve') {
+                        success = await detector.approveButton();
+                        actionLabel = t('Allow');
+                    } else if (approvalAction.action === 'always_allow') {
+                        success = await detector.alwaysAllowButton();
+                        actionLabel = t('Allow Chat');
+                    } else {
+                        success = await detector.denyButton();
+                        actionLabel = t('Deny');
+                    }
 
                     try {
-                        await interaction.deferUpdate();
-                        await interaction.followUp({ content, ephemeral: true });
+                        if (success) {
+                            const originalEmbed = interaction.message.embeds[0];
+                            const updatedEmbed = originalEmbed
+                                ? EmbedBuilder.from(originalEmbed)
+                                : new EmbedBuilder().setTitle('承認リクエスト');
+
+                            const historyText = `${actionLabel} by <@${interaction.user.id}> (${new Date().toLocaleString('ja-JP')})`;
+                            updatedEmbed
+                                .setColor(approvalAction.action === 'deny' ? 0xE74C3C : 0x2ECC71)
+                                .addFields({ name: '処理履歴', value: historyText, inline: false })
+                                .setTimestamp();
+
+                            const disabledRows = interaction.message.components
+                                .map((row) => {
+                                    const rowAny = row as any;
+                                    if (!Array.isArray(rowAny.components)) return null;
+
+                                    const nextRow = new ActionRowBuilder<ButtonBuilder>();
+                                    const disabledButtons = rowAny.components
+                                        .map((component: any) => {
+                                            const componentType = component?.type ?? component?.data?.type;
+                                            if (componentType !== 2) return null;
+                                            const payload = typeof component?.toJSON === 'function'
+                                                ? component.toJSON()
+                                                : component;
+                                            return ButtonBuilder.from(payload).setDisabled(true);
+                                        })
+                                        .filter((button: ButtonBuilder | null): button is ButtonBuilder => button !== null);
+                                    if (disabledButtons.length === 0) return null;
+                                    nextRow.addComponents(...disabledButtons);
+                                    return nextRow;
+                                })
+                                .filter((row): row is ActionRowBuilder<ButtonBuilder> => row !== null);
+
+                            await interaction.update({
+                                embeds: [updatedEmbed],
+                                components: disabledRows,
+                            });
+                        } else {
+                            await interaction.reply({ content: '承認ボタンが見つかりませんでした。', ephemeral: true });
+                        }
                     } catch (interactionError: any) {
                         if (interactionError?.code === 10062 || interactionError?.code === 40060) {
-                            console.warn('[Approval] interaction期限切れ。チャンネルに直接応答します。');
+                            logger.warn('[Approval] interaction期限切れ。チャンネルに直接応答します。');
                             if (interaction.channel && 'send' in interaction.channel) {
-                                await (interaction.channel as any).send(content).catch(console.error);
+                                const fallbackMessage = success
+                                    ? `${actionLabel}しました。`
+                                    : '承認ボタンが見つかりませんでした。';
+                                await (interaction.channel as any).send(fallbackMessage).catch(logger.error);
                             }
                         } else {
                             throw interactionError;
@@ -688,16 +1174,16 @@ export const startBot = async () => {
                     return;
                 }
             } catch (error) {
-                console.error('ボタンインタラクションの処理中にエラーが発生:', error);
+                logger.error('ボタンインタラクションの処理中にエラーが発生:', error);
 
                 try {
                     if (!interaction.replied && !interaction.deferred) {
                         await interaction.reply({ content: 'ボタン操作の処理中にエラーが発生しました。', ephemeral: true });
                     } else {
-                        await interaction.followUp({ content: 'ボタン操作の処理中にエラーが発生しました。', ephemeral: true }).catch(console.error);
+                        await interaction.followUp({ content: 'ボタン操作の処理中にエラーが発生しました。', ephemeral: true }).catch(logger.error);
                     }
                 } catch (e) {
-                    console.error('エラーメッセージの送信にも失敗しました:', e);
+                    logger.error('エラーメッセージの送信にも失敗しました:', e);
                 }
             }
         }
@@ -705,7 +1191,7 @@ export const startBot = async () => {
         // モードDropdown選択処理
         if (interaction.isStringSelectMenu() && interaction.customId === 'mode_select') {
             if (!config.allowedUserIds.includes(interaction.user.id)) {
-                await interaction.reply({ content: '権限がありません。', ephemeral: true }).catch(console.error);
+                await interaction.reply({ content: t('You do not have permission.'), ephemeral: true }).catch(logger.error);
                 return;
             }
 
@@ -714,10 +1200,10 @@ export const startBot = async () => {
             } catch (deferError: any) {
                 // 10062: Unknown interaction — インタラクション期限切れ（重複プロセスなど）
                 if (deferError?.code === 10062 || deferError?.code === 40060) {
-                    console.warn('[Mode] deferUpdate期限切れ。スキップします。');
+                    logger.warn('[Mode] deferUpdate期限切れ。スキップします。');
                     return;
                 }
-                console.error('[Mode] deferUpdate失敗:', deferError);
+                logger.error('[Mode] deferUpdate失敗:', deferError);
                 return;
             }
 
@@ -730,20 +1216,20 @@ export const startBot = async () => {
                 if (cdp) {
                     const res = await cdp.setUiMode(selectedMode);
                     if (!res.ok) {
-                        console.warn(`[Mode] UIモード切替失敗: ${res.error}`);
+                        logger.warn(`[Mode] UIモード切替失敗: ${res.error}`);
                     }
                 }
 
                 await sendModeUI({ editReply: async (data: any) => await interaction.editReply(data) }, modeService);
                 await interaction.followUp({ content: `モードを **${MODE_DISPLAY_NAMES[selectedMode] || selectedMode}** に変更しました！`, ephemeral: true });
             } catch (error: any) {
-                console.error('モードDropdown処理中にエラー:', error);
+                logger.error('モードDropdown処理中にエラー:', error);
                 try {
                     if (interaction.deferred || interaction.replied) {
-                        await interaction.followUp({ content: 'モード変更中にエラーが発生しました。', ephemeral: true }).catch(console.error);
+                        await interaction.followUp({ content: 'モード変更中にエラーが発生しました。', ephemeral: true }).catch(logger.error);
                     }
                 } catch (e) {
-                    console.error('エラーメッセージの送信にも失敗:', e);
+                    logger.error('エラーメッセージの送信にも失敗:', e);
                 }
             }
             return;
@@ -752,19 +1238,19 @@ export const startBot = async () => {
         // ワークスペースセレクトメニュー処理
         if (interaction.isStringSelectMenu() && (interaction.customId === PROJECT_SELECT_ID || interaction.customId === WORKSPACE_SELECT_ID)) {
             if (!config.allowedUserIds.includes(interaction.user.id)) {
-                await interaction.reply({ content: '権限がありません。', ephemeral: true }).catch(console.error);
+                await interaction.reply({ content: t('You do not have permission.'), ephemeral: true }).catch(logger.error);
                 return;
             }
 
             if (!interaction.guild) {
-                await interaction.reply({ content: 'サーバー内でのみ使用できます。', ephemeral: true }).catch(console.error);
+                await interaction.reply({ content: 'サーバー内でのみ使用できます。', ephemeral: true }).catch(logger.error);
                 return;
             }
 
             try {
                 await wsHandler.handleSelectMenu(interaction, interaction.guild);
             } catch (error) {
-                console.error('ワークスペース選択エラー:', error);
+                logger.error('ワークスペース選択エラー:', error);
             }
             return;
         }
@@ -777,7 +1263,7 @@ export const startBot = async () => {
             await commandInteraction.reply({
                 content: 'このコマンドを使用する権限がありません。',
                 ephemeral: true,
-            }).catch(console.error);
+            }).catch(logger.error);
             return;
         }
 
@@ -786,20 +1272,20 @@ export const startBot = async () => {
         } catch (deferError: any) {
             // 10062: Unknown interaction — インタラクションの期限切れ（3秒超過）
             if (deferError?.code === 10062) {
-                console.warn('[SlashCommand] インタラクション期限切れ（deferReply失敗）。スキップします。');
+                logger.warn('[SlashCommand] インタラクション期限切れ（deferReply失敗）。スキップします。');
                 return;
             }
             throw deferError;
         }
 
         try {
-            await handleSlashInteraction(commandInteraction, slashCommandHandler, bridge, wsHandler, chatHandler, modeService, client);
+            await handleSlashInteraction(commandInteraction, slashCommandHandler, bridge, wsHandler, chatHandler, modeService, modelService, bridge.autoAccept, client);
         } catch (error) {
-            console.error('スラッシュコマンドの処理でエラーが発生:', error);
+            logger.error('スラッシュコマンドの処理でエラーが発生:', error);
             try {
                 await commandInteraction.editReply({ content: 'コマンドの処理中にエラーが発生しました。' });
             } catch (replyError) {
-                console.error('エラー応答の送信にも失敗:', replyError);
+                logger.error('エラー応答の送信にも失敗:', replyError);
             }
         }
     });
@@ -815,6 +1301,12 @@ export const startBot = async () => {
         const parsed = parseMessageContent(message.content);
 
         if (parsed.isCommand && parsed.commandName) {
+            if (parsed.commandName === 'autoaccept') {
+                const result = bridge.autoAccept.handle(parsed.args?.[0]);
+                await message.reply({ content: result.message }).catch(logger.error);
+                return;
+            }
+
             if (parsed.commandName === 'screenshot') {
                 await handleScreenshot(message, bridge);
                 return;
@@ -841,7 +1333,7 @@ export const startBot = async () => {
             if (slashOnlyCommands.includes(parsed.commandName)) {
                 await message.reply({
                     content: `💡 \`/${parsed.commandName}\` はスラッシュコマンドとして使用してください。\nDiscordの入力欄で \`/${parsed.commandName}\` と入力すると候補が表示されます。`,
-                }).catch(console.error);
+                }).catch(logger.error);
                 return;
             }
 
@@ -849,12 +1341,17 @@ export const startBot = async () => {
 
             await message.reply({
                 content: result.message
-            }).catch(console.error);
+            }).catch(logger.error);
 
             if (result.prompt) {
                 const cdp = getCurrentCdp(bridge);
                 if (cdp) {
-                    await sendPromptToAntigravity(bridge, message, result.prompt, cdp);
+                    await sendPromptToAntigravity(bridge, message, result.prompt, cdp, modeService, modelService, [], {
+                        chatSessionService,
+                        chatSessionRepo,
+                        channelManager,
+                        titleGenerator
+                    });
                 } else {
                     await message.reply('CDPに未接続です。先にメッセージを送信してプロジェクトに接続してください。');
                 }
@@ -862,65 +1359,89 @@ export const startBot = async () => {
             return;
         }
 
-        // 平文メッセージ → Antigravityにプロンプトとして送信
-        if (message.content.trim()) {
+        // 平文メッセージ or 画像添付 → Antigravityに送信
+        const hasImageAttachments = Array.from(message.attachments.values())
+            .some((attachment) => isImageAttachment(attachment.contentType, attachment.name));
+        if (message.content.trim() || hasImageAttachments) {
+            const promptText = message.content.trim() || '添付画像を確認して対応してください。';
+            const inboundImages = await downloadInboundImageAttachments(message);
+
+            if (hasImageAttachments && inboundImages.length === 0) {
+                await message.reply('添付画像の取得に失敗しました。時間をおいて再送してください。').catch(() => { });
+                return;
+            }
+
             const workspacePath = wsHandler.getWorkspaceForChannel(message.channelId);
 
-            if (workspacePath) {
-                try {
-                    const cdp = await bridge.pool.getOrConnect(workspacePath);
-                    const dirName = bridge.pool.extractDirName(workspacePath);
+            try {
+                if (workspacePath) {
+                    try {
+                        const cdp = await bridge.pool.getOrConnect(workspacePath);
+                        const dirName = bridge.pool.extractDirName(workspacePath);
 
-                    bridge.lastActiveWorkspace = dirName;
-                    bridge.lastActiveChannel = message.channel;
+                        bridge.lastActiveWorkspace = dirName;
+                        bridge.lastActiveChannel = message.channel;
 
-                    ensureApprovalDetector(bridge, cdp, dirName, client);
+                        ensureApprovalDetector(bridge, cdp, dirName, client);
 
-                    const session = chatSessionRepo.findByChannelId(message.channelId);
-                    if (session && !session.isRenamed) {
-                        try {
-                            const chatResult = await chatSessionService.startNewChat(cdp);
-                            if (!chatResult.ok) {
-                                console.warn('[MessageCreate] Antigravityでの新規チャット開始に失敗:', chatResult.error);
-                                (message.channel as any).send(`⚠️ Antigravityで新規チャットを開けませんでした。既存チャットに送信します。`).catch(() => {});
+                        const session = chatSessionRepo.findByChannelId(message.channelId);
+                        if (session && !session.isRenamed) {
+                            try {
+                                const chatResult = await chatSessionService.startNewChat(cdp);
+                                if (!chatResult.ok) {
+                                    logger.warn('[MessageCreate] Antigravityでの新規チャット開始に失敗:', chatResult.error);
+                                    (message.channel as any).send(`⚠️ Antigravityで新規チャットを開けませんでした。既存チャットに送信します。`).catch(() => { });
+                                }
+                            } catch (err) {
+                                logger.error('[MessageCreate] startNewChat エラー:', err);
+                                (message.channel as any).send(`⚠️ Antigravityで新規チャットを開けませんでした。既存チャットに送信します。`).catch(() => { });
                             }
-                        } catch (err) {
-                            console.error('[MessageCreate] startNewChat エラー:', err);
-                            (message.channel as any).send(`⚠️ Antigravityで新規チャットを開けませんでした。既存チャットに送信します。`).catch(() => {});
                         }
+
+                        await autoRenameChannel(message, chatSessionRepo, titleGenerator, channelManager, cdp);
+
+                        await sendPromptToAntigravity(bridge, message, promptText, cdp, modeService, modelService, inboundImages, {
+                            chatSessionService,
+                            chatSessionRepo,
+                            channelManager,
+                            titleGenerator
+                        });
+                    } catch (e: any) {
+                        await message.reply(`ワークスペース接続に失敗しました: ${e.message}`);
+                        return;
                     }
-
-                    await autoRenameChannel(message, chatSessionRepo, titleGenerator, channelManager, cdp);
-
-                    await sendPromptToAntigravity(bridge, message, message.content, cdp);
-                } catch (e: any) {
-                    await message.reply(`ワークスペース接続に失敗しました: ${e.message}`);
-                    return;
-                }
-            } else {
-                const cdp = getCurrentCdp(bridge);
-                if (cdp) {
-                    bridge.lastActiveChannel = message.channel;
-
-                    const session = chatSessionRepo.findByChannelId(message.channelId);
-                    if (session && !session.isRenamed) {
-                        try {
-                            const chatResult = await chatSessionService.startNewChat(cdp);
-                            if (!chatResult.ok) {
-                                console.warn('[MessageCreate|Fallback] Antigravityでの新規チャット開始に失敗:', chatResult.error);
-                                (message.channel as any).send(`⚠️ Antigravityで新規チャットを開けませんでした。既存チャットに送信します。`).catch(() => {});
-                            }
-                        } catch (err) {
-                            console.error('[MessageCreate|Fallback] startNewChat エラー:', err);
-                            (message.channel as any).send(`⚠️ Antigravityで新規チャットを開けませんでした。既存チャットに送信します。`).catch(() => {});
-                        }
-                    }
-
-                    await autoRenameChannel(message, chatSessionRepo, titleGenerator, channelManager, cdp);
-                    await sendPromptToAntigravity(bridge, message, message.content, cdp);
                 } else {
-                    await message.reply('プロジェクトが設定されていません。`/project` でプロジェクトを作成してください。');
+                    const cdp = getCurrentCdp(bridge);
+                    if (cdp) {
+                        bridge.lastActiveChannel = message.channel;
+
+                        const session = chatSessionRepo.findByChannelId(message.channelId);
+                        if (session && !session.isRenamed) {
+                            try {
+                                const chatResult = await chatSessionService.startNewChat(cdp);
+                                if (!chatResult.ok) {
+                                    logger.warn('[MessageCreate|Fallback] Antigravityでの新規チャット開始に失敗:', chatResult.error);
+                                    (message.channel as any).send(`⚠️ Antigravityで新規チャットを開けませんでした。既存チャットに送信します。`).catch(() => { });
+                                }
+                            } catch (err) {
+                                logger.error('[MessageCreate|Fallback] startNewChat エラー:', err);
+                                (message.channel as any).send(`⚠️ Antigravityで新規チャットを開けませんでした。既存チャットに送信します。`).catch(() => { });
+                            }
+                        }
+
+                        await autoRenameChannel(message, chatSessionRepo, titleGenerator, channelManager, cdp);
+                        await sendPromptToAntigravity(bridge, message, promptText, cdp, modeService, modelService, inboundImages, {
+                            chatSessionService,
+                            chatSessionRepo,
+                            channelManager,
+                            titleGenerator
+                        });
+                    } else {
+                        await message.reply('プロジェクトが設定されていません。`/project` でプロジェクトを作成してください。');
+                    }
                 }
+            } finally {
+                await cleanupInboundImageAttachments(inboundImages);
             }
         }
     });
@@ -950,7 +1471,7 @@ async function autoRenameChannel(
         await channelManager.renameChannel(guild, message.channelId, newName);
         chatSessionRepo.updateDisplayName(message.channelId, title);
     } catch (err) {
-        console.error('[AutoRename] リネーム失敗:', err);
+        logger.error('[AutoRename] リネーム失敗:', err);
     }
 }
 
@@ -1141,6 +1662,8 @@ async function handleSlashInteraction(
     wsHandler: WorkspaceCommandHandler,
     chatHandler: ChatCommandHandler,
     modeService: ModeService,
+    modelService: ModelService,
+    autoAcceptService: AutoAcceptService,
     _client: Client,
 ): Promise<void> {
     const commandName = interaction.commandName;
@@ -1187,6 +1710,7 @@ async function handleSlashInteraction(
                     {
                         name: '🔧 システム', value: [
                             '`/status` — Bot全体のステータスを表示',
+                            '`/autoaccept [on|off|status]` — 承認の自動許可モードを切替',
                             '`/help` — このヘルプを表示',
                         ].join('\n')
                     },
@@ -1260,7 +1784,12 @@ async function handleSlashInteraction(
                 if (followUp instanceof Message) {
                     const cdp = getCurrentCdp(bridge);
                     if (cdp) {
-                        await sendPromptToAntigravity(bridge, followUp, result.prompt, cdp);
+                        await sendPromptToAntigravity(bridge, followUp, result.prompt, cdp, modeService, modelService, [], {
+                            chatSessionService: (chatHandler as any).chatSessionService,
+                            chatSessionRepo: (chatHandler as any).chatSessionRepo,
+                            channelManager: (chatHandler as any).channelManager,
+                            titleGenerator: new TitleGeneratorService()
+                        });
                     }
                 }
             }
@@ -1281,6 +1810,7 @@ async function handleSlashInteraction(
                 .addFields(
                     { name: 'CDP接続', value: activeNames.length > 0 ? `🟢 ${activeNames.length} プロジェクト接続中` : '⚪ 未接続', inline: true },
                     { name: 'モード', value: MODE_DISPLAY_NAMES[currentMode] || currentMode, inline: true },
+                    { name: '自動承認', value: autoAcceptService.isEnabled() ? '🟢 ON' : '⚪ OFF', inline: true },
                 )
                 .setTimestamp();
 
@@ -1297,6 +1827,13 @@ async function handleSlashInteraction(
             }
 
             await interaction.editReply({ embeds: [embed] });
+            break;
+        }
+
+        case 'autoaccept': {
+            const requestedMode = interaction.options.getString('mode') ?? 'status';
+            const result = autoAcceptService.handle(requestedMode);
+            await interaction.editReply({ content: result.message });
             break;
         }
 

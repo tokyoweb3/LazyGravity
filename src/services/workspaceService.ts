@@ -1,5 +1,4 @@
 import fs from 'fs';
-import path from 'path';
 import { resolveSafePath } from '../middleware/sanitize';
 
 /**
@@ -54,7 +53,7 @@ export class WorkspaceService {
      * 指定ワークスペースの絶対パスを返す
      */
     public getWorkspacePath(workspaceName: string): string {
-        return path.join(this.baseDir, workspaceName);
+        return this.validatePath(workspaceName);
     }
 
     /**

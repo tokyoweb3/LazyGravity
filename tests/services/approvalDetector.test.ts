@@ -175,6 +175,64 @@ describe('ApprovalDetector - 承認ボタン検出とリモート実行', () => 
         );
     });
 
+    it('alwaysAllowButton()が直接Allow This Conversationをクリックできること', async () => {
+        mockCdpService.call.mockResolvedValue({
+            result: { value: { ok: true } }
+        });
+
+        detector = new ApprovalDetector({
+            cdpService: mockCdpService,
+            pollIntervalMs: 500,
+            onApprovalRequired: jest.fn(),
+        });
+
+        const result = await detector.alwaysAllowButton();
+
+        expect(result).toBe(true);
+        expect(mockCdpService.call).toHaveBeenCalledWith(
+            'Runtime.evaluate',
+            expect.objectContaining({
+                expression: expect.stringContaining('Allow This Conversation'),
+                returnByValue: true,
+                contextId: 42,
+            })
+        );
+    });
+
+    it('alwaysAllowButton()がAllow Onceのドロップダウン展開後に会話許可をクリックできること', async () => {
+        let expanded = false;
+        mockCdpService.call.mockImplementation(async (_method: string, params: any) => {
+            const expression: string = params.expression || '';
+
+            // ドロップダウン展開スクリプト
+            if (expression.includes('ALLOW_ONCE_PATTERNS')) {
+                expanded = true;
+                return { result: { value: { ok: true, reason: 'toggle-button' } } } as any;
+            }
+
+            // 展開後のみ会話許可ボタンのクリックを成功させる
+            if (expanded && expression.includes('Allow This Conversation')) {
+                return { result: { value: { ok: true } } } as any;
+            }
+
+            return { result: { value: { ok: false } } } as any;
+        });
+
+        detector = new ApprovalDetector({
+            cdpService: mockCdpService,
+            pollIntervalMs: 500,
+            onApprovalRequired: jest.fn(),
+        });
+
+        const result = await detector.alwaysAllowButton();
+
+        expect(result).toBe(true);
+        const expressions = mockCdpService.call.mock.calls
+            .map((call) => call?.[1]?.expression as string);
+        expect(expressions.some((exp) => exp.includes('ALLOW_ONCE_PATTERNS'))).toBe(true);
+        expect(expressions.some((exp) => exp.includes('Allow This Conversation'))).toBe(true);
+    });
+
     // ──────────────────────────────────────────────────────
     // テスト 6: stop()後はポーリングが停止すること
     // ──────────────────────────────────────────────────────

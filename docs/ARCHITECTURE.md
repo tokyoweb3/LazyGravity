@@ -27,22 +27,21 @@ graph TD
 - **入力値の検証とパストラバーサル対策 (Directory Traversal Protection):**
   - ユーザー入力やワークスペース指定に対するディレクトリトラバーサル攻撃（例: `../../etc/passwd`）を防ぐため、基準となるルートディレクトリ（`WORKSPACE_BASE_DIR`）を定義し、すべてのパス解決がその配下に収まることを `path.resolve` 等を用いて厳格にバリデーションします。
 
-## 3. ワークスペース管理（カテゴリ↔ワークスペース、チャンネル↔チャットセッション）
-Discordの **カテゴリ = ワークスペース**、**チャンネル = チャットセッション** として管理します。
+## 3. プロジェクト管理（カテゴリ↔プロジェクト、チャンネル↔チャットセッション）
+Discordの **カテゴリ = プロジェクト**、**チャンネル = チャットセッション** として管理します。
 
 ### 実装済みの機能
-- **`/workspace`**: ベースディレクトリ配下のサブディレクトリ一覧（最大25件）をセレクトメニューで表示。選択するとカテゴリ + `session-1` チャンネルを自動作成しバインド。
-- **`/chat new`**: 現在のワークスペースカテゴリ配下に新しいセッションチャンネル（`session-N`）を作成し、Antigravityで新規チャットを開始。
-- **`/chat status`**: 現在のチャットセッション情報（セッション番号、ワークスペース、リネーム状態）を表示。
-- **`/chat list`**: 同ワークスペースの全チャットセッション一覧を表示。
+- **`/project`**: ベースディレクトリ配下のサブディレクトリ一覧（最大25件）をセレクトメニューで表示。選択するとカテゴリ + `session-1` チャンネルを自動作成しバインド。
+- **`/new`**: 現在のプロジェクトカテゴリ配下に新しいセッションチャンネル（`session-N`）を作成し、Antigravityで新規チャットを開始。
+- **`/chat`**: 現在のチャットセッション情報（セッション番号、プロジェクト、リネーム状態）と同プロジェクトの全セッション一覧を統合表示。
 - **自動リネーム**: セッションチャンネルで初回メッセージ送信時、プロンプト内容からチャンネル名を自動生成してリネーム（例: `session-1` → `1-react認証バグ修正`）。
 
 ### データフロー
-1. ユーザーが `/workspace` → セレクトメニューでワークスペースを選択
+1. ユーザーが `/project` → セレクトメニューでプロジェクトを選択
 2. `ChannelManager.ensureCategory()` でカテゴリを作成、`createSessionChannel()` で `session-1` チャンネルを作成
 3. `WorkspaceBindingRepository` が `workspace_bindings` テーブルに channel_id ↔ workspace_path を永続化
 4. `ChatSessionRepository` が `chat_sessions` テーブルにセッション情報（カテゴリID、セッション番号、リネーム状態）を永続化
-5. `/chat new` → 同カテゴリ配下に `session-N` を新規作成 + Antigravityで新規チャット開始
+5. `/new` → 同カテゴリ配下に `session-N` を新規作成 + Antigravityで新規チャット開始
 6. 初回メッセージ送信時 → `TitleGeneratorService` がタイトル生成 → `ChannelManager.renameChannel()` でリネーム
 
 ### アーキテクチャ
@@ -53,8 +52,8 @@ src/services/workspaceService.ts            — FS操作・パス検証 (scanWor
 src/services/channelManager.ts              — Discord カテゴリ/チャンネル管理 (ensureCategory, createSessionChannel, renameChannel)
 src/services/titleGeneratorService.ts       — チャンネル名自動生成 (CDP経由 + テキスト抽出フォールバック)
 src/services/chatSessionService.ts          — Antigravity UI操作 (CDP経由で新規チャット開始・セッション情報取得)
-src/commands/workspaceCommandHandler.ts     — /workspace コマンド + セレクトメニュー処理
-src/commands/chatCommandHandler.ts          — /chat コマンド (new, status, list)
+src/commands/workspaceCommandHandler.ts     — /project コマンド + セレクトメニュー処理
+src/commands/chatCommandHandler.ts          — /new, /chat コマンド
 ```
 
 ### 将来の拡展

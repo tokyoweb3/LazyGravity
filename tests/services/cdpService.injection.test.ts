@@ -22,6 +22,7 @@ describe('CdpService - メッセージ注入 (Step 5)', () => {
 
     // 各テストで送受信したメッセージを格納
     let receivedMessages: any[] = [];
+    let evaluateResponder: ((req: any) => { ok: boolean; method?: string; error?: string }) | null = null;
 
     // モックコンテキスト設定
     const mockContexts = [
@@ -53,6 +54,7 @@ describe('CdpService - メッセージ注入 (Step 5)', () => {
         mockWss.on('connection', (ws) => {
             serverSocket = ws;
             receivedMessages = [];
+            evaluateResponder = null;
 
             ws.on('message', (message) => {
                 const req = JSON.parse(message.toString());
@@ -66,6 +68,23 @@ describe('CdpService - メッセージ注入 (Step 5)', () => {
                             params: { context: ctx }
                         }));
                     }
+                    ws.send(JSON.stringify({ id: req.id, result: {} }));
+                    return;
+                }
+
+                if (req.method === 'Runtime.evaluate') {
+                    const result = evaluateResponder
+                        ? evaluateResponder(req)
+                        : { ok: false, error: 'No responder configured' };
+
+                    ws.send(JSON.stringify({
+                        id: req.id,
+                        result: { result: { value: result } }
+                    }));
+                    return;
+                }
+
+                if (req.method === 'Input.insertText' || req.method === 'Input.dispatchKeyEvent') {
                     ws.send(JSON.stringify({ id: req.id, result: {} }));
                 }
             });
@@ -93,29 +112,16 @@ describe('CdpService - メッセージ注入 (Step 5)', () => {
         await service.connect();
         await new Promise(r => setTimeout(r, 100)); // コンテキスト受信待機
 
-        // モックサーバーが Runtime.evaluate への応答を返すように設定
-        serverSocket!.on('message', (message) => {
-            const req = JSON.parse(message.toString());
-            if (req.method === 'Runtime.evaluate') {
-                const contextId = req.params.contextId;
-                // cascade-panel (id=2) のコンテキストのみ成功を返す
-                if (contextId === 2) {
-                    serverSocket!.send(JSON.stringify({
-                        id: req.id,
-                        result: { result: { value: { ok: true, method: 'click' } } }
-                    }));
-                } else {
-                    serverSocket!.send(JSON.stringify({
-                        id: req.id,
-                        result: { result: { value: { ok: false, error: 'No editor found' } } }
-                    }));
-                }
-            }
-        });
+        evaluateResponder = (req) => {
+            const contextId = req.params.contextId;
+            if (contextId === 2) return { ok: true, method: 'focus' };
+            return { ok: false, error: 'No editor found' };
+        };
 
         const result = await service.injectMessage('テストメッセージ');
         expect(result.ok).toBe(true);
         expect(result.contextId).toBe(2); // cascade-panel が選ばれること
+        expect(result.method).toBe('enter');
     });
 
     // ─────────────────────────────────────────────────────
@@ -125,27 +131,15 @@ describe('CdpService - メッセージ注入 (Step 5)', () => {
         await service.connect();
         await new Promise(r => setTimeout(r, 100));
 
-        serverSocket!.on('message', (message) => {
-            const req = JSON.parse(message.toString());
-            if (req.method === 'Runtime.evaluate') {
-                const contextId = req.params.contextId;
-                // contextId=3 (Extension) のみ成功
-                if (contextId === 3) {
-                    serverSocket!.send(JSON.stringify({
-                        id: req.id,
-                        result: { result: { value: { ok: true, method: 'enter' } } }
-                    }));
-                } else {
-                    serverSocket!.send(JSON.stringify({
-                        id: req.id,
-                        result: { result: { value: { ok: false, error: 'No editor found' } } }
-                    }));
-                }
-            }
-        });
+        evaluateResponder = (req) => {
+            const contextId = req.params.contextId;
+            if (contextId === 3) return { ok: true, method: 'focus' };
+            return { ok: false, error: 'No editor found' };
+        };
 
         const result = await service.injectMessage('フォールバックテスト');
         expect(result.ok).toBe(true);
+        expect(result.contextId).toBe(3);
     });
 
     // ─────────────────────────────────────────────────────
@@ -155,15 +149,7 @@ describe('CdpService - メッセージ注入 (Step 5)', () => {
         await service.connect();
         await new Promise(r => setTimeout(r, 100));
 
-        serverSocket!.on('message', (message) => {
-            const req = JSON.parse(message.toString());
-            if (req.method === 'Runtime.evaluate') {
-                serverSocket!.send(JSON.stringify({
-                    id: req.id,
-                    result: { result: { value: { ok: false, error: 'No editor found' } } }
-                }));
-            }
-        });
+        evaluateResponder = () => ({ ok: false, error: 'No editor found' });
 
         const result = await service.injectMessage('失敗するメッセージ');
         expect(result.ok).toBe(false);
@@ -179,31 +165,33 @@ describe('CdpService - メッセージ注入 (Step 5)', () => {
         receivedMessages = []; // リセット
 
         const targetText = '注入テキスト<script>alert("xss")</script>';
-
-        serverSocket!.on('message', (message) => {
-            const req = JSON.parse(message.toString());
-            if (req.method === 'Runtime.evaluate') {
-                serverSocket!.send(JSON.stringify({
-                    id: req.id,
-                    result: { result: { value: { ok: true, method: 'click' } } }
-                }));
-            }
-        });
+        evaluateResponder = (req) => {
+            const contextId = req.params.contextId;
+            if (contextId === 2) return { ok: true, method: 'focus' };
+            return { ok: false, error: 'No editor found' };
+        };
 
         await service.injectMessage(targetText);
 
-        // Runtime.evaluate が呼ばれていること
+        // フォーカス用の Runtime.evaluate が呼ばれていること
         const evaluateCalls = receivedMessages.filter(m => m.method === 'Runtime.evaluate');
         expect(evaluateCalls.length).toBeGreaterThan(0);
 
-        // expression の中にテキストが JSON エスケープされた状態で含まれること
+        // focusScript を実行していること
         const firstCall = evaluateCalls[0];
-        const escapedText = JSON.stringify(targetText);
-        expect(firstCall.params.expression).toContain(escapedText);
-
-        // awaitPromise が true であること（非同期DOMスクリプトのため）
-        expect(firstCall.params.awaitPromise).toBe(true);
+        expect(firstCall.params.expression).toContain('editor.focus()');
         expect(firstCall.params.returnByValue).toBe(true);
+
+        // テキストは Input.insertText で送信されること
+        const insertTextCalls = receivedMessages.filter(m => m.method === 'Input.insertText');
+        expect(insertTextCalls).toHaveLength(1);
+        expect(insertTextCalls[0].params.text).toBe(targetText);
+
+        // Enter キー送信（down/up）が呼ばれること
+        const keyCalls = receivedMessages.filter(m => m.method === 'Input.dispatchKeyEvent');
+        expect(keyCalls).toHaveLength(2);
+        expect(keyCalls[0].params.type).toBe('keyDown');
+        expect(keyCalls[1].params.type).toBe('keyUp');
     });
 
     // ─────────────────────────────────────────────────────

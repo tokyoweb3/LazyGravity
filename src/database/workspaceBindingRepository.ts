@@ -83,6 +83,17 @@ export class WorkspaceBindingRepository {
     }
 
     /**
+     * ワークスペースパスとギルドIDでバインディングを検索する
+     * 同一ワークスペースの重複作成防止に使用
+     */
+    public findByWorkspacePathAndGuildId(workspacePath: string, guildId: string): WorkspaceBindingRecord[] {
+        const rows = this.db.prepare(
+            'SELECT * FROM workspace_bindings WHERE workspace_path = ? AND guild_id = ? ORDER BY id ASC'
+        ).all(workspacePath, guildId) as any[];
+        return rows.map(this.mapRow);
+    }
+
+    /**
      * ギルドIDで全バインディングを検索する
      */
     public findByGuildId(guildId: string): WorkspaceBindingRecord[] {

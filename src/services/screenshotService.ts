@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger';
 import { CdpService } from './cdpService';
 
 /** スクリーンショットのキャプチャオプション */
@@ -89,7 +90,7 @@ export class ScreenshotService {
             };
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            console.error('[ScreenshotService] キャプチャ中にエラーが発生しました:', error);
+            logger.error('[ScreenshotService] キャプチャ中にエラーが発生しました:', error);
             return {
                 success: false,
                 error: message,
@@ -120,7 +121,7 @@ export class ScreenshotService {
             const result = await this.cdpService.call('Page.captureScreenshot', params);
             return result?.data ?? null;
         } catch (error) {
-            console.error('[ScreenshotService] Base64取得中にエラーが発生しました:', error);
+            logger.error('[ScreenshotService] Base64取得中にエラーが発生しました:', error);
             return null;
         }
     }

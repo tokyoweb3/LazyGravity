@@ -32,6 +32,7 @@ function createMockGuild(existingChannels: Array<{ id: string; name: string; typ
     const mockGuild = {
         channels: {
             cache: channelCollection,
+            fetch: jest.fn().mockResolvedValue(channelCollection),
             create: jest.fn(),
         },
     } as unknown as Guild;

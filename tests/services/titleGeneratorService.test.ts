@@ -5,7 +5,7 @@ describe('TitleGeneratorService', () => {
         let service: TitleGeneratorService;
 
         beforeEach(() => {
-            service = new TitleGeneratorService(null);
+            service = new TitleGeneratorService();
         });
 
         it('プロンプトから短いタイトルを生成すること', async () => {
@@ -42,7 +42,7 @@ describe('TitleGeneratorService', () => {
         let service: TitleGeneratorService;
 
         beforeEach(() => {
-            service = new TitleGeneratorService(null);
+            service = new TitleGeneratorService();
         });
 
         it('スペースをハイフンに変換すること', () => {
@@ -84,8 +84,8 @@ describe('TitleGeneratorService', () => {
                 call: jest.fn().mockRejectedValue(new Error('CDP error')),
             } as any;
 
-            const service = new TitleGeneratorService(mockCdp);
-            const title = await service.generateTitle('テスト用プロンプト');
+            const service = new TitleGeneratorService();
+            const title = await service.generateTitle('テスト用プロンプト', mockCdp);
             expect(title).toBeTruthy();
             expect(title).not.toBe('untitled');
         });
@@ -96,8 +96,8 @@ describe('TitleGeneratorService', () => {
                 call: jest.fn().mockResolvedValue({ result: { value: { ok: false } } }),
             } as any;
 
-            const service = new TitleGeneratorService(mockCdp);
-            const title = await service.generateTitle('テスト用プロンプト');
+            const service = new TitleGeneratorService();
+            const title = await service.generateTitle('テスト用プロンプト', mockCdp);
             expect(title).toBeTruthy();
         });
     });

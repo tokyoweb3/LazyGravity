@@ -51,9 +51,22 @@ export class ChannelManager {
         const sanitizedName = this.sanitizeCategoryName(workspacePath);
         const categoryName = `${CATEGORY_PREFIX}${sanitizedName}`;
 
-        const existingCategory = guild.channels.cache.find(
+        // まずキャッシュから検索
+        let existingCategory = guild.channels.cache.find(
             (ch) => ch.type === ChannelType.GuildCategory && ch.name === categoryName
         );
+
+        // キャッシュにない場合は全チャンネルをフェッチして再試行
+        if (!existingCategory) {
+            const channels = await guild.channels.fetch();
+            // Collection.find は null を返さないが、fetchの結果に null が混じる可能性を考慮
+            const found = channels.find(
+                (ch) => ch !== null && ch !== undefined && ch.type === ChannelType.GuildCategory && ch.name === categoryName
+            );
+            if (found) {
+                existingCategory = found;
+            }
+        }
 
         if (existingCategory) {
             return { categoryId: existingCategory.id, created: false };

@@ -2,17 +2,14 @@ import { ProgressSender } from '../../src/services/progressSender';
 
 describe('ProgressSender', () => {
     let mockMessage: any;
-    let mockEdit: jest.Mock;
     let mockReply: jest.Mock;
 
     beforeEach(() => {
         jest.useFakeTimers();
 
-        mockEdit = jest.fn().mockResolvedValue(true);
         mockReply = jest.fn().mockResolvedValue(true);
 
         mockMessage = {
-            edit: mockEdit,
             reply: mockReply,
         };
     });
@@ -22,7 +19,7 @@ describe('ProgressSender', () => {
         jest.clearAllMocks();
     });
 
-    it('should throttle edit calls', () => {
+    it('should throttle reply calls', () => {
         const sender = new ProgressSender({ message: mockMessage, throttleMs: 3000 });
 
         sender.append('chunk 1\n');
@@ -30,14 +27,14 @@ describe('ProgressSender', () => {
         sender.append('chunk 3\n');
 
         // 呼ばれていないことを確認
-        expect(mockEdit).not.toHaveBeenCalled();
+        expect(mockReply).not.toHaveBeenCalled();
 
         // 3000ms 進める
         jest.advanceTimersByTime(3000);
 
         // 1度だけ呼ばれ、バッファされた内容が一気に送られることを確認
-        expect(mockEdit).toHaveBeenCalledTimes(1);
-        expect(mockEdit).toHaveBeenCalledWith(expect.objectContaining({
+        expect(mockReply).toHaveBeenCalledTimes(1);
+        expect(mockReply).toHaveBeenCalledWith(expect.objectContaining({
             content: expect.stringContaining('chunk 1\nchunk 2\nchunk 3\n')
         }));
     });
@@ -48,8 +45,8 @@ describe('ProgressSender', () => {
         sender.append('chunk 1\n');
         sender.forceEmit();
 
-        expect(mockEdit).toHaveBeenCalledTimes(1);
-        expect(mockEdit).toHaveBeenCalledWith(expect.objectContaining({
+        expect(mockReply).toHaveBeenCalledTimes(1);
+        expect(mockReply).toHaveBeenCalledWith(expect.objectContaining({
             content: expect.stringContaining('chunk 1\n')
         }));
     });
@@ -64,12 +61,30 @@ describe('ProgressSender', () => {
 
         jest.advanceTimersByTime(3000);
 
-        // 最大文字数を超えた場合、元のメッセージは「長すぎるため分割・ファイル化します」などで編集 or 別対応される想定
-        // ここでは単純に reply 等で分割して飛ばされる挙動を期待するか、テキストファイルになるかを検証
-        // 簡単のため「新しいメッセージを reply として送信する」動作を期待
-        expect(mockReply).toHaveBeenCalledTimes(1);
-        expect(mockReply).toHaveBeenCalledWith(expect.objectContaining({
-            content: expect.stringContaining(longString) // 分割されて送られたり、または添付ファイルで送られたりする
-        }));
+        const expectedChunks = Math.ceil(longString.length / 50);
+        expect(mockReply).toHaveBeenCalledTimes(expectedChunks);
+
+        const sentBody = mockReply.mock.calls
+            .map((call) => String(call[0]?.content ?? ''))
+            .join('')
+            .replace(/```/g, '')
+            .replace(/\n/g, '');
+        expect(sentBody).toContain(longString);
+    });
+
+    it('should use custom send function when provided', () => {
+        const mockSend = jest.fn().mockResolvedValue(undefined);
+        const sender = new ProgressSender({
+            send: mockSend,
+            throttleMs: 1000,
+            wrapInCodeBlock: false,
+        });
+
+        sender.append('line 1\n');
+        jest.advanceTimersByTime(1000);
+
+        expect(mockSend).toHaveBeenCalledTimes(1);
+        expect(mockSend).toHaveBeenCalledWith('line 1\n');
+        expect(mockReply).not.toHaveBeenCalled();
     });
 });

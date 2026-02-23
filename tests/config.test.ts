@@ -76,4 +76,24 @@ describe('Config', () => {
         const config = loadConfig();
         expect(config.guildId).toEqual('guild123');
     });
+
+    it('AUTO_APPROVE_FILE_EDITS未設定時はfalseになること', () => {
+        process.env.DISCORD_TOKEN = 'secret_token';
+        process.env.CLIENT_ID = 'client123';
+        process.env.ALLOWED_USER_IDS = 'user1';
+        delete process.env.AUTO_APPROVE_FILE_EDITS;
+
+        const config = loadConfig();
+        expect(config.autoApproveFileEdits).toBe(false);
+    });
+
+    it('AUTO_APPROVE_FILE_EDITS=trueで有効化されること', () => {
+        process.env.DISCORD_TOKEN = 'secret_token';
+        process.env.CLIENT_ID = 'client123';
+        process.env.ALLOWED_USER_IDS = 'user1';
+        process.env.AUTO_APPROVE_FILE_EDITS = 'true';
+
+        const config = loadConfig();
+        expect(config.autoApproveFileEdits).toBe(true);
+    });
 });

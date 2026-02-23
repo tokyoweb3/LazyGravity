@@ -1,9 +1,12 @@
+import { logger } from '../utils/logger';
 import { CdpService } from './cdpService';
 
 /** 承認ボタンの情報 */
 export interface ApprovalInfo {
     /** 許可ボタンのテキスト（例: "Allow", "許可"） */
     approveText: string;
+    /** 会話単位の許可ボタンのテキスト（例: "Allow This Conversation", "常に許可"） */
+    alwaysAllowText?: string;
     /** 拒否ボタンのテキスト（例: "Deny", "拒否"） */
     denyText: string;
     /** アクションの説明文（例: "write to file.ts"） */
@@ -25,39 +28,66 @@ export interface ApprovalDetectorOptions {
  * 許可/拒否ボタンをペアで検出し、説明文もフォールバック付きで抽出する。
  */
 const DETECT_APPROVAL_SCRIPT = `(() => {
-    const APPROVE_PATTERNS = ['allow', 'permit', '許可', '承認', '確認', 'accept', 'approve'];
-    const DENY_PATTERNS = ['deny', 'reject', '拒否', 'cancel', 'キャンセル', 'decline'];
+    const ALLOW_ONCE_PATTERNS = ['allow once', 'allow one time', '今回のみ許可', '1回のみ許可', '一度許可'];
+    const ALWAYS_ALLOW_PATTERNS = [
+        'allow this conversation',
+        'allow this chat',
+        'always allow',
+        '常に許可',
+        'この会話を許可',
+    ];
+    const ALLOW_PATTERNS = ['allow', 'permit', '許可', '承認', '確認'];
+    const DENY_PATTERNS = ['deny', '拒否', 'decline'];
 
-    const allButtons = Array.from(document.querySelectorAll('button'));
-    const visibleButtons = allButtons.filter(btn => btn.offsetParent !== null);
+    const normalize = (text) => (text || '').toLowerCase().replace(/\\s+/g, ' ').trim();
 
-    let approveBtn = null;
-    let denyBtn = null;
+    const allButtons = Array.from(document.querySelectorAll('button'))
+        .filter(btn => btn.offsetParent !== null);
 
-    for (const btn of visibleButtons) {
-        const text = (btn.textContent || '').trim();
-        if (!text) continue;
-        const lower = text.toLowerCase();
+    let approveBtn = allButtons.find(btn => {
+        const t = normalize(btn.textContent || '');
+        return ALLOW_ONCE_PATTERNS.some(p => t.includes(p));
+    }) || null;
 
-        if (!approveBtn && APPROVE_PATTERNS.some(p => lower.includes(p))) {
-            approveBtn = btn;
-        }
-        if (!denyBtn && DENY_PATTERNS.some(p => lower.includes(p))) {
-            denyBtn = btn;
-        }
-        if (approveBtn && denyBtn) break;
+    if (!approveBtn) {
+        approveBtn = allButtons.find(btn => {
+            const t = normalize(btn.textContent || '');
+            const isAlways = ALWAYS_ALLOW_PATTERNS.some(p => t.includes(p));
+            return !isAlways && ALLOW_PATTERNS.some(p => t.includes(p));
+        }) || null;
     }
 
     if (!approveBtn) return null;
 
+    const container = approveBtn.closest('[role="dialog"], .modal, .dialog, .approval-container, .permission-dialog')
+        || approveBtn.parentElement?.parentElement
+        || approveBtn.parentElement
+        || document.body;
+
+    const containerButtons = Array.from(container.querySelectorAll('button'))
+        .filter(btn => btn.offsetParent !== null);
+
+    const denyBtn = containerButtons.find(btn => {
+        const t = normalize(btn.textContent || '');
+        return DENY_PATTERNS.some(p => t.includes(p));
+    }) || null;
+
+    if (!denyBtn) return null;
+
+    const alwaysAllowBtn = containerButtons.find(btn => {
+        const t = normalize(btn.textContent || '');
+        return ALWAYS_ALLOW_PATTERNS.some(p => t.includes(p));
+    }) || null;
+
     const approveText = (approveBtn.textContent || '').trim();
-    const denyText = denyBtn ? (denyBtn.textContent || '').trim() : '';
+    const alwaysAllowText = alwaysAllowBtn ? (alwaysAllowBtn.textContent || '').trim() : '';
+    const denyText = (denyBtn.textContent || '').trim();
 
     // 説明文の抽出（複数フォールバック）
     let description = '';
 
     // 1. ダイアログ/モーダル内のpや.description
-    const dialog = approveBtn.closest('[role="dialog"], .modal, .dialog, .approval-container, .permission-dialog');
+    const dialog = container;
     if (dialog) {
         const descEl = dialog.querySelector('p, .description, [data-testid="description"]');
         if (descEl) {
@@ -85,7 +115,80 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
         if (ariaLabel) description = ariaLabel;
     }
 
-    return { approveText, denyText, description };
+    return { approveText, alwaysAllowText, denyText, description };
+})()`;
+
+/**
+ * Allow Once の右側トグルを押して Always Allow のドロップダウンを展開する。
+ */
+const EXPAND_ALWAYS_ALLOW_MENU_SCRIPT = `(() => {
+    const ALLOW_ONCE_PATTERNS = ['allow once', 'allow one time', '今回のみ許可', '1回のみ許可', '一度許可'];
+    const ALWAYS_ALLOW_PATTERNS = [
+        'allow this conversation',
+        'allow this chat',
+        'always allow',
+        '常に許可',
+        'この会話を許可',
+    ];
+
+    const normalize = (text) => (text || '').toLowerCase().replace(/\\s+/g, ' ').trim();
+    const visibleButtons = Array.from(document.querySelectorAll('button'))
+        .filter(btn => btn.offsetParent !== null);
+
+    const directAlways = visibleButtons.find(btn => {
+        const t = normalize(btn.textContent || '');
+        return ALWAYS_ALLOW_PATTERNS.some(p => t.includes(p));
+    });
+    if (directAlways) return { ok: true, reason: 'already-visible' };
+
+    const allowOnceBtn = visibleButtons.find(btn => {
+        const t = normalize(btn.textContent || '');
+        return ALLOW_ONCE_PATTERNS.some(p => t.includes(p));
+    });
+    if (!allowOnceBtn) return { ok: false, error: 'allow-once button not found' };
+
+    const container = allowOnceBtn.closest('[role="dialog"], .modal, .dialog, .approval-container, .permission-dialog')
+        || allowOnceBtn.parentElement?.parentElement
+        || allowOnceBtn.parentElement
+        || document.body;
+
+    const containerButtons = Array.from(container.querySelectorAll('button'))
+        .filter(btn => btn.offsetParent !== null);
+
+    const toggleBtn = containerButtons.find(btn => {
+        if (btn === allowOnceBtn) return false;
+        const text = normalize(btn.textContent || '');
+        const aria = normalize(btn.getAttribute('aria-label') || '');
+        const hasPopup = btn.getAttribute('aria-haspopup');
+        if (hasPopup === 'menu' || hasPopup === 'listbox') return true;
+        if (text === '') return true;
+        return /menu|more|expand|options|dropdown|chevron|arrow/.test(aria);
+    });
+
+    if (toggleBtn) {
+        toggleBtn.click();
+        return { ok: true, reason: 'toggle-button' };
+    }
+
+    const rect = allowOnceBtn.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0) {
+        return { ok: false, error: 'allow-once button rect unavailable' };
+    }
+
+    const clickX = rect.right - Math.max(4, Math.min(12, rect.width * 0.15));
+    const clickY = rect.top + rect.height / 2;
+
+    const events = ['pointerdown', 'mousedown', 'mouseup', 'click'];
+    for (const type of events) {
+        allowOnceBtn.dispatchEvent(new MouseEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            clientX: clickX,
+            clientY: clickY,
+        }));
+    }
+    return { ok: true, reason: 'allow-once-right-edge' };
 })()`;
 
 /**
@@ -96,12 +199,18 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
 function buildClickScript(buttonText: string): string {
     const safeText = JSON.stringify(buttonText);
     return `(() => {
+        const normalize = (text) => (text || '').toLowerCase().replace(/\\s+/g, ' ').trim();
         const text = ${safeText};
+        const wanted = normalize(text);
         const allButtons = Array.from(document.querySelectorAll('button'));
         const target = allButtons.find(btn => {
             if (!btn.offsetParent) return false;
-            const t = (btn.textContent || '').trim();
-            return t.toLowerCase() === text.toLowerCase() || t === text;
+            const buttonText = normalize(btn.textContent || '');
+            const ariaLabel = normalize(btn.getAttribute('aria-label') || '');
+            return buttonText === wanted ||
+                ariaLabel === wanted ||
+                buttonText.includes(wanted) ||
+                ariaLabel.includes(wanted);
         });
         if (!target) return { ok: false, error: 'ボタンが見つかりませんでした: ' + text };
         target.click();
@@ -210,7 +319,7 @@ export class ApprovalDetector {
             }
         } catch (error) {
             // CDPエラーは無視して監視を継続
-            console.error('[ApprovalDetector] ポーリング中にエラーが発生しました:', error);
+            logger.error('[ApprovalDetector] ポーリング中にエラーが発生しました:', error);
         }
     }
 
@@ -222,6 +331,39 @@ export class ApprovalDetector {
     async approveButton(buttonText?: string): Promise<boolean> {
         const text = buttonText ?? this.lastDetectedInfo?.approveText ?? 'Allow';
         return this.clickButton(text);
+    }
+
+    /**
+     * 「Allow This Conversation / Always Allow」を選択する。
+     * 直接ボタンが見えない場合は、Allow Onceのドロップダウンを展開して選択する。
+     */
+    async alwaysAllowButton(): Promise<boolean> {
+        const directCandidates = [
+            this.lastDetectedInfo?.alwaysAllowText,
+            'Allow This Conversation',
+            'Allow This Chat',
+            'この会話を許可',
+            'Always Allow',
+            '常に許可',
+        ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0);
+
+        for (const candidate of directCandidates) {
+            if (await this.clickButton(candidate)) return true;
+        }
+
+        const expanded = await this.runEvaluateScript(EXPAND_ALWAYS_ALLOW_MENU_SCRIPT);
+        if (expanded?.ok !== true) {
+            return false;
+        }
+
+        for (let i = 0; i < 5; i++) {
+            for (const candidate of directCandidates) {
+                if (await this.clickButton(candidate)) return true;
+            }
+            await new Promise((resolve) => setTimeout(resolve, 120));
+        }
+
+        return false;
     }
 
     /**
@@ -240,22 +382,29 @@ export class ApprovalDetector {
      */
     private async clickButton(buttonText: string): Promise<boolean> {
         try {
-            const contextId = this.cdpService.getPrimaryContextId();
-            const callParams: Record<string, unknown> = {
-                expression: buildClickScript(buttonText),
-                returnByValue: true,
-                awaitPromise: false,
-            };
-            if (contextId !== null) {
-                callParams.contextId = contextId;
-            }
-
-            const result = await this.cdpService.call('Runtime.evaluate', callParams);
-            return result?.result?.value?.ok === true;
+            const result = await this.runEvaluateScript(buildClickScript(buttonText));
+            return result?.ok === true;
         } catch (error) {
-            console.error('[ApprovalDetector] ボタンクリック中にエラーが発生しました:', error);
+            logger.error('[ApprovalDetector] ボタンクリック中にエラーが発生しました:', error);
             return false;
         }
+    }
+
+    /**
+     * contextId を指定して Runtime.evaluate を実行し、result.value を返す。
+     */
+    private async runEvaluateScript(expression: string): Promise<any> {
+        const contextId = this.cdpService.getPrimaryContextId();
+        const callParams: Record<string, unknown> = {
+            expression,
+            returnByValue: true,
+            awaitPromise: false,
+        };
+        if (contextId !== null) {
+            callParams.contextId = contextId;
+        }
+        const result = await this.cdpService.call('Runtime.evaluate', callParams);
+        return result?.result?.value;
     }
 
     /** 現在監視中かどうかを返す */

@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import * as https from 'https';
@@ -41,7 +42,7 @@ export class QuotaService {
                 }
             }
         } catch (e) {
-            console.error('Failed to get process info:', e);
+            logger.error('Failed to get process info:', e);
         }
         return null;
     }
@@ -60,7 +61,7 @@ export class QuotaService {
                 }
             }
         } catch (e) {
-            console.error(`Failed to get ports for pid ${pid}:`, e);
+            logger.error(`Failed to get ports for pid ${pid}:`, e);
         }
         return ports;
     }
@@ -116,7 +117,7 @@ export class QuotaService {
     public async fetchQuota(): Promise<ModelQuota[]> {
         let processInfo = await this.getUnixProcessInfo();
         if (!processInfo) {
-            console.error('No language_server process found.');
+            logger.error('No language_server process found.');
             return [];
         }
 

@@ -11,6 +11,7 @@ export interface AppConfig {
     guildId?: string;
     allowedUserIds: string[];
     workspaceBaseDir: string;
+    autoApproveFileEdits: boolean;
 }
 
 export function loadConfig(): AppConfig {
@@ -44,6 +45,7 @@ export function loadConfig(): AppConfig {
 
     // ギルドID（スラッシュコマンドの即時反映用）
     const guildId = process.env.GUILD_ID || undefined;
+    const autoApproveFileEdits = (process.env.AUTO_APPROVE_FILE_EDITS || '').toLowerCase() === 'true';
 
     return {
         discordToken: token,
@@ -51,5 +53,6 @@ export function loadConfig(): AppConfig {
         guildId,
         allowedUserIds,
         workspaceBaseDir,
+        autoApproveFileEdits,
     };
 }

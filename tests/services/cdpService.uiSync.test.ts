@@ -55,7 +55,7 @@ describe('CdpService - UI同期 (Step 9)', () => {
 
         it('未接続時にエラーをスローすること', async () => {
             // isConnected() が false の状態でテスト
-            await expect(cdpService.setUiMode('architect')).rejects.toThrow(
+            await expect(cdpService.setUiMode('plan')).rejects.toThrow(
                 'CDPに接続されていません'
             );
         });
@@ -67,16 +67,16 @@ describe('CdpService - UI同期 (Step 9)', () => {
 
             // callが成功を返すようにスタブ化
             callSpy.mockResolvedValue({
-                result: { value: { ok: true, mode: 'architect' } }
+                result: { value: { ok: true, mode: 'Planning' } }
             });
 
-            const result = await cdpService.setUiMode('architect');
+            const result = await cdpService.setUiMode('plan');
 
             // callが呼ばれたことを確認
             expect(callSpy).toHaveBeenCalledWith(
                 'Runtime.evaluate',
                 expect.objectContaining({
-                    expression: expect.stringContaining('architect'),
+                    expression: expect.stringContaining('plan'),
                     returnByValue: true,
                     awaitPromise: true,
                 })
@@ -84,18 +84,53 @@ describe('CdpService - UI同期 (Step 9)', () => {
             expect(result.ok).toBe(true);
         });
 
+        it('内部モード名がUI表示名にマッピングされること', async () => {
+            (cdpService as any).isConnectedFlag = true;
+            (cdpService as any).ws = mockWsInstance;
+
+            callSpy.mockResolvedValue({
+                result: { value: { ok: true, mode: 'Planning' } }
+            });
+
+            const result = await cdpService.setUiMode('plan');
+
+            // expressionにUI名マッピングが含まれていること
+            const callArgs = callSpy.mock.calls[0][1];
+            expect(callArgs.expression).toContain('Planning');
+            expect(callArgs.expression).toContain('Fast');
+            expect(result.ok).toBe(true);
+            expect(result.mode).toBe('Planning');
+        });
+
         it('UI操作成功時にmode名を返すこと', async () => {
             (cdpService as any).isConnectedFlag = true;
             (cdpService as any).ws = mockWsInstance;
 
             callSpy.mockResolvedValue({
-                result: { value: { ok: true, mode: 'ask' } }
+                result: { value: { ok: true, mode: 'Fast' } }
             });
 
-            const result = await cdpService.setUiMode('ask');
+            const result = await cdpService.setUiMode('fast');
 
             expect(result.ok).toBe(true);
-            expect(result.mode).toBe('ask');
+            expect(result.mode).toBe('Fast');
+        });
+
+        it('expressionがdialogベースのセレクターを使用すること', async () => {
+            (cdpService as any).isConnectedFlag = true;
+            (cdpService as any).ws = mockWsInstance;
+
+            callSpy.mockResolvedValue({
+                result: { value: { ok: true, mode: 'Planning' } }
+            });
+
+            await cdpService.setUiMode('plan');
+
+            const callArgs = callSpy.mock.calls[0][1];
+            // ダイアログベースの検索を使用していること
+            expect(callArgs.expression).toContain('role=\\"dialog\\"');
+            expect(callArgs.expression).toContain('.font-medium');
+            expect(callArgs.expression).toContain('cursor-pointer');
         });
 
         it('DOM要素が見つからない場合、ok: falseを返すこと', async () => {
@@ -103,10 +138,10 @@ describe('CdpService - UI同期 (Step 9)', () => {
             (cdpService as any).ws = mockWsInstance;
 
             callSpy.mockResolvedValue({
-                result: { value: { ok: false, error: 'モードセレクターが見つかりませんでした' } }
+                result: { value: { ok: false, error: 'Mode toggle button not found' } }
             });
 
-            const result = await cdpService.setUiMode('code');
+            const result = await cdpService.setUiMode('plan');
 
             expect(result.ok).toBe(false);
             expect(result.error).toBeDefined();
@@ -118,7 +153,7 @@ describe('CdpService - UI同期 (Step 9)', () => {
 
             callSpy.mockRejectedValue(new Error('CDP通信エラー'));
 
-            const result = await cdpService.setUiMode('code');
+            const result = await cdpService.setUiMode('plan');
 
             expect(result.ok).toBe(false);
             expect(result.error).toContain('CDP通信エラー');

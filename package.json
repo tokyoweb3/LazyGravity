@@ -1,7 +1,7 @@
 {
   "name": "antigravitydiscordclaw",
   "version": "1.0.0",
-  "description": "**AntigravityClaw** は、どこからでもスマホのDiscordアプリを使って、自宅PCで稼働する AI コーディング起動ツール (Antigravity 等) を遠隔操作・対話できるローカル完結型のセキュアなDiscord Botです。",
+  "description": "**AntigravityClaw** is a local, secure Discord Bot that allows you to remote control and interact with AI coding agents (like Antigravity) running on your home PC from your smartphone's Discord app anywhere.",
   "main": "index.js",
   "directories": {
     "doc": "docs"
@@ -30,6 +30,7 @@
     "@types/ws": "^8.18.1",
     "jest": "^30.2.0",
     "ts-jest": "^29.4.6",
+    "ts-morph": "^27.0.2",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
   }

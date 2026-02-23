@@ -15,14 +15,14 @@ describe('ModelService', () => {
 
     describe('setModel - モデルの切り替え', () => {
         it('有効なモデル名を指定した場合、モデルが切り替わること', () => {
-            const result = modelService.setModel('claude-3-opus');
+            const result = modelService.setModel('claude-3.5-sonnet');
             expect(result.success).toBe(true);
-            expect(result.model).toBe('claude-3-opus');
-            expect(modelService.getCurrentModel()).toBe('claude-3-opus');
+            expect(result.model).toBe('claude-3.5-sonnet');
+            expect(modelService.getCurrentModel()).toBe('claude-3.5-sonnet');
         });
 
         it('複数回切り替えても最後に設定したモデルが保持されること', () => {
-            modelService.setModel('claude-3-opus');
+            modelService.setModel('claude-3.5-sonnet');
             modelService.setModel('gemini-2.5-pro');
             expect(modelService.getCurrentModel()).toBe('gemini-2.5-pro');
         });
@@ -52,10 +52,10 @@ describe('ModelService', () => {
             expect(result.model).toBe('o3-mini');
         });
 
-        it('deepseek-r1モデルを設定できること', () => {
-            const result = modelService.setModel('deepseek-r1');
+        it('gemini-2.5-flashモデルを設定できること', () => {
+            const result = modelService.setModel('gemini-2.5-flash');
             expect(result.success).toBe(true);
-            expect(result.model).toBe('deepseek-r1');
+            expect(result.model).toBe('gemini-2.5-flash');
         });
     });
 
@@ -73,10 +73,10 @@ describe('ModelService', () => {
             expect(models).toContain('gemini-2.5-pro');
         });
 
-        it('一覧にはo3-mini, deepseek-r1が含まれていること', () => {
+        it('一覧にはo3-mini, gemini-2.5-flashが含まれていること', () => {
             const models = modelService.getAvailableModels();
             expect(models).toContain('o3-mini');
-            expect(models).toContain('deepseek-r1');
+            expect(models).toContain('gemini-2.5-flash');
         });
     });
 });

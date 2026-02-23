@@ -77,6 +77,9 @@ describe('WorkspaceCommandHandler', () => {
                     cache: {
                         find: jest.fn().mockReturnValue(undefined),
                     },
+                    fetch: jest.fn().mockResolvedValue({
+                        find: jest.fn().mockReturnValue(undefined),
+                    }),
                     create: jest.fn()
                         .mockResolvedValueOnce({ id: 'cat-1', name: '🗂️-selected-project' })
                         .mockResolvedValueOnce({ id: 'new-ch-1', name: 'session-1' }),
@@ -117,7 +120,7 @@ describe('WorkspaceCommandHandler', () => {
             await handler.handleSelectMenu(interaction as any, mockGuild as any);
 
             const call = interaction.update.mock.calls[0][0];
-            expect(call.content).toContain('見つかりません');
+            expect(call.content).toContain('not found');
         });
     });
 

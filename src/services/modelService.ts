@@ -1,3 +1,5 @@
+import { t } from "../utils/i18n";
+
 /**
  * 利用可能なLLMモデル一覧
  * Antigravity（Cursor Fork）のUIで選択可能なモデルに準拠
@@ -52,7 +54,7 @@ export class ModelService {
         if (!modelName || modelName.trim() === '') {
             return {
                 success: false,
-                error: '⚠️ モデル名が指定されていません。利用可能なモデル: ' + AVAILABLE_MODELS.join(', '),
+                error: t('⚠️ Model name not specified. Available models: ') + AVAILABLE_MODELS.join(', '),
             };
         }
 
@@ -61,7 +63,7 @@ export class ModelService {
         if (!AVAILABLE_MODELS.includes(normalized)) {
             return {
                 success: false,
-                error: `⚠️ 無効なモデル "${modelName}" です。利用可能なモデル: ${AVAILABLE_MODELS.join(', ')}`,
+                error: t(`⚠️ Invalid model "${modelName}". Available models: ${AVAILABLE_MODELS.join(', ')}`),
             };
         }
 

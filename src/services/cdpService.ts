@@ -1,5 +1,7 @@
+import { logger } from '../utils/logger';
 import { EventEmitter } from 'events';
 import * as http from 'http';
+import { spawn } from 'child_process';
 import WebSocket from 'ws';
 
 export interface CdpServiceOptions {
@@ -22,6 +24,13 @@ export interface InjectResult {
     method?: string;
     contextId?: number;
     error?: string;
+}
+
+export interface ExtractedResponseImage {
+    name: string;
+    mimeType: string;
+    base64Data?: string;
+    url?: string;
 }
 
 /** UI同期操作結果の型定義 (Step 9) */
@@ -294,9 +303,9 @@ export class CdpService extends EventEmitter {
                 t.url?.includes('workbench'),
         );
 
-        console.error(`[CdpService] ワークスペース "${workspaceDirName}" を検索中 (port=${respondingPort})... workbenchページ ${workbenchPages.length} 件:`);
+        logger.info(`[CdpService] ワークスペース "${workspaceDirName}" を検索中 (port=${respondingPort})... workbenchページ ${workbenchPages.length} 件:`);
         for (const p of workbenchPages) {
-            console.error(`  - title="${p.title}" url=${p.url}`);
+            logger.info(`  - title="${p.title}" url=${p.url}`);
         }
 
         // 1. タイトルマッチ（高速パス）
@@ -306,7 +315,7 @@ export class CdpService extends EventEmitter {
         }
 
         // 2. タイトルマッチ失敗 → CDPプローブ（各ページに接続してdocument.titleを確認）
-        console.error(`[CdpService] タイトルマッチ失敗。CDPプローブで検索します...`);
+        logger.info(`[CdpService] タイトルマッチ失敗。CDPプローブで検索します...`);
         const probeResult = await this.probeWorkbenchPages(workbenchPages, workspaceDirName, workspacePath);
         if (probeResult) {
             return true;
@@ -330,7 +339,7 @@ export class CdpService extends EventEmitter {
         this.targetUrl = page.webSocketDebuggerUrl;
         await this.connect();
         this.currentWorkspaceName = workspaceDirName;
-        console.error(`[CdpService] ワークスペース "${workspaceDirName}" に接続しました`);
+        logger.info(`[CdpService] ワークスペース "${workspaceDirName}" に接続しました`);
 
         return true;
     }
@@ -363,11 +372,11 @@ export class CdpService extends EventEmitter {
                     returnByValue: true,
                 });
                 const liveTitle = result?.result?.value || '';
-                console.error(`[CdpService] プローブ: page.id=${page.id} liveTitle="${liveTitle}"`);
+                logger.debug(`[CdpService] プローブ: page.id=${page.id} liveTitle="${liveTitle}"`);
 
                 if (liveTitle.includes(workspaceDirName)) {
                     this.currentWorkspaceName = workspaceDirName;
-                    console.error(`[CdpService] プローブ成功: "${workspaceDirName}" を検出しました`);
+                    logger.info(`[CdpService] プローブ成功: "${workspaceDirName}" を検出しました`);
                     return true;
                 }
 
@@ -379,7 +388,7 @@ export class CdpService extends EventEmitter {
                     }
                 }
             } catch (e) {
-                console.error(`[CdpService] プローブ失敗 (page.id=${page.id}):`, e);
+                logger.warn(`[CdpService] プローブ失敗 (page.id=${page.id}):`, e);
             }
         }
 
@@ -438,14 +447,14 @@ export class CdpService extends EventEmitter {
             const value = res?.result?.value;
             if (value?.found && value?.value) {
                 const detectedValue = value.value as string;
-                console.error(`[CdpService] フォルダパスプローブ (${value.source}): "${detectedValue}"`);
+                logger.debug(`[CdpService] フォルダパスプローブ (${value.source}): "${detectedValue}"`);
 
                 if (
                     detectedValue.includes(workspaceDirName) ||
                     detectedValue.includes(workspacePath)
                 ) {
                     this.currentWorkspaceName = workspaceDirName;
-                    console.error(`[CdpService] フォルダパスマッチ成功: "${workspaceDirName}"`);
+                    logger.info(`[CdpService] フォルダパスマッチ成功: "${workspaceDirName}"`);
                     return true;
                 }
             }
@@ -458,12 +467,12 @@ export class CdpService extends EventEmitter {
             const pageUrl = urlResult?.result?.value || '';
             if (pageUrl.includes(encodeURIComponent(workspacePath)) || pageUrl.includes(workspaceDirName)) {
                 this.currentWorkspaceName = workspaceDirName;
-                console.error(`[CdpService] URLパラメータマッチ成功: "${workspaceDirName}"`);
+                logger.info(`[CdpService] URLパラメータマッチ成功: "${workspaceDirName}"`);
                 return true;
             }
 
         } catch (e) {
-            console.error(`[CdpService] フォルダパスプローブ失敗:`, e);
+            logger.warn(`[CdpService] フォルダパスプローブ失敗:`, e);
         }
 
         return false;
@@ -476,31 +485,19 @@ export class CdpService extends EventEmitter {
         workspacePath: string,
         workspaceDirName: string,
     ): Promise<boolean> {
-        const { exec } = await import('child_process');
         // Antigravity CLI を使用してフォルダとして開く（ワークスペースモードではなく）。
         // `open -a Antigravity` だとワークスペースとして開かれ、タイトルが
         // "Untitled (Workspace)" になることがある。
         // CLI の --new-window でフォルダとして開けば、タイトルに即座にディレクトリ名が反映される。
         const antigravityCli = '/Applications/Antigravity.app/Contents/Resources/app/bin/antigravity';
-        const command = `"${antigravityCli}" --new-window "${workspacePath}"`;
-        console.error(`[CdpService] Antigravity起動: ${command}`);
-        await new Promise<void>((resolve, reject) => {
-            exec(command, (error) => {
-                if (error) {
-                    // CLIが見つからない場合は open -a にフォールバック
-                    console.error(`[CdpService] CLI起動失敗、open -a にフォールバック: ${error.message}`);
-                    exec(`open -a Antigravity "${workspacePath}"`, (err2) => {
-                        if (err2) {
-                            reject(new Error(`Antigravity起動失敗: ${err2.message}`));
-                            return;
-                        }
-                        resolve();
-                    });
-                    return;
-                }
-                resolve();
-            });
-        });
+        logger.info(`[CdpService] Antigravity起動: ${antigravityCli} --new-window ${workspacePath}`);
+        try {
+            await this.runCommand(antigravityCli, ['--new-window', workspacePath]);
+        } catch (error: any) {
+            // CLIが見つからない場合は open -a にフォールバック
+            logger.warn(`[CdpService] CLI起動失敗、open -a にフォールバック: ${error?.message || String(error)}`);
+            await this.runCommand('open', ['-a', 'Antigravity', workspacePath]);
+        }
 
         // ポーリングで新しいworkbenchページが出現するまで待機（最大30秒）
         const maxWaitMs = 30000;
@@ -564,7 +561,7 @@ export class CdpService extends EventEmitter {
                         (t.title?.includes('Untitled') || t.title === ''),
                 );
                 if (newUntitledPages.length === 1) {
-                    console.error(`[CdpService] 新規Untitledページを検出。"${workspaceDirName}" として接続します (page.id=${newUntitledPages[0].id})`);
+                    logger.info(`[CdpService] 新規Untitledページを検出。"${workspaceDirName}" として接続します (page.id=${newUntitledPages[0].id})`);
                     return this.connectToPage(newUntitledPages[0], workspaceDirName);
                 }
             }
@@ -573,6 +570,24 @@ export class CdpService extends EventEmitter {
         throw new Error(
             `ワークスペース "${workspaceDirName}" のworkbenchページが${maxWaitMs / 1000}秒以内に見つかりませんでした`,
         );
+    }
+
+    private async runCommand(command: string, args: string[]): Promise<void> {
+        await new Promise<void>((resolve, reject) => {
+            const child = spawn(command, args, { stdio: 'ignore' });
+
+            child.once('error', (error) => {
+                reject(error);
+            });
+
+            child.once('close', (code) => {
+                if (code === 0) {
+                    resolve();
+                    return;
+                }
+                reject(new Error(`${command} exited with code ${code ?? 'unknown'}`));
+            });
+        });
     }
 
     /**
@@ -621,7 +636,7 @@ export class CdpService extends EventEmitter {
 
         while (this.reconnectAttemptCount < this.maxReconnectAttempts) {
             this.reconnectAttemptCount++;
-            console.error(
+            logger.error(
                 `[CdpService] 再接続試行 ${this.reconnectAttemptCount}/${this.maxReconnectAttempts}...`
             );
 
@@ -632,13 +647,13 @@ export class CdpService extends EventEmitter {
                 this.contexts = [];
                 await this.discoverTarget();
                 await this.connect();
-                console.error('[CdpService] 再接続成功。');
+                logger.error('[CdpService] 再接続成功。');
                 this.reconnectAttemptCount = 0;
                 this.isReconnecting = false;
                 this.emit('reconnected');
                 return;
             } catch (err) {
-                console.error('[CdpService] 再接続失敗:', err);
+                logger.error('[CdpService] 再接続失敗:', err);
             }
         }
 
@@ -646,7 +661,7 @@ export class CdpService extends EventEmitter {
         const finalError = new Error(
             `CDPへの再接続が${this.maxReconnectAttempts}回失敗しました。手動での再起動が必要です。`
         );
-        console.error('[CdpService]', finalError.message);
+        logger.error('[CdpService]', finalError.message);
         this.emit('reconnectFailed', finalError);
     }
 
@@ -671,6 +686,179 @@ export class CdpService extends EventEmitter {
     }
 
     /**
+     * チャット入力欄にフォーカスする。
+     */
+    private async focusChatInput(): Promise<{ ok: boolean; contextId?: number; error?: string }> {
+        const focusScript = `(() => {
+            const editors = Array.from(document.querySelectorAll('${SELECTORS.CHAT_INPUT}'));
+            const visible = editors.filter(el => el.offsetParent !== null);
+            const editor = visible[visible.length - 1];
+            if (!editor) return { ok: false, error: 'No editor found' };
+            editor.focus();
+            return { ok: true };
+        })()`;
+
+        for (const ctx of this.contexts) {
+            try {
+                const res = await this.call('Runtime.evaluate', {
+                    expression: focusScript,
+                    returnByValue: true,
+                    contextId: ctx.id,
+                });
+                if (res?.result?.value?.ok) {
+                    return { ok: true, contextId: ctx.id };
+                }
+            } catch {
+                // 次のコンテキストへ
+            }
+        }
+
+        return { ok: false, error: 'チャット入力欄が見つかりませんでした' };
+    }
+
+    /**
+     * Enterキーを送信してメッセージを送る。
+     */
+    private async pressEnterToSend(): Promise<void> {
+        await this.call('Input.dispatchKeyEvent', {
+            type: 'keyDown',
+            key: 'Enter',
+            code: 'Enter',
+            windowsVirtualKeyCode: 13,
+            nativeVirtualKeyCode: 13,
+        });
+        await this.call('Input.dispatchKeyEvent', {
+            type: 'keyUp',
+            key: 'Enter',
+            code: 'Enter',
+            windowsVirtualKeyCode: 13,
+            nativeVirtualKeyCode: 13,
+        });
+    }
+
+    /**
+     * UI上の file input を検出し、指定ファイルを添付する。
+     */
+    private async attachImageFiles(filePaths: string[], contextId?: number): Promise<{ ok: boolean; error?: string }> {
+        if (filePaths.length === 0) return { ok: true };
+
+        await this.call('DOM.enable', {});
+
+        const locateInputScript = `(async () => {
+            const wait = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+            const visible = (el) => {
+                if (!el) return false;
+                if (el.offsetParent !== null) return true;
+                const style = window.getComputedStyle(el);
+                if (!style) return false;
+                if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+                const rect = typeof el.getBoundingClientRect === 'function' ? el.getBoundingClientRect() : null;
+                return !!rect && rect.width > 0 && rect.height > 0;
+            };
+            const normalize = (v) => (v || '').toLowerCase();
+            const hasImageAccept = (input) => {
+                const accept = normalize(input.getAttribute('accept'));
+                return !accept || accept.includes('image') || accept.includes('*/*');
+            };
+            const findInput = () => {
+                const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
+                const visibleInput = inputs.find(i => visible(i) && hasImageAccept(i));
+                if (visibleInput) return visibleInput;
+                return inputs.find(hasImageAccept) || null;
+            };
+
+            let input = findInput();
+            if (!input) {
+                const triggerKeywords = ['attach', 'upload', 'image', 'file', '画像', '添付', 'paperclip', 'plus'];
+                const triggers = Array.from(document.querySelectorAll('button, [role="button"]'))
+                    .filter(visible)
+                    .filter((el) => {
+                        const text = normalize(el.textContent);
+                        const aria = normalize(el.getAttribute('aria-label'));
+                        const title = normalize(el.getAttribute('title'));
+                        const cls = normalize(el.getAttribute('class'));
+                        const all = [text, aria, title, cls].join(' ');
+                        return triggerKeywords.some(k => all.includes(k));
+                    })
+                    .slice(-8);
+
+                for (const trigger of triggers) {
+                    if (typeof trigger.click === 'function') {
+                        trigger.click();
+                        await wait(150);
+                        input = findInput();
+                        if (input) break;
+                    }
+                }
+            }
+
+            if (!input) {
+                return { ok: false, error: '画像アップロード入力が見つかりませんでした' };
+            }
+
+            const token = 'agclaw-upload-' + Math.random().toString(36).slice(2, 10);
+            input.setAttribute('data-agclaw-upload-token', token);
+            return { ok: true, token };
+        })()`;
+
+        const callParams: Record<string, unknown> = {
+            expression: locateInputScript,
+            returnByValue: true,
+            awaitPromise: true,
+        };
+        if (contextId !== undefined) {
+            callParams.contextId = contextId;
+        }
+
+        const locateResult = await this.call('Runtime.evaluate', callParams);
+        const locateValue = locateResult?.result?.value;
+        if (!locateValue?.ok || !locateValue?.token) {
+            return { ok: false, error: locateValue?.error || 'file input の特定に失敗しました' };
+        }
+
+        const token = String(locateValue.token);
+        const documentResult = await this.call('DOM.getDocument', { depth: 1, pierce: true });
+        const rootNodeId = documentResult?.root?.nodeId;
+        if (!rootNodeId) {
+            return { ok: false, error: 'DOMルートの取得に失敗しました' };
+        }
+
+        const selector = `input[data-agclaw-upload-token="${token}"]`;
+        const nodeResult = await this.call('DOM.querySelector', {
+            nodeId: rootNodeId,
+            selector,
+        });
+        const nodeId = nodeResult?.nodeId;
+        if (!nodeId) {
+            return { ok: false, error: 'アップロード入力ノードの取得に失敗しました' };
+        }
+
+        await this.call('DOM.setFileInputFiles', {
+            nodeId,
+            files: filePaths,
+        });
+
+        const notifyScript = `(() => {
+            const input = document.querySelector('${selector}');
+            if (!input) return { ok: false, error: '画像入力が見つかりませんでした' };
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            input.removeAttribute('data-agclaw-upload-token');
+            return { ok: true };
+        })()`;
+
+        await this.call('Runtime.evaluate', {
+            expression: notifyScript,
+            returnByValue: true,
+            awaitPromise: true,
+            ...(contextId !== undefined ? { contextId } : {}),
+        });
+
+        await new Promise(r => setTimeout(r, 250));
+        return { ok: true };
+    }
+
+    /**
      * 指定テキストをAntigravityのチャット入力欄に注入し送信する。
      *
      * 戦略:
@@ -686,59 +874,230 @@ export class CdpService extends EventEmitter {
             throw new Error('CDPに接続されていません。connect()を先に呼んでください。');
         }
 
-        // 1. エディタにフォーカス（任意のコンテキストで実行）
-        const focusScript = `(() => {
-            const editors = Array.from(document.querySelectorAll('${SELECTORS.CHAT_INPUT}'));
-            const visible = editors.filter(el => el.offsetParent !== null);
-            const editor = visible[visible.length - 1];
-            if (!editor) return { ok: false, error: 'No editor found' };
-            editor.focus();
-            return { ok: true };
-        })()`;
-
-        let focused = false;
-        let usedContextId: number | undefined;
-
-        for (const ctx of this.contexts) {
-            try {
-                const res = await this.call('Runtime.evaluate', {
-                    expression: focusScript,
-                    returnByValue: true,
-                    contextId: ctx.id,
-                });
-                if (res?.result?.value?.ok) {
-                    focused = true;
-                    usedContextId = ctx.id;
-                    break;
-                }
-            } catch (_) { /* 次のコンテキストへ */ }
+        const focusResult = await this.focusChatInput();
+        if (!focusResult.ok) {
+            return { ok: false, error: focusResult.error || 'チャット入力欄が見つかりませんでした' };
         }
 
-        if (!focused) {
-            return { ok: false, error: 'チャット入力欄が見つかりませんでした' };
-        }
-
-        // 2. CDP Input.insertText でテキスト入力
+        // 1. CDP Input.insertText でテキスト入力
         await this.call('Input.insertText', { text });
         await new Promise(r => setTimeout(r, 200));
 
-        // 3. Enter キーで送信
-        await this.call('Input.dispatchKeyEvent', {
-            type: 'keyDown',
-            key: 'Enter',
-            code: 'Enter',
-            windowsVirtualKeyCode: 13,
-            nativeVirtualKeyCode: 13,
-        });
-        await this.call('Input.dispatchKeyEvent', {
-            type: 'keyUp',
-            key: 'Enter',
-            code: 'Enter',
-            windowsVirtualKeyCode: 13,
-            nativeVirtualKeyCode: 13,
-        });
+        // 2. Enter キーで送信
+        await this.pressEnterToSend();
 
-        return { ok: true, method: 'enter', contextId: usedContextId };
+        return { ok: true, method: 'enter', contextId: focusResult.contextId };
+    }
+
+    /**
+     * 画像ファイルをUIへ添付した上で、指定テキストを送信する。
+     */
+    async injectMessageWithImageFiles(text: string, imageFilePaths: string[]): Promise<InjectResult> {
+        if (!this.isConnectedFlag || !this.ws) {
+            throw new Error('CDPに接続されていません。connect()を先に呼んでください。');
+        }
+
+        const focusResult = await this.focusChatInput();
+        if (!focusResult.ok) {
+            return { ok: false, error: focusResult.error || 'チャット入力欄が見つかりませんでした' };
+        }
+
+        const attachResult = await this.attachImageFiles(imageFilePaths, focusResult.contextId);
+        if (!attachResult.ok) {
+            return { ok: false, error: attachResult.error || '画像の添付に失敗しました' };
+        }
+
+        await this.call('Input.insertText', { text });
+        await new Promise(r => setTimeout(r, 200));
+        await this.pressEnterToSend();
+
+        return { ok: true, method: 'enter', contextId: focusResult.contextId };
+    }
+
+    /**
+     * 最新AI応答の画像を抽出する。
+     */
+    async extractLatestResponseImages(maxImages: number = 4): Promise<ExtractedResponseImage[]> {
+        if (!this.isConnectedFlag || !this.ws) {
+            return [];
+        }
+
+        const safeMaxImages = Math.max(1, Math.min(8, Math.floor(maxImages)));
+        const expression = `(async () => {
+            const maxImages = ${safeMaxImages};
+            const panel = document.querySelector('.antigravity-agent-side-panel');
+            const scope = panel || document;
+
+            const candidateSelectors = [
+                '.rendered-markdown',
+                '.leading-relaxed.select-text',
+                '.flex.flex-col.gap-y-3',
+                '[data-message-author-role="assistant"]',
+                '[data-message-role="assistant"]',
+                '[class*="assistant-message"]',
+                '[class*="message-content"]',
+                '[class*="markdown-body"]',
+                '.prose',
+            ];
+
+            const responseNodes = [];
+            const seenNodes = new Set();
+            for (const selector of candidateSelectors) {
+                const nodes = scope.querySelectorAll(selector);
+                for (const node of nodes) {
+                    if (!node || seenNodes.has(node)) continue;
+                    seenNodes.add(node);
+                    responseNodes.push(node);
+                }
+            }
+
+            // 応答ノードが見つからない場合は画像抽出しない（UIアイコン誤検出防止）
+            if (responseNodes.length === 0) return [];
+
+            const normalize = (value) => (value || '').toLowerCase();
+            const isLikelyUiImage = (img) => {
+                if (!img) return true;
+                const src = normalize(img.currentSrc || img.src || img.getAttribute('src') || '');
+                const alt = normalize(img.getAttribute('alt') || '');
+                const title = normalize(img.getAttribute('title') || '');
+                const cls = normalize(img.getAttribute('class') || '');
+                const blob = [src, alt, title, cls].join(' ');
+
+                if (blob.includes('icon') || blob.includes('avatar') || blob.includes('emoji')) return true;
+                if (blob.includes('thumb') || blob.includes('good') || blob.includes('bad')) return true;
+                if (src.startsWith('data:image/svg+xml')) return true;
+                if (img.closest('button, [role="button"], nav, header, footer, [class*="toolbar"], [class*="reaction"]')) return true;
+
+                const rect = typeof img.getBoundingClientRect === 'function' ? img.getBoundingClientRect() : null;
+                const w = Number(img.naturalWidth || img.width || rect?.width || 0);
+                const h = Number(img.naturalHeight || img.height || rect?.height || 0);
+                if (w < 96 || h < 96) return true;
+                if ((w * h) < 12000) return true;
+
+                return false;
+            };
+
+            const dedup = new Set();
+            const images = [];
+            for (let i = responseNodes.length - 1; i >= 0; i--) {
+                const node = responseNodes[i];
+                const nodeImages = Array.from(node.querySelectorAll('img'));
+                for (const img of nodeImages) {
+                    if (isLikelyUiImage(img)) continue;
+                    const key = (img.currentSrc || img.src || img.getAttribute('src') || '') + '|' + (img.getAttribute('alt') || '');
+                    if (!key || dedup.has(key)) continue;
+                    dedup.add(key);
+                    images.push(img);
+                }
+                if (images.length >= maxImages) break;
+            }
+
+            if (images.length === 0) return [];
+            const picked = images.slice(-maxImages);
+
+            const normalizeFileName = (value, idx) => {
+                const raw = (value || '').trim();
+                const safe = raw.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '');
+                return safe || ('generated-image-' + (idx + 1));
+            };
+
+            const guessMimeType = (src) => {
+                if (!src) return 'image/png';
+                if (src.startsWith('data:')) {
+                    const match = src.match(/^data:([^;]+);/);
+                    return (match && match[1]) || 'image/png';
+                }
+                const lower = src.toLowerCase();
+                if (lower.includes('.jpg') || lower.includes('.jpeg')) return 'image/jpeg';
+                if (lower.includes('.webp')) return 'image/webp';
+                if (lower.includes('.gif')) return 'image/gif';
+                return 'image/png';
+            };
+
+            const blobToBase64 = (blob) => new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    const value = typeof reader.result === 'string' ? reader.result : '';
+                    const commaIndex = value.indexOf(',');
+                    resolve(commaIndex >= 0 ? value.slice(commaIndex + 1) : value);
+                };
+                reader.onerror = () => reject(reader.error || new Error('read failed'));
+                reader.readAsDataURL(blob);
+            });
+
+            const result = [];
+            for (let i = 0; i < picked.length; i++) {
+                const img = picked[i];
+                const src = img.currentSrc || img.src || img.getAttribute('src') || '';
+                if (!src) continue;
+
+                const baseName = normalizeFileName(img.getAttribute('alt') || img.getAttribute('title'), i);
+                const mimeType = guessMimeType(src);
+                const extensionMap = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' };
+                const ext = extensionMap[mimeType] || 'png';
+                const name = baseName.includes('.') ? baseName : (baseName + '.' + ext);
+
+                if (src.startsWith('data:')) {
+                    const commaIndex = src.indexOf(',');
+                    if (commaIndex > 0) {
+                        result.push({
+                            name,
+                            mimeType,
+                            base64Data: src.slice(commaIndex + 1),
+                        });
+                    }
+                    continue;
+                }
+
+                try {
+                    const response = await fetch(src);
+                    if (!response.ok) throw new Error('fetch failed');
+                    const blob = await response.blob();
+                    const base64Data = await blobToBase64(blob);
+                    result.push({
+                        name,
+                        mimeType: blob.type || mimeType,
+                        base64Data,
+                    });
+                } catch {
+                    result.push({
+                        name,
+                        mimeType,
+                        url: src,
+                    });
+                }
+            }
+
+            return result;
+        })()`;
+
+        try {
+            const contextId = this.getPrimaryContextId();
+            const callParams: Record<string, unknown> = {
+                expression,
+                returnByValue: true,
+                awaitPromise: true,
+            };
+            if (contextId !== null) {
+                callParams.contextId = contextId;
+            }
+
+            const response = await this.call('Runtime.evaluate', callParams);
+            const value = response?.result?.value;
+            if (!Array.isArray(value)) return [];
+
+            return value
+                .filter((item) => item && typeof item === 'object' && typeof item.name === 'string')
+                .map((item) => ({
+                    name: item.name,
+                    mimeType: typeof item.mimeType === 'string' ? item.mimeType : 'image/png',
+                    base64Data: typeof item.base64Data === 'string' ? item.base64Data : undefined,
+                    url: typeof item.url === 'string' ? item.url : undefined,
+                }));
+        } catch {
+            return [];
+        }
+
     }
 
     /**
@@ -887,7 +1246,7 @@ try {
     }
     return [];
 } catch (error: any) {
-    console.error('Failed to get UI models:', error);
+    logger.error('Failed to get UI models:', error);
     return [];
 }
     }

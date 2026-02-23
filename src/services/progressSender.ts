@@ -1,25 +1,33 @@
 import { Message } from 'discord.js';
 
 export interface ProgressSenderOptions {
-    message: Message;
+    message?: Message;
+    send?: (content: string) => Promise<unknown>;
     throttleMs?: number;
     maxLength?: number;
+    wrapInCodeBlock?: boolean;
 }
 
 export class ProgressSender {
     private throttleMs: number;
     private maxLength: number;
+    private wrapInCodeBlock: boolean;
 
     private buffer: string = '';
     private timer: NodeJS.Timeout | null = null;
 
-    private activeMessage: Message;
-    private currentContent: string = '';
+    private sendContent: (content: string) => Promise<unknown>;
 
     constructor(options: ProgressSenderOptions) {
-        this.activeMessage = options.message;
+        if (!options.send && !options.message) {
+            throw new Error('ProgressSender requires either message or send option');
+        }
+        this.sendContent = options.send
+            ? options.send
+            : async (content: string) => options.message!.reply({ content });
         this.throttleMs = options.throttleMs ?? 3000;
         this.maxLength = options.maxLength ?? 4000;
+        this.wrapInCodeBlock = options.wrapInCodeBlock ?? true;
     }
 
     public append(text: string) {
@@ -42,26 +50,27 @@ export class ProgressSender {
         }
 
         if (!this.buffer) return;
+        const payload = this.buffer;
+        this.buffer = '';
 
-        const newContentLength = this.currentContent.length + this.buffer.length;
-
-        if (newContentLength > this.maxLength) {
-            const overflowText = this.buffer;
-            this.buffer = '';
-
-            this.activeMessage.reply({ content: `\`\`\`\n${overflowText}\n\`\`\`` })
-                .then((newMsg) => {
-                    this.activeMessage = newMsg;
-                    this.currentContent = `\`\`\`\n${overflowText}\n\`\`\``;
-                })
-                .catch(() => { });
-
-        } else {
-            this.currentContent += this.buffer;
-            const text = this.currentContent;
-            this.buffer = '';
-
-            this.activeMessage.edit({ content: `\`\`\`\n${text}\n\`\`\`` }).catch(() => { });
+        const chunks = this.splitByLength(payload, this.maxLength);
+        for (const chunk of chunks) {
+            const content = this.wrapInCodeBlock ? `\`\`\`\n${chunk}\n\`\`\`` : chunk;
+            this.sendContent(content).catch(() => { });
         }
+    }
+
+    private splitByLength(text: string, maxLength: number): string[] {
+        if (text.length <= maxLength) {
+            return [text];
+        }
+
+        const result: string[] = [];
+        let cursor = 0;
+        while (cursor < text.length) {
+            result.push(text.slice(cursor, cursor + maxLength));
+            cursor += maxLength;
+        }
+        return result;
     }
 }

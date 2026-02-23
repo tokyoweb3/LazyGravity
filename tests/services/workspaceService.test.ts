@@ -101,5 +101,9 @@ describe('WorkspaceService', () => {
         it('ワークスペースの絶対パスを返すこと', () => {
             expect(service.getWorkspacePath('proj')).toBe(path.join(tmpDir, 'proj'));
         });
+
+        it('パストラバーサルを拒否すること', () => {
+            expect(() => service.getWorkspacePath('../outside')).toThrow('Path traversal detected');
+        });
     });
 });

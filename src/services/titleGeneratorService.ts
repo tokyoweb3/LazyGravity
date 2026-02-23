@@ -35,20 +35,16 @@ const GENERATE_TITLE_SCRIPT = `(async (userPrompt) => {
  *   2. フォールバック: ユーザープロンプトから先頭テキストを抽出してサニタイズ
  */
 export class TitleGeneratorService {
-    private readonly cdpService: CdpService | null;
-
-    constructor(cdpService: CdpService | null) {
-        this.cdpService = cdpService;
-    }
-
     /**
      * ユーザーのプロンプトから短いタイトルを生成する
+     * @param prompt ユーザーのプロンプト
+     * @param cdpService オプションのCdpServiceインスタンス
      */
-    async generateTitle(prompt: string): Promise<string> {
+    async generateTitle(prompt: string, cdpService?: CdpService): Promise<string> {
         // CDP経由でAntigravityのLLMを利用する試み
-        if (this.cdpService) {
+        if (cdpService) {
             try {
-                const title = await this.generateViaCdp(prompt);
+                const title = await this.generateViaCdp(prompt, cdpService);
                 if (title) return title;
             } catch {
                 // フォールバックへ
@@ -62,11 +58,9 @@ export class TitleGeneratorService {
     /**
      * CDP経由でAntigravity内のLLM APIを呼び出してタイトルを生成する
      */
-    private async generateViaCdp(prompt: string): Promise<string | null> {
-        if (!this.cdpService) return null;
-
+    private async generateViaCdp(prompt: string, cdpService: CdpService): Promise<string | null> {
         try {
-            const contextId = this.cdpService.getPrimaryContextId();
+            const contextId = cdpService.getPrimaryContextId();
             const cleanPrompt = this.stripWorkspacePrefix(prompt);
 
             const callParams: Record<string, unknown> = {
@@ -78,7 +72,7 @@ export class TitleGeneratorService {
                 callParams.contextId = contextId;
             }
 
-            const result = await this.cdpService.call('Runtime.evaluate', callParams);
+            const result = await cdpService.call('Runtime.evaluate', callParams);
             const value = result?.result?.value;
 
             if (value?.ok && value?.title) {

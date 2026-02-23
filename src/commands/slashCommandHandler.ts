@@ -1,3 +1,4 @@
+import { t } from "../utils/i18n";
 import { ModeService } from '../services/modeService';
 import { ModelService } from '../services/modelService';
 import { TemplateRepository } from '../database/templateRepository';
@@ -36,14 +37,16 @@ export class SlashCommandHandler {
         switch (commandName.toLowerCase()) {
             case 'mode':
                 return this.handleModeCommand(args);
-            case 'models':
+            case 'model':
+            case 'models': // 後方互換
                 return this.handleModelsCommand(args);
-            case 'templates':
+            case 'template':
+            case 'templates': // 後方互換
                 return this.handleTemplatesCommand(args);
             default:
                 return {
                     success: false,
-                    message: `⚠️ 未知のコマンドです: /${commandName}`,
+                    message: t(`⚠️ Unknown command: /${commandName}`),
                 };
         }
     }
@@ -54,7 +57,7 @@ export class SlashCommandHandler {
             const available = this.modeService.getAvailableModes().join(', ');
             return {
                 success: true,
-                message: `⚙️ 現在のモード: **${current}**\n利用可能なモード: ${available}\n変更方法: \`/mode [mode_name]\``,
+                message: t(`⚙️ Current mode: **${current}**\nAvailable modes: ${available}\nTo change: \`/mode [mode_name]\``),
             };
         }
 
@@ -64,12 +67,12 @@ export class SlashCommandHandler {
         if (result.success) {
             return {
                 success: true,
-                message: `✅ モードを **${result.mode}** に変更しました。`,
+                message: t(`✅ Mode changed to **${result.mode}**.`),
             };
         } else {
             return {
                 success: false,
-                message: result.error || '⚠️ 無効なモードです。',
+                message: result.error || t('⚠️ Invalid mode.'),
             };
         }
     }
@@ -85,14 +88,14 @@ export class SlashCommandHandler {
             if (templates.length === 0) {
                 return {
                     success: true,
-                    message: '📝 登録されているテンプレートはありません。',
+                    message: t('📝 No templates registered.'),
                 };
             }
 
             const list = templates.map((t) => `- **${t.name}**`).join('\n');
             return {
                 success: true,
-                message: `📝 登録済みテンプレート一覧:\n${list}\n\n呼び出し方法: \`/templates [テンプレート名]\``,
+                message: t(`📝 Registered Templates:\n${list}\n\nTo use: \`/templates [name]\``),
             };
         }
 
@@ -103,7 +106,7 @@ export class SlashCommandHandler {
             if (args.length < 3) {
                 return {
                     success: false,
-                    message: '⚠️ 引数が不足しています。\n使用方法: `/templates add "テンプレート名" "プロンプト"`',
+                    message: t('⚠️ Missing arguments.\nUsage: `/templates add "name" "prompt"`'),
                 };
             }
             const name = args[1];
@@ -114,12 +117,12 @@ export class SlashCommandHandler {
                 this.templateRepo.create({ name, prompt });
                 return {
                     success: true,
-                    message: `✅ テンプレート「**${name}**」を登録しました。`,
+                    message: t(`✅ Template **${name}** registered.`),
                 };
             } catch (e: any) {
                 return {
                     success: false,
-                    message: `⚠️ テンプレートの登録に失敗しました。名前が重複している可能性があります。`,
+                    message: t(`⚠️ Failed to register template. Name might be duplicated.`),
                 };
             }
         }
@@ -129,7 +132,7 @@ export class SlashCommandHandler {
             if (args.length < 2) {
                 return {
                     success: false,
-                    message: '⚠️ 削除するテンプレート名を指定してください。\n使用方法: `/templates delete "テンプレート名"`',
+                    message: t('⚠️ Specify a template name to delete.\nUsage: `/templates delete "name"`'),
                 };
             }
             const name = args[1];
@@ -137,12 +140,12 @@ export class SlashCommandHandler {
             if (deleted) {
                 return {
                     success: true,
-                    message: `🗑️ テンプレート「**${name}**」を削除しました。`,
+                    message: t(`🗑️ Template **${name}** deleted.`),
                 };
             } else {
                 return {
                     success: false,
-                    message: `⚠️ テンプレート「**${name}**」は見つかりません。`,
+                    message: t(`⚠️ Template **${name}** not found.`),
                 };
             }
         }
@@ -154,13 +157,13 @@ export class SlashCommandHandler {
         if (!template) {
             return {
                 success: false,
-                message: `⚠️ テンプレート「**${templateName}**」は見つかりません。`,
+                message: t(`⚠️ Template **${templateName}** not found.`),
             };
         }
 
         return {
             success: true,
-            message: `📝 テンプレート「**${templateName}**」を呼び出しました。\nこのプロンプトで処理を開始します。`,
+            message: t(`📝 Invoked template **${templateName}**.\nStarting process with this prompt.`),
             prompt: template.prompt,
         };
     }
