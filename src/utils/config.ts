@@ -14,6 +14,25 @@ export interface AppConfig {
     autoApproveFileEdits: boolean;
 }
 
+export type ResponseDeliveryMode = 'stream';
+
+/**
+ * レスポンス配信経路は stream に一本化する。
+ * 互換のため環境変数は読むが、値に関わらず stream を返す。
+ */
+export function resolveResponseDeliveryMode(): ResponseDeliveryMode {
+    const requested = (
+        process.env.LAZYGRAVITY_RESPONSE_DELIVERY ||
+        process.env.LAZYGRAVITY_RESPONSE_MODE ||
+        'stream'
+    ).trim().toLowerCase();
+
+    if (requested !== 'stream') {
+        return 'stream';
+    }
+    return 'stream';
+}
+
 export function loadConfig(): AppConfig {
     const token = process.env.DISCORD_TOKEN;
     if (!token) {

@@ -1,6 +1,7 @@
 import { Client, GatewayIntentBits, Events } from 'discord.js';
 import { startBot } from '../src/bot';
 import { loadConfig } from '../src/utils/config';
+import { getResponseDeliveryModeForTest } from '../src/bot';
 
 jest.mock('discord.js', () => {
     return {
@@ -102,7 +103,8 @@ jest.mock('../src/utils/config', () => ({
         guildId: 'test_guild_id',
         allowedUserIds: ['123'],
         workspaceBaseDir: '/workspace'
-    })
+    }),
+    resolveResponseDeliveryMode: jest.fn().mockReturnValue('stream'),
 }));
 
 jest.mock('better-sqlite3', () => {
@@ -173,5 +175,10 @@ describe('Bot Startup', () => {
 
     it('calls login with the token from config', () => {
         expect(clientInstance.login).toHaveBeenCalledWith('test_token');
+    });
+
+    it('final-only設定があってもレスポンス配信モードはstream固定であること', () => {
+        process.env.LAZYGRAVITY_RESPONSE_DELIVERY = 'final-only';
+        expect(getResponseDeliveryModeForTest()).toBe('stream');
     });
 });

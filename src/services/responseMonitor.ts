@@ -1,337 +1,14 @@
 import { logger } from '../utils/logger';
 import { CdpService } from './cdpService';
+import {
+    classifyAssistantSegments,
+    extractAssistantSegmentsPayloadScript,
+} from './assistantDomExtractor';
 
 /** Antigravity UIのDOMセレクター定数（レスポンス抽出用） */
 export const RESPONSE_SELECTORS = {
-    /** AIの最新応答テキストを取得する（HTML→Markdown変換） */
-    RESPONSE_TEXT: `(() => {
-        /**
-         * DOM要素をDiscord互換のMarkdownに変換する再帰関数
-         */
-        function htmlToMarkdown(node, context) {
-            context = context || { listDepth: 0, orderedIndex: 0, inPre: false };
-
-            // テキストノード
-            if (node.nodeType === 3) {
-                let text = node.textContent || '';
-                if (!context.inPre) {
-                    // 連続空白を正規化（ただし改行は維持）
-                    text = text.replace(/[ \\t]+/g, ' ');
-                }
-                return text;
-            }
-
-            // 要素ノード以外はスキップ
-            if (node.nodeType !== 1) return '';
-
-            const tag = node.tagName.toLowerCase();
-
-            // 非表示要素をスキップ
-            if (['style', 'script', 'svg', 'link', 'meta', 'noscript'].includes(tag)) return '';
-
-            // CSS定義を含むコードブロックをスキップ
-            if (tag === 'pre' || tag === 'code') {
-                const content = node.textContent || '';
-                if (/@media/.test(content) && /\\{[\\s\\S]*--[\\w-]+:/.test(content)) return '';
-                if (/\\.markdown-alert/.test(content) && content.length > 500) return '';
-            }
-
-            // 子ノードのMarkdownを再帰的に取得するヘルパー
-            function childrenMd(ctx) {
-                let result = '';
-                for (const child of node.childNodes) {
-                    result += htmlToMarkdown(child, ctx || context);
-                }
-                return result;
-            }
-
-            switch (tag) {
-                // 見出し
-                case 'h1': return '\\n# ' + childrenMd().trim() + '\\n';
-                case 'h2': return '\\n## ' + childrenMd().trim() + '\\n';
-                case 'h3': return '\\n### ' + childrenMd().trim() + '\\n';
-                case 'h4': return '\\n#### ' + childrenMd().trim() + '\\n';
-                case 'h5': return '\\n##### ' + childrenMd().trim() + '\\n';
-                case 'h6': return '\\n###### ' + childrenMd().trim() + '\\n';
-
-                // 太字・斜体
-                case 'strong':
-                case 'b':
-                    return '**' + childrenMd().trim() + '**';
-                case 'em':
-                case 'i':
-                    return '*' + childrenMd().trim() + '*';
-
-                // 取り消し線
-                case 's':
-                case 'del':
-                case 'strike':
-                    return '~~' + childrenMd().trim() + '~~';
-
-                // インラインコード
-                case 'code': {
-                    // pre > code の場合は pre 側で処理するのでスキップ
-                    if (node.parentElement && node.parentElement.tagName.toLowerCase() === 'pre') {
-                        return node.textContent || '';
-                    }
-                    const code = node.textContent || '';
-                    return code.includes('\\x60') ? '\\x60\\x60' + code + '\\x60\\x60' : '\\x60' + code + '\\x60';
-                }
-
-                // コードブロック
-                case 'pre': {
-                    const codeEl = node.querySelector('code');
-                    const codeText = codeEl ? codeEl.textContent : node.textContent;
-                    // 言語クラスの検出
-                    let lang = '';
-                    if (codeEl) {
-                        const cls = codeEl.className || '';
-                        const langMatch = cls.match(/language-(\\w+)/);
-                        if (langMatch) lang = langMatch[1];
-                    }
-                    return '\\n\\x60\\x60\\x60' + lang + '\\n' + (codeText || '').trimEnd() + '\\n\\x60\\x60\\x60\\n';
-                }
-
-                // 順序なしリスト
-                case 'ul': {
-                    let result = '\\n';
-                    const items = node.children;
-                    for (let i = 0; i < items.length; i++) {
-                        if (items[i].tagName.toLowerCase() === 'li') {
-                            const indent = '  '.repeat(context.listDepth);
-                            const content = htmlToMarkdown(items[i], {
-                                ...context,
-                                listDepth: context.listDepth + 1,
-                                orderedIndex: 0
-                            }).trim();
-                            result += indent + '- ' + content + '\\n';
-                        }
-                    }
-                    return result;
-                }
-
-                // 順序ありリスト
-                case 'ol': {
-                    let result = '\\n';
-                    const items = node.children;
-                    let idx = parseInt(node.getAttribute('start') || '1', 10);
-                    for (let i = 0; i < items.length; i++) {
-                        if (items[i].tagName.toLowerCase() === 'li') {
-                            const indent = '  '.repeat(context.listDepth);
-                            const content = htmlToMarkdown(items[i], {
-                                ...context,
-                                listDepth: context.listDepth + 1,
-                                orderedIndex: idx
-                            }).trim();
-                            result += indent + idx + '. ' + content + '\\n';
-                            idx++;
-                        }
-                    }
-                    return result;
-                }
-
-                // リストアイテム
-                case 'li':
-                    return childrenMd();
-
-                // テーブル
-                case 'table': {
-                    let result = '\\n';
-                    const rows = node.querySelectorAll('tr');
-                    for (let r = 0; r < rows.length; r++) {
-                        const cells = rows[r].querySelectorAll('th, td');
-                        const cellTexts = [];
-                        for (const cell of cells) {
-                            cellTexts.push(htmlToMarkdown(cell, context).trim().replace(/\\|/g, '\\\\|'));
-                        }
-                        result += '| ' + cellTexts.join(' | ') + ' |\\n';
-                        // ヘッダー行の後にセパレーターを追加
-                        if (r === 0 && rows[r].querySelector('th')) {
-                            result += '| ' + cellTexts.map(() => '---').join(' | ') + ' |\\n';
-                        }
-                    }
-                    return result;
-                }
-
-                // 改行
-                case 'br':
-                    return '\\n';
-
-                // 段落
-                case 'p':
-                    return '\\n' + childrenMd().trim() + '\\n';
-
-                // リンク
-                case 'a': {
-                    const href = node.getAttribute('href') || '';
-                    const linkText = childrenMd().trim();
-                    if (!href || href.startsWith('#') || href.startsWith('javascript:')) {
-                        return linkText;
-                    }
-                    return '[' + linkText + '](' + href + ')';
-                }
-
-                // ブロック引用
-                case 'blockquote': {
-                    const content = childrenMd().trim();
-                    return '\\n' + content.split('\\n').map(line => '> ' + line).join('\\n') + '\\n';
-                }
-
-                // 水平線
-                case 'hr':
-                    return '\\n---\\n';
-
-                // div, span等 — 子要素を再帰処理
-                case 'div': {
-                    const md = childrenMd();
-                    // divは前後に改行を含める（ブロック要素として）
-                    return md.endsWith('\\n') ? md : md + '\\n';
-                }
-
-                // details/summary
-                case 'details':
-                    return childrenMd();
-                case 'summary': {
-                    const text = childrenMd().trim();
-                    return text ? '\\n**' + text + '**\\n' : '';
-                }
-
-                // img
-                case 'img': {
-                    const alt = node.getAttribute('alt') || '';
-                    return alt ? '[' + alt + ']' : '';
-                }
-
-                // その他の要素 — 子要素をそのまま処理
-                default:
-                    return childrenMd();
-            }
-        }
-
-        /**
-         * 変換後のテキストをクリーンアップ
-         */
-        function cleanMarkdown(text) {
-            return text
-                // 3行以上の連続空行を2行に
-                .replace(/\\n{3,}/g, '\\n\\n')
-                // 先頭末尾のトリム
-                .trim();
-        }
-
-        const panel = document.querySelector('.antigravity-agent-side-panel');
-        const scopes = [panel, document].filter(Boolean);
-
-        const looksLikeActivityLog = (text) => {
-            const normalized = (text || '').trim().toLowerCase();
-            if (!normalized) return false;
-
-            const activityPattern = /^(?:analy[sz]ing|reading|writing|running|searching|planning|thinking|processing|loading|executing|testing|debugging|analyzed|read|wrote|ran|処理中|実行中|生成中|思考中|分析中|解析中|読み込み中|書き込み中|待機中)/i;
-            return activityPattern.test(normalized) && normalized.length <= 220;
-        };
-
-        const looksLikeFeedbackFooter = (text) => {
-            const normalized = (text || '').trim().toLowerCase().replace(/\\s+/g, ' ');
-            if (!normalized) return false;
-            return normalized === 'good bad' || normalized === 'good' || normalized === 'bad';
-        };
-
-        const candidateSelectors = [
-            '.rendered-markdown',
-            '.leading-relaxed.select-text',
-            '.flex.flex-col.gap-y-3',
-            '[data-message-author-role="assistant"]',
-            '[data-message-role="assistant"]',
-            '[class*="assistant-message"]',
-            '[class*="message-content"]',
-            '[class*="markdown-body"]',
-            '.prose',
-        ];
-
-        const candidates = [];
-        const seen = new Set();
-        for (const scope of scopes) {
-            for (const selector of candidateSelectors) {
-                const nodes = scope.querySelectorAll(selector);
-                for (const node of nodes) {
-                    if (!node || seen.has(node)) continue;
-                    seen.add(node);
-                    candidates.push(node);
-                }
-            }
-        }
-
-        // エディタ、ターミナル、入力フィールド内の要素を除外するフィルタ
-        const isInsideExcludedArea = (node) => {
-            return node.closest('[contenteditable="true"], textarea, .xterm, [role="textbox"], nav, header, footer, [class*="terminal"], [class*="editor-container"]');
-        };
-
-        for (let i = candidates.length - 1; i >= 0; i--) {
-            const node = candidates[i];
-            if (isInsideExcludedArea(node)) continue;
-            const md = cleanMarkdown(htmlToMarkdown(node, { listDepth: 0, orderedIndex: 0, inPre: false }));
-            if (!md) continue;
-            if (looksLikeActivityLog(md)) continue;
-            if (looksLikeFeedbackFooter(md)) continue;
-            return md;
-        }
-
-        // 最終フォールバック: 可視テキストをそのまま抽出（Markdown変換が合わないUI向け）
-        for (let i = candidates.length - 1; i >= 0; i--) {
-            if (isInsideExcludedArea(candidates[i])) continue;
-            const text = (candidates[i].innerText || '').trim();
-            if (!text) continue;
-            if (looksLikeActivityLog(text)) continue;
-            if (looksLikeFeedbackFooter(text)) continue;
-            return text;
-        }
-
-        // 汎用フォールバック: よく使われるテキストブロックから最後の有効テキストを拾う
-        for (const scope of scopes) {
-            const genericBlocks = scope.querySelectorAll('article, section, div, p, li, pre, blockquote');
-            for (let i = genericBlocks.length - 1; i >= 0; i--) {
-                const node = genericBlocks[i];
-                if (!node) continue;
-                if (node.closest('button, [role="button"], nav, header, footer, textarea, [contenteditable="true"], form')) {
-                    continue;
-                }
-                const text = (node.innerText || '').trim();
-                if (!text || text.length < 8) continue;
-                if (looksLikeActivityLog(text)) continue;
-                if (looksLikeFeedbackFooter(text)) continue;
-                return text;
-            }
-        }
-
-        // 緊急フォールバック: onComplete側の抽出ロジック相当を同梱
-        // （進捗中にも本文が取れる可能性を上げる）
-        try {
-            const emergencyScope = panel || document;
-            const emergencyCandidates = [];
-            const emergencySeen = new Set();
-            for (const selector of candidateSelectors) {
-                const nodes = emergencyScope.querySelectorAll(selector);
-                for (const node of nodes) {
-                    if (!node || emergencySeen.has(node)) continue;
-                    emergencySeen.add(node);
-                    emergencyCandidates.push(node);
-                }
-            }
-            for (let i = emergencyCandidates.length - 1; i >= 0; i--) {
-                const node = emergencyCandidates[i];
-                if (isInsideExcludedArea(node)) continue;
-                const text = cleanMarkdown((node.innerText || node.textContent || '').replace(/\\r/g, ''));
-                if (!text || text.length < 20) continue;
-                if (looksLikeActivityLog(text)) continue;
-                if (/^(good|bad)$/i.test(text)) continue;
-                return text;
-            }
-        } catch {
-            // no-op
-        }
-
-        return null;
-    })()`,
+    /** DOM構造で assistant/thinking/tool/feedback を抽出する */
+    RESPONSE_TEXT: extractAssistantSegmentsPayloadScript(),
     /** 先頭側（DOM順）からテキストを取得する補助セレクタ（baseline回避用） */
     RESPONSE_TEXT_FROM_START: `(() => {
         const panel = document.querySelector('.antigravity-agent-side-panel');
@@ -1033,6 +710,10 @@ export class ResponseMonitor {
     private stopGoneCount: number = 0;
     /** 最後に検出したアクティビティ（重複通知防止） */
     private lastActivities: string = '';
+    /** 直近の抽出ソース（DOM成功時のみ dom-structured） */
+    private lastExtractionSource: 'dom-structured' | 'legacy-fallback' = 'legacy-fallback';
+    /** 直近DOM抽出で得たアクティビティ行 */
+    private lastDomActivityLines: string[] = [];
     /** 最後にテキスト更新を検出した時刻 */
     private lastTextChangeAt: number = 0;
     /** 最後に「進捗シグナル」を検出した時刻（テキスト/アクティビティ変化/ネットワーク完了など） */
@@ -1091,6 +772,8 @@ export class ResponseMonitor {
         this.activitySeen = false;
         this.pollCount = 0;
         this.baselineSuppressionActive = false;
+        this.lastExtractionSource = 'legacy-fallback';
+        this.lastDomActivityLines = [];
         this.trackedRequestIds.clear();
         this.networkFinishedAt = 0;
 
@@ -1110,9 +793,12 @@ export class ResponseMonitor {
                 'Runtime.evaluate',
                 this.buildEvaluateParams(RESPONSE_SELECTORS.RESPONSE_TEXT, true),
             );
-            this.baselineText = baseResult?.result?.value ?? null;
+            const baseline = this.parseResponseSnapshot(baseResult?.result?.value);
+            this.baselineText = baseline.currentText;
             this.baselineSuppressionActive = !!(this.baselineText && this.baselineText.trim().length > 0);
-            logger.debug(`[ResponseMonitor] baseline captured (len=${this.baselineText?.length ?? 0})`);
+            logger.debug(
+                `[ResponseMonitor] baseline captured (len=${this.baselineText?.length ?? 0}, source=${baseline.source})`,
+            );
         } catch {
             this.baselineText = null;
             this.baselineSuppressionActive = false;
@@ -1256,6 +942,36 @@ export class ResponseMonitor {
         }
     }
 
+    private parseResponseSnapshot(rawValue: unknown): {
+        currentText: string | null;
+        activityLines: string[];
+        source: 'dom-structured' | 'legacy-fallback';
+    } {
+        if (typeof rawValue === 'string') {
+            const text = rawValue.trim();
+            return {
+                currentText: text.length > 0 ? text : null,
+                activityLines: [],
+                source: 'legacy-fallback',
+            };
+        }
+
+        if (rawValue && typeof rawValue === 'object') {
+            const classified = classifyAssistantSegments(rawValue as any);
+            return {
+                currentText: classified.finalOutputText || null,
+                activityLines: classified.activityLines,
+                source: classified.diagnostics.source,
+            };
+        }
+
+        return {
+            currentText: null,
+            activityLines: [],
+            source: 'legacy-fallback',
+        };
+    }
+
     private buildEvaluateParams(expression: string, awaitPromise: boolean = true): Record<string, unknown> {
         const params: Record<string, unknown> = {
             expression,
@@ -1358,28 +1074,17 @@ export class ResponseMonitor {
                 // クォータチェック失敗は無視
             }
 
-            // アクティビティ情報の取得
+            // アクティビティ情報の取得（legacy fallback用）
+            let polledActivities: string[] = [];
             try {
                 const actResult = await this.cdpService.call(
                     'Runtime.evaluate',
                     this.buildEvaluateParams(RESPONSE_SELECTORS.ACTIVITY_STATUS, true),
                 );
                 const rawActivities: string[] = actResult?.result?.value ?? [];
-                const activities = rawActivities;
-                if (activities.length > 0) {
-                    this.activitySeen = true;
-                    if (!this.generationStarted) {
-                        this.generationStarted = true;
-                        this.setPhase('thinking', null);
-                        logger.info('[ResponseMonitor] generation start inferred from activity');
-                    }
-                    const actStr = JSON.stringify(activities);
-                    if (actStr !== this.lastActivities) {
-                        this.lastActivities = actStr;
-                        this.lastSignalAt = Date.now();
-                        this.onActivity?.(activities);
-                    }
-                }
+                polledActivities = rawActivities
+                    .map((line) => (line || '').trim())
+                    .filter((line) => line.length > 0);
             } catch {
                 // アクティビティ取得失敗は無視
             }
@@ -1389,7 +1094,30 @@ export class ResponseMonitor {
                 'Runtime.evaluate',
                 this.buildEvaluateParams(RESPONSE_SELECTORS.RESPONSE_TEXT, true),
             );
-            const currentText: string | null = textResult?.result?.value ?? null;
+            const snapshot = this.parseResponseSnapshot(textResult?.result?.value);
+            this.lastExtractionSource = snapshot.source;
+            this.lastDomActivityLines = snapshot.source === 'dom-structured'
+                ? [...snapshot.activityLines]
+                : [];
+            const currentText = snapshot.currentText;
+            const activities = snapshot.source === 'dom-structured' && snapshot.activityLines.length > 0
+                ? snapshot.activityLines
+                : polledActivities;
+
+            if (activities.length > 0) {
+                this.activitySeen = true;
+                if (!this.generationStarted) {
+                    this.generationStarted = true;
+                    this.setPhase('thinking', null);
+                    logger.info('[ResponseMonitor] generation start inferred from activity');
+                }
+                const actStr = JSON.stringify(activities);
+                if (actStr !== this.lastActivities) {
+                    this.lastActivities = actStr;
+                    this.lastSignalAt = Date.now();
+                    this.onActivity?.(activities);
+                }
+            }
 
             // ベースライン（送信前の古い応答）と同じテキストは送信直後のみ無視
             // 生成開始後も同一テキストが返るケースがあるため、恒久的には除外しない。
@@ -1605,6 +1333,14 @@ export class ResponseMonitor {
     /** 最後に取得したテキストを返す */
     getLastText(): string | null {
         return this.lastText;
+    }
+
+    getLastExtractionSource(): 'dom-structured' | 'legacy-fallback' {
+        return this.lastExtractionSource;
+    }
+
+    getLastDomActivityLines(): string[] {
+        return [...this.lastDomActivityLines];
     }
 
     /**

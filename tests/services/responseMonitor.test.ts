@@ -88,6 +88,23 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
             .mockResolvedValueOnce({ result: { value: text } });           // テキスト
     }
 
+    /**
+     * テスト用ヘルパー: poll結果をDOM構造payloadで返す
+     */
+    function mockPollResultWithPayload(
+        mock: jest.Mocked<CdpService>,
+        isGenerating: boolean,
+        payload: any,
+        activities: string[] = [],
+        quotaReached: boolean = false,
+    ) {
+        mock.call
+            .mockResolvedValueOnce({ result: { value: isGenerating } })    // ストップボタン
+            .mockResolvedValueOnce({ result: { value: quotaReached } })    // クォータチェック
+            .mockResolvedValueOnce({ result: { value: activities } })       // アクティビティ
+            .mockResolvedValueOnce({ result: { value: payload } });        // DOM payload
+    }
+
     // ──────────────────────────────────────────────────────
     // テスト 1: 生成中テキストの逐次抽出
     // ──────────────────────────────────────────────────────
@@ -353,6 +370,81 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
 
         await jest.advanceTimersByTimeAsync(500);
         expect(onActivity).toHaveBeenCalledWith(['Analyzed 3 files', 'Reading docs']);
+    });
+
+    // ──────────────────────────────────────────────────────
+    // テスト 8b: DOM payloadから本文/活動ログを分離して通知する
+    // ──────────────────────────────────────────────────────
+    it('DOM payloadではonProgressに本文のみ、onActivityにthinking/toolのみ通知すること', async () => {
+        const onProgress = jest.fn();
+        const onActivity = jest.fn();
+
+        mockCdpService.call.mockResolvedValueOnce({ result: { value: null } });
+        mockPollResultWithPayload(mockCdpService, true, {
+            source: 'dom-structured',
+            extractedAt: Date.now(),
+            segments: [
+                { kind: 'assistant-body', text: '最終回答本文です。', role: 'assistant', messageIndex: 1 },
+                { kind: 'thinking', text: 'Analyzing requirement...', role: 'assistant', messageIndex: 1 },
+                { kind: 'tool-call', text: 'jina-mcp-server / search_web', role: 'assistant', messageIndex: 1 },
+                { kind: 'feedback', text: 'Good', role: 'assistant', messageIndex: 1 },
+            ],
+        });
+
+        monitor = new ResponseMonitor({
+            cdpService: mockCdpService,
+            pollIntervalMs: 500,
+            textStabilityCompleteMs: 0,
+            onProgress,
+            onActivity,
+        });
+        await monitor.start();
+
+        await jest.advanceTimersByTimeAsync(500);
+
+        expect(onProgress).toHaveBeenCalledWith('最終回答本文です。');
+        expect(onActivity).toHaveBeenCalledWith([
+            'Analyzing requirement...',
+            'jina-mcp-server / search_web',
+        ]);
+    });
+
+    // ──────────────────────────────────────────────────────
+    // テスト 8c: DOM payloadの同一内容は重複通知しない
+    // ──────────────────────────────────────────────────────
+    it('DOM payloadが同一なら本文/活動ログとも重複通知しないこと', async () => {
+        const onProgress = jest.fn();
+        const onActivity = jest.fn();
+
+        const payload = {
+            source: 'dom-structured',
+            extractedAt: Date.now(),
+            segments: [
+                { kind: 'assistant-body', text: '重複しない本文', role: 'assistant', messageIndex: 1 },
+                { kind: 'tool-result', text: 'Full output written to output.txt#L1-10', role: 'assistant', messageIndex: 1 },
+            ],
+        };
+
+        mockCdpService.call.mockResolvedValueOnce({ result: { value: null } });
+        mockPollResultWithPayload(mockCdpService, true, payload);
+        mockPollResultWithPayload(mockCdpService, true, payload);
+
+        monitor = new ResponseMonitor({
+            cdpService: mockCdpService,
+            pollIntervalMs: 500,
+            textStabilityCompleteMs: 0,
+            onProgress,
+            onActivity,
+        });
+        await monitor.start();
+
+        await jest.advanceTimersByTimeAsync(500);
+        await jest.advanceTimersByTimeAsync(500);
+
+        expect(onProgress).toHaveBeenCalledTimes(1);
+        expect(onProgress).toHaveBeenCalledWith('重複しない本文');
+        expect(onActivity).toHaveBeenCalledTimes(1);
+        expect(onActivity).toHaveBeenCalledWith(['Full output written to output.txt#L1-10']);
     });
 
     // ──────────────────────────────────────────────────────

@@ -208,6 +208,38 @@ export function splitOutputAndLogs(rawText: string): { output: string; logs: str
     };
 }
 
+export type SeparationSource = 'dom-structured' | 'legacy-fallback';
+
+export function separateOutputForDelivery(params: {
+    rawText: string;
+    domSource: SeparationSource;
+    domOutputText?: string | null;
+    domActivityLines?: string[];
+}): { output: string; logs: string; source: SeparationSource } {
+    const normalizeText = (text: string): string =>
+        (text || '')
+            .replace(/\r/g, '')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+
+    if (params.domSource === 'dom-structured') {
+        const output = normalizeText(params.domOutputText || params.rawText || '');
+        const logs = normalizeText((params.domActivityLines || []).join('\n'));
+        return {
+            output,
+            logs,
+            source: 'dom-structured',
+        };
+    }
+
+    const legacy = splitOutputAndLogs(params.rawText || '');
+    return {
+        output: normalizeText(legacy.output || params.rawText || ''),
+        logs: normalizeText(legacy.logs || ''),
+        source: 'legacy-fallback',
+    };
+}
+
 export function sanitizeActivityLines(raw: string): string {
     const lines = (raw || '')
         .replace(/\r/g, '')

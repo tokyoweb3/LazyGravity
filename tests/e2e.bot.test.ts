@@ -78,7 +78,8 @@ jest.mock('../src/utils/config', () => ({
         guildId: 'test_guild_id',
         allowedUserIds: ['user123'],
         workspaceBaseDir: require('os').tmpdir()
-    })
+    }),
+    resolveResponseDeliveryMode: jest.fn().mockReturnValue('stream'),
 }));
 
 const mockCdpInjectMessage = jest.fn().mockResolvedValue({ ok: true });

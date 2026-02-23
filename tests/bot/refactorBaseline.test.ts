@@ -1,5 +1,6 @@
 import { Client, Events } from 'discord.js';
 import { startBot } from '../../src/bot';
+import { createSerialTaskQueueForTest } from '../../src/bot';
 
 jest.mock('discord.js', () => {
     return {
@@ -110,6 +111,7 @@ jest.mock('../../src/utils/config', () => ({
         allowedUserIds: ['123'],
         workspaceBaseDir: '/workspace',
     }),
+    resolveResponseDeliveryMode: jest.fn().mockReturnValue('stream'),
 }));
 
 jest.mock('better-sqlite3', () => {
@@ -156,5 +158,39 @@ describe('Bot Refactor Baseline', () => {
         const client = (Client as unknown as jest.Mock).mock.results[0].value;
         expect(client.on).toHaveBeenCalledWith(Events.MessageCreate, expect.any(Function));
         expect(client.on).toHaveBeenCalledWith(Events.InteractionCreate, expect.any(Function));
+    });
+
+    it('response/activity 更新キューは相互にブロックしないこと', async () => {
+        const events: string[] = [];
+        const responseQueue = createSerialTaskQueueForTest('response', 'test-trace');
+        const activityQueue = createSerialTaskQueueForTest('activity', 'test-trace');
+
+        let releaseResponseTask!: () => void;
+        const responseBlocked = new Promise<void>((resolve) => {
+            releaseResponseTask = resolve;
+        });
+
+        responseQueue(async () => {
+            events.push('response:start');
+            await responseBlocked;
+            events.push('response:end');
+        }, 'response-task').catch(() => { });
+
+        await Promise.resolve();
+
+        await activityQueue(async () => {
+            events.push('activity:run');
+        }, 'activity-task');
+
+        expect(events).toContain('response:start');
+        expect(events).toContain('activity:run');
+        expect(events).not.toContain('response:end');
+
+        releaseResponseTask();
+        await responseQueue(async () => {
+            events.push('response:after');
+        }, 'response-after');
+
+        expect(events).toContain('response:end');
     });
 });

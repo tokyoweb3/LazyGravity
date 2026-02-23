@@ -1,4 +1,9 @@
-import { formatForDiscord, sanitizeActivityLines, splitOutputAndLogs } from '../../src/utils/discordFormatter';
+import {
+    formatForDiscord,
+    sanitizeActivityLines,
+    splitOutputAndLogs,
+    separateOutputForDelivery,
+} from '../../src/utils/discordFormatter';
 
 describe('discordFormatter', () => {
     describe('formatForDiscord', () => {
@@ -82,6 +87,50 @@ describe('discordFormatter', () => {
             expect(output).toContain('Running tests');
             expect(output).not.toContain('tool call');
             expect(output).not.toContain('show details');
+        });
+    });
+
+    describe('separateOutputForDelivery', () => {
+        it('DOM構造抽出が成功した場合はDOM結果を優先し、raw文字列を使わない', () => {
+            const raw = [
+                'jina-mcp-server / search_web',
+                'Full output written to output.txt',
+                '最終回答本文',
+                'Good',
+            ].join('\n');
+
+            const separated = separateOutputForDelivery({
+                rawText: raw,
+                domSource: 'dom-structured',
+                domOutputText: '最終回答本文',
+                domActivityLines: ['jina-mcp-server / search_web'],
+            });
+
+            expect(separated.source).toBe('dom-structured');
+            expect(separated.output).toBe('最終回答本文');
+            expect(separated.logs).toBe('jina-mcp-server / search_web');
+        });
+
+        it('DOM抽出に失敗した場合のみlegacy文字列分離へフォールバックする', () => {
+            const raw = [
+                'jina-mcp-server / search_web',
+                'Full output written to',
+                'output.txt#L1-10',
+                '',
+                '最終回答本文',
+                '',
+                'Good',
+            ].join('\n');
+
+            const separated = separateOutputForDelivery({
+                rawText: raw,
+                domSource: 'legacy-fallback',
+            });
+
+            expect(separated.source).toBe('legacy-fallback');
+            expect(separated.output).toContain('最終回答本文');
+            expect(separated.output).not.toContain('jina-mcp-server / search_web');
+            expect(separated.logs).toContain('jina-mcp-server / search_web');
         });
     });
 });

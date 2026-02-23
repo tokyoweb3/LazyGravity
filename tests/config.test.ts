@@ -1,4 +1,4 @@
-import { loadConfig } from '../src/utils/config';
+import { loadConfig, resolveResponseDeliveryMode } from '../src/utils/config';
 
 describe('Config', () => {
     const originalEnv = process.env;
@@ -95,5 +95,17 @@ describe('Config', () => {
 
         const config = loadConfig();
         expect(config.autoApproveFileEdits).toBe(true);
+    });
+
+    it('response delivery mode は final-only 指定でも stream に正規化されること', () => {
+        process.env.LAZYGRAVITY_RESPONSE_DELIVERY = 'final-only';
+        expect(resolveResponseDeliveryMode()).toBe('stream');
+
+        process.env.LAZYGRAVITY_RESPONSE_DELIVERY = 'stream';
+        expect(resolveResponseDeliveryMode()).toBe('stream');
+
+        delete process.env.LAZYGRAVITY_RESPONSE_DELIVERY;
+        process.env.LAZYGRAVITY_RESPONSE_MODE = 'final-only';
+        expect(resolveResponseDeliveryMode()).toBe('stream');
     });
 });

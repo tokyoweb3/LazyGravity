@@ -9,7 +9,7 @@ import {
 } from 'discord.js';
 import Database from 'better-sqlite3';
 
-import { loadConfig } from '../utils/config';
+import { loadConfig, resolveResponseDeliveryMode } from '../utils/config';
 import { parseMessageContent } from '../commands/messageParser';
 import { SlashCommandHandler } from '../commands/slashCommandHandler';
 import { registerSlashCommands } from '../commands/registerSlashCommands';
@@ -51,7 +51,7 @@ import {
     parseApprovalCustomId,
 } from '../services/cdpBridgeManager';
 import { buildModeModelLines, splitForEmbedDescription } from '../utils/streamMessageFormatter';
-import { formatForDiscord, sanitizeActivityLines, splitOutputAndLogs } from '../utils/discordFormatter';
+import { formatForDiscord, sanitizeActivityLines, separateOutputForDelivery } from '../utils/discordFormatter';
 import {
     buildPromptWithAttachmentUrls,
     cleanupInboundImageAttachments,
@@ -88,28 +88,40 @@ const PHASE_ICONS = {
 } as const;
 
 const MAX_OUTBOUND_GENERATED_IMAGES = 4;
-const RESPONSE_DELIVERY_MODE = (
-    process.env.LAZYGRAVITY_RESPONSE_DELIVERY ||
-    process.env.LAZYGRAVITY_RESPONSE_MODE ||
-    'final-only'
-).trim().toLowerCase();
-const USE_FINAL_ONLY_RESPONSE = RESPONSE_DELIVERY_MODE !== 'stream';
-const FINAL_ONLY_POLL_INTERVAL_MS = Math.max(
-    400,
-    Number(process.env.LAZYGRAVITY_FINAL_ONLY_POLL_MS || process.env.LAZYGRAVITY_ONE_SHOT_POLL_MS || 1000),
-);
-const FINAL_ONLY_MAX_WAIT_MS = Math.max(
-    15000,
-    Number(process.env.LAZYGRAVITY_FINAL_ONLY_MAX_WAIT_MS || process.env.LAZYGRAVITY_ONE_SHOT_MAX_WAIT_MS || 180000),
-);
-const FINAL_ONLY_STOP_STABLE_MS = Math.max(
-    1000,
-    Number(process.env.LAZYGRAVITY_FINAL_ONLY_STOP_STABLE_MS || process.env.LAZYGRAVITY_ONE_SHOT_STOP_STABLE_MS || 2500),
-);
-const FINAL_ONLY_TEXT_STABLE_MS = Math.max(
-    2000,
-    Number(process.env.LAZYGRAVITY_FINAL_ONLY_TEXT_STABLE_MS || process.env.LAZYGRAVITY_ONE_SHOT_TEXT_STABLE_MS || 10000),
-);
+const RESPONSE_DELIVERY_MODE = resolveResponseDeliveryMode();
+export const getResponseDeliveryModeForTest = (): string => RESPONSE_DELIVERY_MODE;
+
+export function createSerialTaskQueueForTest(queueName: string, traceId: string): (task: () => Promise<void>, label?: string) => Promise<void> {
+    let queue: Promise<void> = Promise.resolve();
+    let queueDepth = 0;
+    let taskSeq = 0;
+
+    return (task: () => Promise<void>, label: string = 'queue-task'): Promise<void> => {
+        taskSeq += 1;
+        const seq = taskSeq;
+        const enqueuedAt = Date.now();
+        queueDepth += 1;
+        logger.debug(`[sendQueue:${traceId}:${queueName}] enqueued #${seq} label=${label} depth=${queueDepth}`);
+
+        queue = queue.then(async () => {
+            const waitMs = Date.now() - enqueuedAt;
+            logger.debug(
+                `[sendQueue:${traceId}:${queueName}] start #${seq} label=${label} wait=${waitMs}ms depth=${queueDepth}`,
+            );
+            try {
+                await task();
+                logger.debug(`[sendQueue:${traceId}:${queueName}] done #${seq} label=${label}`);
+            } catch (err: any) {
+                logger.error(`[sendQueue:${traceId}:${queueName}] error #${seq} label=${label}:`, err?.message || err);
+            } finally {
+                queueDepth = Math.max(0, queueDepth - 1);
+                logger.debug(`[sendQueue:${traceId}:${queueName}] settle #${seq} label=${label} depth=${queueDepth}`);
+            }
+        });
+
+        return queue;
+    };
+}
 
 /**
  * Discordのメッセージ（プロンプト）をAntigravityに送信し、応答を待ってDiscordに返す
@@ -138,35 +150,9 @@ async function sendPromptToAntigravity(
 
     const channel = (message.channel && 'send' in message.channel) ? message.channel as any : null;
     const monitorTraceId = `${message.channelId}:${message.id}`;
-    const enqueueSend = (() => {
-        let queue: Promise<void> = Promise.resolve();
-        let queueDepth = 0;
-        let taskSeq = 0;
-
-        return (task: () => Promise<void>, label: string = 'queue-task') => {
-            taskSeq += 1;
-            const seq = taskSeq;
-            const enqueuedAt = Date.now();
-            queueDepth += 1;
-            logger.debug(`[sendQueue:${monitorTraceId}] enqueued #${seq} label=${label} depth=${queueDepth}`);
-
-            queue = queue.then(async () => {
-                const waitMs = Date.now() - enqueuedAt;
-                logger.debug(`[sendQueue:${monitorTraceId}] start #${seq} label=${label} wait=${waitMs}ms depth=${queueDepth}`);
-                try {
-                    await task();
-                    logger.debug(`[sendQueue:${monitorTraceId}] done #${seq} label=${label}`);
-                } catch (err: any) {
-                    logger.error(`[sendQueue:${monitorTraceId}] error #${seq} label=${label}:`, err?.message || err);
-                } finally {
-                    queueDepth = Math.max(0, queueDepth - 1);
-                    logger.debug(`[sendQueue:${monitorTraceId}] settle #${seq} label=${label} depth=${queueDepth}`);
-                }
-            });
-
-            return queue;
-        };
-    })();
+    const enqueueGeneral = createSerialTaskQueueForTest('general', monitorTraceId);
+    const enqueueResponse = createSerialTaskQueueForTest('response', monitorTraceId);
+    const enqueueActivity = createSerialTaskQueueForTest('activity', monitorTraceId);
 
     const sendEmbed = (
         title: string,
@@ -174,7 +160,7 @@ async function sendPromptToAntigravity(
         color: number,
         fields?: { name: string; value: string; inline?: boolean }[],
         footerText?: string,
-    ): Promise<void> => enqueueSend(async () => {
+    ): Promise<void> => enqueueGeneral(async () => {
         if (!channel) return;
         const embed = new EmbedBuilder()
             .setTitle(title)
@@ -215,7 +201,7 @@ async function sendPromptToAntigravity(
         }
         if (files.length === 0) return;
 
-        await enqueueSend(async () => {
+        await enqueueGeneral(async () => {
             await channel.send({
                 content: t(`🖼️ Detected generated images (${files.length})`),
                 files,
@@ -330,13 +316,24 @@ async function sendPromptToAntigravity(
     let liveResponseUpdateVersion = 0;
     let liveActivityUpdateVersion = 0;
 
-    const PROCESS_LINE_PATTERN = /^(?:\[[A-Z]+\]|\[(?:ResponseMonitor|CdpService|ApprovalDetector|AntigravityLauncher)[^\]]*\]|(?:analy[sz]ing|analy[sz]ed|reading|writing|running|searching|searched|planning|thinking|processing|loading|executing|executed|testing|debugging|thought for|looked|opened|closed|connected|sent|received|parsed|scanned|validated|compared|computed|evaluated|launched|fetched|downloaded|uploaded|committed|pushed|pulled|merged|created|deleted|updated|modified|refactored)\b|(?:処理中|実行中|生成中|思考中|分析中|解析中|読み込み中|書き込み中|待機中))/i;
-    const PROCESS_KEYWORD_PATTERN = /\b(?:run|running|read|reading|write|writing|search|searching|analy[sz]e?|plan(?:ning)?|debug|test|compile|execute|retrieval|directory|commencing|initiating|checking)\b/i;
-    const PROCESS_PARAGRAPH_PATTERN = /(?:thought for\s*<?\d+s|initiating step[- ]by[- ]step action|advancing toward a goal|i[' ]?m now focused|i am now focused|i[' ]?m now zeroing in|i am now zeroing in|carefully considering|analyzing the data|refining my approach|planned execution|next milestone|subsequent stage|plan is forming|progressing steadily|actions to take|aim is to make definitive steps|commencing information retrieval|checking global skills directory|initiating task execution|思考中|これから実行|次の手順|方針を検討)/i;
-    const FIRST_PERSON_PATTERN = /\b(?:i|i'm|i’ve|i'll|i am|my|we|we're|our)\b|(?:私|僕|わたし|我々)/i;
-    const ABSTRACT_PROGRESS_PATTERN = /\b(?:focus|focusing|plan|planning|progress|goal|milestone|subsequent|approach|action|execution|execute|next step|aim|zeroing in|steadily)\b|(?:方針|手順|進捗|目標|計画|実行方針|次の段階)/i;
-    const TOOL_TRACE_LINE_PATTERN = /^(?:mcp tool\b|show details\b|thought for\s*<?\d+s|initiating task execution\b|commencing information retrieval\b|checking global skills directory\b|tool call:|tool result:|calling tool\b|tool response\b|running mcp\b|\[mcp\]|mcp server\b)/i;
     const ACTIVITY_PLACEHOLDER = t('Collecting process logs...');
+    let domStructuredLogged = false;
+    let legacyFallbackLogged = false;
+
+    const logSeparationSource = (source: 'dom-structured' | 'legacy-fallback', context: string): void => {
+        if (source === 'dom-structured') {
+            if (!domStructuredLogged) {
+                domStructuredLogged = true;
+                logger.info(`[sendPromptToAntigravity:${monitorTraceId}] source=dom-structured context=${context}`);
+            }
+            return;
+        }
+
+        if (!legacyFallbackLogged) {
+            legacyFallbackLogged = true;
+            logger.warn(`[sendPromptToAntigravity:${monitorTraceId}] source=legacy-fallback context=${context}`);
+        }
+    };
 
     const buildLiveResponseDescriptions = (text: string): string[] => {
         const normalized = (text || '').trim();
@@ -362,7 +359,7 @@ async function sendPromptToAntigravity(
             expectedVersion?: number;
             skipWhenFinalized?: boolean;
         },
-    ): Promise<void> => enqueueSend(async () => {
+    ): Promise<void> => enqueueResponse(async () => {
         if (opts?.skipWhenFinalized && isFinalized) {
             logger.debug(`[sendPromptToAntigravity:${monitorTraceId}] skip response render after finalized source=${opts?.source ?? 'unknown'}`);
             return;
@@ -418,7 +415,7 @@ async function sendPromptToAntigravity(
             expectedVersion?: number;
             skipWhenFinalized?: boolean;
         },
-    ): Promise<void> => enqueueSend(async () => {
+    ): Promise<void> => enqueueActivity(async () => {
         if (opts?.skipWhenFinalized && isFinalized) {
             logger.debug(`[sendPromptToAntigravity:${monitorTraceId}] skip activity render after finalized source=${opts?.source ?? 'unknown'}`);
             return;
@@ -464,491 +461,9 @@ async function sendPromptToAntigravity(
         }
     }, `upsert-activity:${opts?.source ?? 'unknown'}`);
 
-    const evaluateInContext = async <T>(expression: string, fallbackValue: T, contextId: number | null): Promise<T> => {
-        try {
-            const callParams: Record<string, unknown> = {
-                expression,
-                returnByValue: true,
-                awaitPromise: true,
-            };
-            if (contextId !== null) callParams.contextId = contextId;
-            const res = await cdp.call('Runtime.evaluate', callParams);
-            const value = res?.result?.value;
-            return (value ?? fallbackValue) as T;
-        } catch {
-            return fallbackValue;
-        }
-    };
-
-    const evaluateInPrimaryContext = async <T>(expression: string, fallbackValue: T): Promise<T> => {
-        return evaluateInContext(expression, fallbackValue, cdp.getPrimaryContextId());
-    };
-
-    const getEvaluationContextIds = (): Array<number | null> => {
-        const contexts = cdp.getContexts();
-        const cascade = contexts
-            .filter((ctx) => (ctx.url || '').includes('cascade-panel'))
-            .map((ctx) => ctx.id);
-        const others = contexts
-            .filter((ctx) => !(ctx.url || '').includes('cascade-panel'))
-            .map((ctx) => ctx.id);
-        const primary = cdp.getPrimaryContextId();
-        const ids = [primary, ...cascade, ...others];
-        const seen = new Set<number | null>();
-        const deduped: Array<number | null> = [];
-        for (const id of ids) {
-            if (seen.has(id)) continue;
-            seen.add(id);
-            deduped.push(id);
-        }
-        return deduped;
-    };
-
-    const evaluateBooleanAnyContext = async (expression: string): Promise<boolean> => {
-        for (const contextId of getEvaluationContextIds()) {
-            const value = await evaluateInContext<boolean>(expression, false, contextId);
-            if (value === true) return true;
-        }
-        return false;
-    };
-
-    const evaluateStringAnyContext = async (expression: string): Promise<string> => {
-        for (const contextId of getEvaluationContextIds()) {
-            const value = await evaluateInContext<string | null>(expression, null, contextId);
-            const text = (value || '').trim();
-            if (text) return text;
-        }
-        return '';
-    };
-
-    const evaluateStringArrayAnyContext = async (expression: string): Promise<string[]> => {
-        const merged: string[] = [];
-        const seen = new Set<string>();
-        for (const contextId of getEvaluationContextIds()) {
-            const values = await evaluateInContext<string[]>(expression, [], contextId);
-            for (const value of values || []) {
-                const line = (value || '').trim();
-                if (!line || seen.has(line)) continue;
-                seen.add(line);
-                merged.push(line);
-            }
-        }
-        return merged;
-    };
-
-    const STRICT_PANEL_RESPONSE_TAIL = `(() => {
-        const panel = document.querySelector('.antigravity-agent-side-panel');
-        if (!panel) return null;
-        const selectors = [
-            '.rendered-markdown',
-            '.leading-relaxed.select-text',
-            '.flex.flex-col.gap-y-3',
-            '[data-message-author-role="assistant"]',
-            '[data-message-role="assistant"]',
-            '[class*="assistant-message"]',
-            '[class*="message-content"]',
-            '[class*="markdown-body"]',
-            '.prose',
-        ];
-        // 思考・推論コンテナ内の要素を除外するセレクタ
-        const thinkingContainerSelector = '[class*="thinking"], [class*="reasoning"], [class*="thought"], [class*="tool-call"], [class*="tool_call"]';
-        const isInsideOpenDetails = (el) => {
-            let p = el;
-            while (p) {
-                if (p.tagName && p.tagName.toLowerCase() === 'details' && p.open) return true;
-                p = p.parentElement;
-            }
-            return false;
-        };
-        const isNoise = (text) => {
-            const t = (text || '').replace(/\\s+/g, ' ').trim().toLowerCase();
-            if (!t) return true;
-            if (t === 'good bad' || t === 'good' || t === 'bad') return true;
-            // アクティビティ・ステータスパターン
-            if (/^(?:analy[sz]ing|reading|writing|running|searching|planning|thinking|processing|loading|executing|testing|debugging|処理中|実行中|生成中|思考中)/i.test(t)) return true;
-            // 一人称の思考文パターン（短いテキストのみ — 実際の応答は通常もっと長い）
-            if (t.length <= 250 && /^(?:i'(?:ll|m|ve)|i (?:am|will|need|should|can)|let me|let's|we (?:need|should|can)|my |our |私は|僕は|これから|まず|次に)/i.test(t)) return true;
-            // MCP/ツールトレースパターン
-            if (/^(?:mcp tool[ :]|mcp tool$|tool call:|tool result:|calling tool|running mcp|show details|thought for )/i.test(t)) return true;
-            return false;
-        };
-        const nodes = [];
-        const seen = new Set();
-        for (const selector of selectors) {
-            for (const node of panel.querySelectorAll(selector)) {
-                if (!node || seen.has(node)) continue;
-                // 思考コンテナ内の要素は除外
-                if (node.closest(thinkingContainerSelector) || isInsideOpenDetails(node)) continue;
-                seen.add(node);
-                nodes.push(node);
-            }
-        }
-        for (let i = nodes.length - 1; i >= 0; i--) {
-            const text = (nodes[i].innerText || nodes[i].textContent || '').replace(/\\r/g, '').trim();
-            if (!text || text.length < 8) continue;
-            if (isNoise(text)) continue;
-            return text;
-        }
-        return null;
-    })()`;
-
-    const STRICT_PANEL_RESPONSE_START = `(() => {
-        const panel = document.querySelector('.antigravity-agent-side-panel');
-        if (!panel) return null;
-        const selectors = [
-            '.rendered-markdown',
-            '.leading-relaxed.select-text',
-            '.flex.flex-col.gap-y-3',
-            '[data-message-author-role="assistant"]',
-            '[data-message-role="assistant"]',
-            '[class*="assistant-message"]',
-            '[class*="message-content"]',
-            '[class*="markdown-body"]',
-            '.prose',
-        ];
-        const thinkingContainerSelector = '[class*="thinking"], [class*="reasoning"], [class*="thought"], [class*="tool-call"], [class*="tool_call"]';
-        const isInsideOpenDetails = (el) => {
-            let p = el;
-            while (p) {
-                if (p.tagName && p.tagName.toLowerCase() === 'details' && p.open) return true;
-                p = p.parentElement;
-            }
-            return false;
-        };
-        const isNoise = (text) => {
-            const t = (text || '').replace(/\\s+/g, ' ').trim().toLowerCase();
-            if (!t) return true;
-            if (t === 'good bad' || t === 'good' || t === 'bad') return true;
-            if (/^(?:analy[sz]ing|reading|writing|running|searching|planning|thinking|processing|loading|executing|testing|debugging|処理中|実行中|生成中|思考中)/i.test(t)) return true;
-            if (t.length <= 250 && /^(?:i'(?:ll|m|ve)|i (?:am|will|need|should|can)|let me|let's|we (?:need|should|can)|my |our |私は|僕は|これから|まず|次に)/i.test(t)) return true;
-            if (/^(?:mcp tool[ :]|mcp tool$|tool call:|tool result:|calling tool|running mcp|show details|thought for )/i.test(t)) return true;
-            return false;
-        };
-        const nodes = [];
-        const seen = new Set();
-        for (const selector of selectors) {
-            for (const node of panel.querySelectorAll(selector)) {
-                if (!node || seen.has(node)) continue;
-                if (node.closest(thinkingContainerSelector) || isInsideOpenDetails(node)) continue;
-                seen.add(node);
-                nodes.push(node);
-            }
-        }
-        for (let i = 0; i < nodes.length; i++) {
-            const text = (nodes[i].innerText || nodes[i].textContent || '').replace(/\\r/g, '').trim();
-            if (!text || text.length < 8) continue;
-            if (isNoise(text)) continue;
-            return text;
-        }
-        return null;
-    })()`;
-
-    const stripToolTraceLines = (raw: string): { text: string; dropped: number } => {
-        const lines = (raw || '').replace(/\r/g, '').split('\n');
-        const kept: string[] = [];
-        let inCodeBlock = false;
-        let dropped = 0;
-
-        for (const line of lines) {
-            const trimmed = (line || '').trim();
-            if (trimmed.startsWith('```')) {
-                inCodeBlock = !inCodeBlock;
-                kept.push(line);
-                continue;
-            }
-            if (!inCodeBlock && TOOL_TRACE_LINE_PATTERN.test(trimmed)) {
-                dropped += 1;
-                continue;
-            }
-            kept.push(line);
-        }
-
-        return {
-            text: kept.join('\n').replace(/\n{3,}/g, '\n\n').trim(),
-            dropped,
-        };
-    };
-
-    const isProcessOnlyText = (raw: string): boolean => {
-        const lines = (raw || '')
-            .replace(/\r/g, '')
-            .split('\n')
-            .map((line) => line.trim())
-            .filter((line) => line.length > 0);
-        if (lines.length === 0) return true;
-
-        let processCount = 0;
-        for (const line of lines) {
-            if (
-                TOOL_TRACE_LINE_PATTERN.test(line) ||
-                PROCESS_LINE_PATTERN.test(line) ||
-                PROCESS_PARAGRAPH_PATTERN.test(line) ||
-                (line.length <= 120 && PROCESS_KEYWORD_PATTERN.test(line)) ||
-                (line.length <= 250 && FIRST_PERSON_PATTERN.test(line) && ABSTRACT_PROGRESS_PATTERN.test(line))
-            ) {
-                processCount += 1;
-            }
-        }
-        return processCount === lines.length;
-    };
-
-    const extractLatestResponseForFinalOnly = async (): Promise<{
-        text: string;
-        logs: string;
-        source: 'tail' | 'start' | 'none';
-        droppedToolLines: number;
-    }> => {
-        const tailText = await evaluateStringAnyContext(STRICT_PANEL_RESPONSE_TAIL);
-        const startText = await evaluateStringAnyContext(STRICT_PANEL_RESPONSE_START);
-        const candidates: Array<{ source: 'tail' | 'start'; raw: string }> = [];
-        if (tailText && tailText.trim().length > 0) candidates.push({ source: 'tail', raw: tailText });
-        if (startText && startText.trim().length > 0 && startText !== tailText) candidates.push({ source: 'start', raw: startText });
-
-        let fallbackText = '';
-        let fallbackLogs = '';
-        let fallbackDropped = 0;
-        let fallbackSource: 'tail' | 'start' | 'none' = 'none';
-
-        for (const candidate of candidates) {
-            const separated = splitOutputAndLogs(candidate.raw);
-            const candidateOutput = (separated.output || candidate.raw || '').trim();
-            const stripped = stripToolTraceLines(candidateOutput);
-            const sanitizedLogs = sanitizeActivityLines(separated.logs || '');
-            if (!fallbackText && stripped.text) {
-                fallbackText = stripped.text;
-                fallbackLogs = sanitizedLogs;
-                fallbackDropped = stripped.dropped;
-                fallbackSource = candidate.source;
-            }
-            if (!stripped.text) continue;
-            if (isProcessOnlyText(stripped.text)) continue;
-            return {
-                text: stripped.text,
-                logs: sanitizedLogs,
-                source: candidate.source,
-                droppedToolLines: stripped.dropped,
-            };
-        }
-
-        return {
-            text: fallbackText,
-            logs: fallbackLogs,
-            source: fallbackSource,
-            droppedToolLines: fallbackDropped,
-        };
-    };
-
-    const waitForFinalOnlyCompletion = async (baselineText: string): Promise<{
-        finalText: string;
-        finalLogs: string;
-        reason: string;
-        timedOut: boolean;
-        droppedToolLines: number;
-    }> => {
-        const startedAt = Date.now();
-        let lastText = '';
-        let lastLogs = '';
-        let lastActivitySnapshot = '';
-        let lastTextChangeAt = startedAt;
-        let lastActivityChangeAt = startedAt;  // アクティビティが最後に変化した時刻
-        let stopSignalSeen = false;
-        let activitySignalSeen = false;
-        let activityActiveOnPoll = false;      // 現在のポーリングでアクティビティが返されたか
-        let stopGoneSince = 0;
-        let pollCount = 0;
-        let droppedToolLines = 0;
-        // テキストストリーミング検出: テキストが連続して増加している場合（実際の応答生成中）
-        let textGrowthCount = 0;       // 連続でテキストが増加したポーリング回数
-        let textStreamingSeen = false;  // 3回以上連続で増加 → ストリーミングと判定
-        let prevTextLen = 0;
-        const baselineSnapshot = (baselineText || '').trim();
-        const hasBaselineSnapshot = baselineSnapshot.length > 0;
-
-        logger.info(
-            `[sendPromptToAntigravity:${monitorTraceId}] final-only wait start ` +
-            `poll=${FINAL_ONLY_POLL_INTERVAL_MS}ms maxWait=${FINAL_ONLY_MAX_WAIT_MS}ms stopStable=${FINAL_ONLY_STOP_STABLE_MS}ms textStable=${FINAL_ONLY_TEXT_STABLE_MS}ms`,
-        );
-
-        while (Date.now() - startedAt < FINAL_ONLY_MAX_WAIT_MS) {
-            pollCount += 1;
-            const isGenerating = await evaluateBooleanAnyContext(RESPONSE_SELECTORS.STOP_BUTTON);
-            const activities = await evaluateStringArrayAnyContext(RESPONSE_SELECTORS.ACTIVITY_STATUS);
-            const activityText = sanitizeActivityLines((activities || []).join('\n'));
-            activityActiveOnPoll = !!activityText;
-            if (activityText) {
-                if (activityText !== lastActivitySnapshot) {
-                    lastActivitySnapshot = activityText;
-                    lastActivityChangeAt = Date.now();
-                    lastLogs = sanitizeActivityLines([lastLogs, activityText].filter(Boolean).join('\n'));
-                }
-                activitySignalSeen = true;
-            }
-
-            const extracted = await extractLatestResponseForFinalOnly();
-            droppedToolLines += extracted.droppedToolLines;
-
-            let currentText = extracted.text;
-            if (currentText && hasBaselineSnapshot && currentText.trim() === baselineSnapshot) {
-                currentText = '';
-            }
-
-            if (currentText && currentText !== lastText) {
-                const currentLen = currentText.length;
-
-                // テキストが大幅に短くなった場合 = 新しいソースに切り替わった（応答開始の可能性大）
-                // → 前のフェーズで蓄積したログをリセット
-                if (lastText && currentLen < prevTextLen * 0.5) {
-                    logger.info(
-                        `[sendPromptToAntigravity:${monitorTraceId}] text source shift detected ` +
-                        `(${prevTextLen}→${currentLen}), resetting accumulated logs`,
-                    );
-                    lastLogs = '';
-                    lastActivitySnapshot = '';  // アクティビティの重複チェックもリセット（再取得を許可）
-                    textGrowthCount = 0;
-                }
-
-                // テキスト増加トラッキング
-                if (currentLen > prevTextLen) {
-                    textGrowthCount += 1;
-                    if (textGrowthCount >= 3) {
-                        textStreamingSeen = true;
-                    }
-                } else {
-                    textGrowthCount = 0;
-                }
-                prevTextLen = currentLen;
-
-                lastText = currentText;
-                lastTextChangeAt = Date.now();
-            }
-            if (extracted.logs) {
-                lastLogs = sanitizeActivityLines([lastLogs, extracted.logs].filter(Boolean).join('\n'));
-            }
-
-            if (isGenerating) {
-                stopSignalSeen = true;
-                stopGoneSince = 0;
-            } else if (stopSignalSeen) {
-                // ストップボタンが一度出現してから消えた場合のみタイマーを開始
-                // ストップボタン未出現時にテキストがあるだけでは開始しない（思考中テキストの誤検出防止）
-                if (!stopGoneSince) stopGoneSince = Date.now();
-            }
-
-            const now = Date.now();
-            const textStalledFor = now - lastTextChangeAt;
-            const activityStalledFor = now - lastActivityChangeAt;
-            const stopGoneFor = stopGoneSince ? (now - stopGoneSince) : 0;
-            const generationSignalSeen = stopSignalSeen || activitySignalSeen || !!lastText;
-            // アクティビティがまだ変化し続けている = モデルがまだ処理中
-            const activityStillActive = activityActiveOnPoll && activityStalledFor < 8000;
-
-            if (pollCount % 3 === 0 || (currentText && currentText === lastText)) {
-                logger.debug(
-                    `[sendPromptToAntigravity:${monitorTraceId}] final-only poll#${pollCount} ` +
-                    `stop=${isGenerating} stopSeen=${stopSignalSeen} activitySeen=${activitySignalSeen} textLen=${lastText.length} ` +
-                    `stalled=${textStalledFor}ms actStalled=${activityStalledFor}ms stopGoneFor=${stopGoneFor}ms ` +
-                    `streaming=${textStreamingSeen} actActive=${activityStillActive} source=${extracted.source}`,
-                );
-            }
-
-            // ── 完了判定パス 1: ストップボタン消失 ──
-            if (lastText && generationSignalSeen && !isGenerating && stopGoneFor >= FINAL_ONLY_STOP_STABLE_MS && textStalledFor >= 1200) {
-                return {
-                    finalText: lastText,
-                    finalLogs: lastLogs,
-                    reason: 'stop-stable',
-                    timedOut: false,
-                    droppedToolLines,
-                };
-            }
-
-            // ── 完了判定パス 2: テキスト安定 ──
-            // ストップボタン検出済み → FINAL_ONLY_TEXT_STABLE_MS (デフォルト10s)
-            // ストリーミング検出済み → 3s（応答生成が終わった直後）
-            // それ以外（思考テキストの可能性）→ アクティビティも停止するまで待機
-            const STREAMING_STABLE_MS = 3000;
-            const ACTIVITY_QUIET_MS = 5000; // アクティビティ停止後この時間で完了判定を許可
-
-            if (lastText && generationSignalSeen && !isGenerating) {
-                if (stopSignalSeen && textStalledFor >= FINAL_ONLY_TEXT_STABLE_MS) {
-                    return {
-                        finalText: lastText,
-                        finalLogs: lastLogs,
-                        reason: 'text-stable',
-                        timedOut: false,
-                        droppedToolLines,
-                    };
-                }
-
-                if (textStreamingSeen && textStalledFor >= STREAMING_STABLE_MS) {
-                    return {
-                        finalText: lastText,
-                        finalLogs: lastLogs,
-                        reason: 'text-stable-post-stream',
-                        timedOut: false,
-                        droppedToolLines,
-                    };
-                }
-
-                // ストップボタンもストリーミングも未検出:
-                // アクティビティがまだ変化中 → 完了しない（モデルがまだ処理中）
-                // アクティビティが停止 → テキスト安定後に完了
-                if (!activityStillActive && textStalledFor >= ACTIVITY_QUIET_MS) {
-                    return {
-                        finalText: lastText,
-                        finalLogs: lastLogs,
-                        reason: 'text-stable-activity-quiet',
-                        timedOut: false,
-                        droppedToolLines,
-                    };
-                }
-            }
-
-            // ── 完了判定パス 3: 絶対フォールバック (60s) ──
-            // アクティビティが継続していても、60sを超えたら強制完了
-            if (lastText && generationSignalSeen && textStalledFor >= 60000) {
-                return {
-                    finalText: lastText,
-                    finalLogs: lastLogs,
-                    reason: 'text-stable-fallback',
-                    timedOut: false,
-                    droppedToolLines,
-                };
-            }
-
-            if (!generationSignalSeen && (now - startedAt) >= 30000) {
-                return {
-                    finalText: '',
-                    finalLogs: lastLogs,
-                    reason: 'no-generation-signal-timeout',
-                    timedOut: true,
-                    droppedToolLines,
-                };
-            }
-
-            await new Promise((resolve) => setTimeout(resolve, FINAL_ONLY_POLL_INTERVAL_MS));
-        }
-
-        return {
-            finalText: lastText,
-            finalLogs: lastLogs,
-            reason: 'final-only-timeout',
-            timedOut: true,
-            droppedToolLines,
-        };
-    };
+    logger.info(`[sendPromptToAntigravity:${monitorTraceId}] response mode=${RESPONSE_DELIVERY_MODE}`);
 
     try {
-        let finalOnlyBaselineText = '';
-        if (USE_FINAL_ONLY_RESPONSE) {
-            const baselineProbe = await extractLatestResponseForFinalOnly();
-            finalOnlyBaselineText = baselineProbe.text || '';
-            logger.info(
-                `[sendPromptToAntigravity:${monitorTraceId}] response mode=final-only baselineLen=${finalOnlyBaselineText.length} source=${baselineProbe.source}`,
-            );
-        } else {
-            logger.info(`[sendPromptToAntigravity:${monitorTraceId}] response mode=stream`);
-        }
 
         let injectResult;
         if (inboundImages.length > 0) {
@@ -998,100 +513,6 @@ async function sendPromptToAntigravity(
             { source: 'initial' },
         );
 
-        if (USE_FINAL_ONLY_RESPONSE) {
-            const finalOnlyResult = await waitForFinalOnlyCompletion(finalOnlyBaselineText);
-            isFinalized = true;
-
-            const elapsed = Math.round((Date.now() - startTime) / 1000);
-            const baseText = (finalOnlyResult.finalText && finalOnlyResult.finalText.trim().length > 0)
-                ? finalOnlyResult.finalText
-                : await tryEmergencyExtractText();
-            const separated = splitOutputAndLogs(baseText || '');
-            const finalOutputText = (separated.output || baseText || '').trim();
-            const finalLogText = sanitizeActivityLines([
-                separated.logs || '',
-                finalOnlyResult.finalLogs || '',
-            ].filter(Boolean).join('\n'));
-
-            logger.info(
-                `[sendPromptToAntigravity:${monitorTraceId}] finalize payload source=final-only ` +
-                `reason=${finalOnlyResult.reason} timeout=${finalOnlyResult.timedOut} ` +
-                `outputLen=${finalOutputText.length} logLen=${finalLogText.length} droppedToolLines=${finalOnlyResult.droppedToolLines}`,
-            );
-
-            let quotaReached = false;
-            try {
-                quotaReached = await evaluateInPrimaryContext<boolean>(RESPONSE_SELECTORS.QUOTA_ERROR, false);
-            } catch {
-                // quota check failure is non-critical
-            }
-
-            const activitySummary = [
-                finalLogText || '',
-                ...(quotaReached ? ['⚠️ quota error detected'] : []),
-            ].filter(Boolean).join('\n') || t('配信方式: 最終のみ');
-            liveActivityUpdateVersion += 1;
-            await upsertLiveActivityEmbeds(
-                `${PHASE_ICONS.thinking} プロセスログ`,
-                activitySummary,
-                PHASE_COLORS.thinking,
-                t(`⏱️ Time: ${elapsed}s | Process log`),
-                { source: 'complete', expectedVersion: liveActivityUpdateVersion },
-            );
-
-            liveResponseUpdateVersion += 1;
-            if (finalOutputText && finalOutputText.length > 0) {
-                await upsertLiveResponseEmbeds(
-                    `${PHASE_ICONS.complete} 最終アウトプット`,
-                    finalOutputText,
-                    PHASE_COLORS.complete,
-                    t(`⏱️ Time: ${elapsed}s | Complete`),
-                    { source: 'complete', expectedVersion: liveResponseUpdateVersion },
-                );
-                await sendGeneratedImages(finalOutputText);
-                if (quotaReached) {
-                    await sendEmbed(
-                        '⚠️ モデルクォータ上限到達',
-                        'モデルのクォータ上限に達しました。しばらく待つか、`/model` で別のモデルに切り替えてください。',
-                        0xFF6B6B,
-                        undefined,
-                        'Quota Reached — モデル変更を推奨',
-                    );
-                }
-                await clearWatchingReaction();
-                await message.react(quotaReached ? '⚠️' : '✅').catch(() => { });
-                return;
-            }
-
-            // No valid output text — show quota embed if that was the cause, otherwise timeout/failure
-            if (quotaReached) {
-                await upsertLiveResponseEmbeds(
-                    '⚠️ モデルクォータ上限到達',
-                    'モデルのクォータ上限に達しました。しばらく待つか、`/model` で別のモデルに切り替えてください。',
-                    0xFF6B6B,
-                    'Quota Reached — モデル変更を推奨',
-                    { source: 'complete', expectedVersion: liveResponseUpdateVersion },
-                );
-                await clearWatchingReaction();
-                await message.react('⚠️').catch(() => { });
-                return;
-            }
-
-            const timeoutMessage = finalOnlyResult.timedOut
-                ? t('Final-only mode timeout. Could not extract final response.')
-                : t('Failed to extract response. Use `/screenshot` to verify.');
-            await upsertLiveResponseEmbeds(
-                finalOnlyResult.timedOut ? `${PHASE_ICONS.timeout} タイムアウト` : `${PHASE_ICONS.complete} 完了`,
-                timeoutMessage,
-                finalOnlyResult.timedOut ? PHASE_COLORS.timeout : PHASE_COLORS.complete,
-                t(`⏱️ Time: ${elapsed}s | ${finalOnlyResult.timedOut ? 'Timeout' : 'Complete'}`),
-                { source: 'complete', expectedVersion: liveResponseUpdateVersion },
-            );
-            await clearWatchingReaction();
-            await message.react('⚠️').catch(() => { });
-            return;
-        }
-
         const monitor = new ResponseMonitor({
             cdpService: cdp,
             pollIntervalMs: 1000,
@@ -1112,7 +533,14 @@ async function sendPromptToAntigravity(
 
             onProgress: (text) => {
                 if (isFinalized) return;
-                const separated = splitOutputAndLogs(text);
+                const source = monitor.getLastExtractionSource();
+                const separated = separateOutputForDelivery({
+                    rawText: text,
+                    domSource: source,
+                    domOutputText: source === 'dom-structured' ? text : undefined,
+                    domActivityLines: source === 'dom-structured' ? monitor.getLastDomActivityLines() : undefined,
+                });
+                logSeparationSource(separated.source, 'progress');
                 const sanitizedLogs = sanitizeActivityLines(separated.logs || '');
                 if (separated.output && separated.output.trim().length > 0) {
                     lastProgressText = separated.output;
@@ -1192,7 +620,14 @@ async function sendPromptToAntigravity(
                     const finalResponseText = responseText && responseText.trim().length > 0
                         ? responseText
                         : emergencyText;
-                    const separated = splitOutputAndLogs(finalResponseText);
+                    const source = monitor.getLastExtractionSource();
+                    const separated = separateOutputForDelivery({
+                        rawText: finalResponseText,
+                        domSource: source,
+                        domOutputText: source === 'dom-structured' ? finalResponseText : undefined,
+                        domActivityLines: source === 'dom-structured' ? monitor.getLastDomActivityLines() : undefined,
+                    });
+                    logSeparationSource(separated.source, 'complete');
                     const finalOutputText = separated.output || finalResponseText;
                     const finalLogText = sanitizeActivityLines(
                         [separated.logs || '', lastActivityLogText].filter(Boolean).join('\n'),
@@ -1293,7 +728,14 @@ async function sendPromptToAntigravity(
                     const timeoutText = (lastText && lastText.trim().length > 0)
                         ? lastText
                         : lastProgressText;
-                    const separated = splitOutputAndLogs(timeoutText || '');
+                    const source = monitor.getLastExtractionSource();
+                    const separated = separateOutputForDelivery({
+                        rawText: timeoutText || '',
+                        domSource: source,
+                        domOutputText: source === 'dom-structured' ? (timeoutText || '') : undefined,
+                        domActivityLines: source === 'dom-structured' ? monitor.getLastDomActivityLines() : undefined,
+                    });
+                    logSeparationSource(separated.source, 'timeout');
                     const sanitizedTimeoutLogs = sanitizeActivityLines(
                         [separated.logs || '', lastActivityLogText].filter(Boolean).join('\n'),
                     );
