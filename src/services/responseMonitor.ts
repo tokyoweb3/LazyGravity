@@ -71,6 +71,16 @@ export const RESPONSE_SELECTORS = {
         const SEND_KEYWORDS = ['send', 'submit', 'arrow-right', 'arrow-up', 'paper-plane', '送信'];
         const STOP_ICON_KEYWORDS = ['stop', 'halt', 'interrupt', 'circle-stop', 'square'];
         const CHAT_INPUT_SELECTOR = 'div[role="textbox"]:not(.xterm-helper-textarea), textarea, [contenteditable="true"]';
+        const diagnostics = {
+            panelFound: !!panel,
+            scopeCount: scopes.length,
+            decision: 'none',
+            matchedSelector: null,
+            composerCandidateCount: 0,
+            composerKnownStopCount: 0,
+            composerKnownSendCount: 0,
+            fallbackStopKeywordHits: 0,
+        };
 
         const getRect = (el) => {
             const rect = typeof el?.getBoundingClientRect === 'function' ? el.getBoundingClientRect() : null;
@@ -224,15 +234,27 @@ export const RESPONSE_SELECTORS = {
         for (const scope of scopes) {
             for (const sel of stopSelectors) {
                 const el = scope.querySelector(sel);
-                if (isVisible(el)) return true;
+                if (isVisible(el)) {
+                    diagnostics.decision = 'explicit-selector';
+                    diagnostics.matchedSelector = sel;
+                    return { isGenerating: true, diagnostics };
+                }
             }
         }
 
         const composerButtons = pickComposerActionButton();
+        diagnostics.composerCandidateCount = composerButtons.length;
         for (let i = 0; i < composerButtons.length; i++) {
             const btn = composerButtons[i];
             const state = classifyComposerAction(btn);
-            if (state.known && state.isGenerating) return true;
+            if (state.known && state.isGenerating) {
+                diagnostics.composerKnownStopCount += 1;
+                diagnostics.decision = 'composer-action';
+                return { isGenerating: true, diagnostics };
+            }
+            if (state.known && !state.isGenerating) {
+                diagnostics.composerKnownSendCount += 1;
+            }
         }
 
         for (const scope of scopes) {
@@ -247,11 +269,13 @@ export const RESPONSE_SELECTORS = {
                     control.getAttribute('class') || '',
                 ].join(' ');
                 if (!hasKeyword(rawText, STOP_KEYWORDS)) continue;
-                return true;
+                diagnostics.fallbackStopKeywordHits += 1;
+                diagnostics.decision = 'keyword-fallback';
+                return { isGenerating: true, diagnostics };
             }
         }
 
-        return false;
+        return { isGenerating: false, diagnostics };
     })()`,
     /** ストップボタンをクリックしてLLM生成を中断する */
     CLICK_STOP_BUTTON: `(() => {
@@ -620,6 +644,22 @@ export const RESPONSE_SELECTORS = {
 /** レスポンス生成のフェーズ */
 export type ResponsePhase = 'waiting' | 'thinking' | 'generating' | 'complete' | 'timeout' | 'quotaReached';
 
+type StopDetectionDiagnostics = {
+    panelFound?: boolean;
+    scopeCount?: number;
+    decision?: string;
+    matchedSelector?: string | null;
+    composerCandidateCount?: number;
+    composerKnownStopCount?: number;
+    composerKnownSendCount?: number;
+    fallbackStopKeywordHits?: number;
+};
+
+type StopDetectionResult = {
+    isGenerating: boolean;
+    diagnostics?: StopDetectionDiagnostics;
+};
+
 export interface ResponseMonitorOptions {
     /** CDPサービスインスタンス */
     cdpService: CdpService;
@@ -985,6 +1025,43 @@ export class ResponseMonitor {
         return params;
     }
 
+    private normalizeStopDetectionResult(rawValue: unknown): StopDetectionResult {
+        if (typeof rawValue === 'boolean') {
+            return { isGenerating: rawValue };
+        }
+
+        if (rawValue && typeof rawValue === 'object') {
+            const value = rawValue as Record<string, unknown>;
+            if (typeof value.isGenerating === 'boolean') {
+                const rawDiagnostics = value.diagnostics;
+                const diagnostics = rawDiagnostics && typeof rawDiagnostics === 'object'
+                    ? rawDiagnostics as StopDetectionDiagnostics
+                    : undefined;
+                return {
+                    isGenerating: value.isGenerating,
+                    diagnostics,
+                };
+            }
+        }
+
+        return { isGenerating: false };
+    }
+
+    private formatStopDiagnostics(diagnostics?: StopDetectionDiagnostics): string {
+        if (!diagnostics) {
+            return 'diag=none';
+        }
+        return [
+            `decision=${diagnostics.decision ?? 'unknown'}`,
+            `selector=${diagnostics.matchedSelector ?? 'none'}`,
+            `composerCandidates=${diagnostics.composerCandidateCount ?? 0}`,
+            `composerStop=${diagnostics.composerKnownStopCount ?? 0}`,
+            `composerSend=${diagnostics.composerKnownSendCount ?? 0}`,
+            `fallbackHits=${diagnostics.fallbackStopKeywordHits ?? 0}`,
+            `panel=${diagnostics.panelFound === true ? 'yes' : 'no'}`,
+        ].join(' ');
+    }
+
     /** フェーズを変更し、コールバックを呼ぶ */
     private setPhase(phase: ResponsePhase, text: string | null): void {
         if (this.currentPhase !== phase) {
@@ -1027,15 +1104,27 @@ export class ResponseMonitor {
             this.pollCount += 1;
             const pollId = this.pollCount;
             // ストップボタンの存在チェック（生成中かどうか）
+            const evaluateContextId = this.cdpService.getPrimaryContextId?.();
             const stopResult = await this.cdpService.call(
                 'Runtime.evaluate',
                 this.buildEvaluateParams(RESPONSE_SELECTORS.STOP_BUTTON, true),
             );
-            const isGenerating: boolean = stopResult?.result?.value ?? false;
+            const stopDetection = this.normalizeStopDetectionResult(stopResult?.result?.value);
+            const isGenerating: boolean = stopDetection.isGenerating;
+            const stopDiagnostics = stopDetection.diagnostics;
+            const contextLabel = (evaluateContextId === null || evaluateContextId === undefined)
+                ? 'none'
+                : String(evaluateContextId);
             logger.debug(
                 `[ResponseMonitor] poll#${pollId} stop=${isGenerating} phase=${this.currentPhase} ` +
-                `started=${this.generationStarted} stopGoneCount=${this.stopGoneCount}`,
+                `started=${this.generationStarted} stopGoneCount=${this.stopGoneCount} ctx=${contextLabel}`,
             );
+            if (!isGenerating && (this.generationStarted || this.activitySeen)) {
+                logger.debug(
+                    `[ResponseMonitor] poll#${pollId} stop=false diagnostics ctx=${contextLabel} ` +
+                    this.formatStopDiagnostics(stopDiagnostics),
+                );
+            }
 
             // ストップボタンが出現したら生成開始を記録
             if (isGenerating) {
@@ -1233,58 +1322,48 @@ export class ResponseMonitor {
             // ストップボタンが消失し、連続N回確認で完了
             // ───────────────────────────────────────────────────
             if (!isGenerating && (this.generationStarted || hasAnyText)) {
-                // 本文未取得の状態では、Stop消失直後の誤完了を避けるため少し待つ
-                if (!hasAnyText) {
-                    const elapsedFromStart = now - this.startTime;
-                    if (elapsedFromStart < this.noTextCompletionDelayMs) {
+                if (!this.stopButtonSeenOnce) {
+                    this.stopGoneCount = 0;
+                    if (pollId % 5 === 0) {
+                        logger.debug(`[ResponseMonitor] poll#${pollId} stop-gone blocked: stop button was never observed`);
+                    }
+                } else if (!hasAnyText) {
+                    this.stopGoneCount = 0;
+                    if (pollId % 5 === 0) {
+                        logger.debug(`[ResponseMonitor] poll#${pollId} stop-gone blocked: no output text yet (delegate to no-update-timeout)`);
+                    }
+                } else {
+                    const signalQuietMs = Math.max(500, Math.floor(this.pollIntervalMs * 0.8));
+                    if (signalStalledFor < signalQuietMs) {
+                        this.stopGoneCount = 0;
                         if (pollId % 5 === 0) {
                             logger.debug(
-                                `[ResponseMonitor] poll#${pollId} no-text completion hold ` +
-                                `elapsed=${elapsedFromStart}ms need=${this.noTextCompletionDelayMs}ms`,
+                                `[ResponseMonitor] poll#${pollId} stop-gone blocked by active-signal ` +
+                                `signalStalled=${signalStalledFor}ms need=${signalQuietMs}ms`,
                             );
                         }
-                        return;
-                    }
-                }
-                this.stopGoneCount++;
-                if (this.stopGoneCount >= this.stopButtonGoneConfirmCount) {
-                    const stopDetectionReliable = this.stopButtonSeenOnce;
-                    const requiredStabilityMs = hasAnyText
-                        ? (stopDetectionReliable ? this.completionStabilityMs : Math.min(this.completionStabilityMs, 3000))
-                        : Math.min(this.completionStabilityMs, 3000);
-                    // 本文未取得ケースではアクティビティ変化で signalStalledFor が更新され続けるため、
-                    // stop消失後の完了判定はテキスト更新基準（stalledFor）で評価する。
-                    const effectiveStalledFor = stalledFor;
-                    // stop検出が一度も無い環境では、短縮判定に加えて
-                    // 「直近の進捗シグナルが静止している」ことも要求し、早すぎる誤完了を防ぐ。
-                    if (!stopDetectionReliable) {
-                        const signalQuietMs = Math.max(500, Math.floor(this.pollIntervalMs * 0.8));
-                        if (signalStalledFor < signalQuietMs) {
-                            if (pollId % 5 === 0) {
-                                logger.debug(
-                                    `[ResponseMonitor] poll#${pollId} stop-gone blocked by active-signal ` +
-                                    `signalStalled=${signalStalledFor}ms need=${signalQuietMs}ms`,
-                                );
+                    } else {
+                        this.stopGoneCount++;
+                        if (this.stopGoneCount >= this.stopButtonGoneConfirmCount) {
+                            const requiredStabilityMs = this.completionStabilityMs;
+                            if (stalledFor < requiredStabilityMs) {
+                                if (pollId % 5 === 0) {
+                                    logger.debug(
+                                        `[ResponseMonitor] poll#${pollId} stop-gone pending ` +
+                                        `stalled=${stalledFor}ms need=${requiredStabilityMs}ms hasText=${hasAnyText} ` +
+                                        `stopSeen=${this.stopButtonSeenOnce}`,
+                                    );
+                                }
+                                return;
                             }
+                            logger.info(`[ResponseMonitor] ストップボタン消失を${this.stopGoneCount}回連続確認。完了と判定。`);
+                            const finalText = this.lastText ?? '';
+                            this.setPhase('complete', finalText);
+                            await this.stop();
+                            await this.invokeCompleteCallback(finalText, 'stop-button-gone');
                             return;
                         }
                     }
-                    if (effectiveStalledFor < requiredStabilityMs) {
-                        if (pollId % 5 === 0) {
-                            logger.debug(
-                                `[ResponseMonitor] poll#${pollId} stop-gone pending ` +
-                                `stalled=${effectiveStalledFor}ms need=${requiredStabilityMs}ms hasText=${hasAnyText} ` +
-                                `stopSeen=${this.stopButtonSeenOnce}`,
-                            );
-                        }
-                        return;
-                    }
-                    logger.info(`[ResponseMonitor] ストップボタン消失を${this.stopGoneCount}回連続確認。完了と判定。`);
-                    const finalText = this.lastText ?? '';
-                    this.setPhase('complete', finalText);
-                    await this.stop();
-                    await this.invokeCompleteCallback(finalText, 'stop-button-gone');
-                    return;
                 }
             }
 

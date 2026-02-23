@@ -485,6 +485,7 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
         mockPollResult(mockCdpService, false, '最終レスポンス', ['Analyzing files...']);
         mockPollResult(mockCdpService, false, '最終レスポンス', ['Analyzing files...']);
         mockPollResult(mockCdpService, false, '最終レスポンス', ['Analyzing files...']);
+        mockPollResult(mockCdpService, false, '最終レスポンス', ['Analyzing files...']);
 
         monitor = new ResponseMonitor({
             cdpService: mockCdpService,
@@ -498,6 +499,9 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
 
         await jest.advanceTimersByTimeAsync(500);
         await jest.advanceTimersByTimeAsync(500);
+        await jest.advanceTimersByTimeAsync(500);
+        expect(onComplete).not.toHaveBeenCalled();
+
         await jest.advanceTimersByTimeAsync(500);
         expect(onComplete).not.toHaveBeenCalled();
 
@@ -516,6 +520,7 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
         mockPollResult(mockCdpService, false, '最終レスポンス', ['集中モードで完了しました']);
         mockPollResult(mockCdpService, false, '最終レスポンス', ['集中モードで完了しました']);
         mockPollResult(mockCdpService, false, '最終レスポンス', ['集中モードで完了しました']);
+        mockPollResult(mockCdpService, false, '最終レスポンス', ['集中モードで完了しました']);
 
         monitor = new ResponseMonitor({
             cdpService: mockCdpService,
@@ -529,6 +534,9 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
 
         await jest.advanceTimersByTimeAsync(500);
         await jest.advanceTimersByTimeAsync(500);
+        await jest.advanceTimersByTimeAsync(500);
+        expect(onComplete).not.toHaveBeenCalled();
+
         await jest.advanceTimersByTimeAsync(500);
         expect(onComplete).not.toHaveBeenCalled();
 
@@ -756,7 +764,7 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     // ──────────────────────────────────────────────────────
     // テスト 18b: テキスト抽出不能でもアクティビティ検知で生成開始扱いになり完了できること
     // ──────────────────────────────────────────────────────
-    it('テキストが取得できなくてもアクティビティがあれば生成開始を推定し、一定時間後にcompleteへ遷移すること', async () => {
+    it('テキストが取得できなくてもアクティビティがあれば生成開始を推定し、stop未検出時は早期completeしないこと', async () => {
         const onComplete = jest.fn();
 
         mockCdpService.call.mockResolvedValueOnce({ result: { value: null } }); // baseline
@@ -785,14 +793,14 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
         expect(monitor.getPhase()).toBe('thinking');
 
         await jest.advanceTimersByTimeAsync(500);
-        expect(onComplete).toHaveBeenCalledWith('');
-        expect(monitor.getPhase()).toBe('complete');
+        expect(onComplete).not.toHaveBeenCalled();
+        expect(monitor.getPhase()).toBe('thinking');
     });
 
     // ──────────────────────────────────────────────────────
     // テスト 18c: 本文未取得時、アクティビティ更新が続いても stop 消失完了が過剰遅延しないこと
     // ──────────────────────────────────────────────────────
-    it('本文未取得 + stop消失時はアクティビティ更新で完了安定判定が延長されないこと', async () => {
+    it('本文未取得 + stop未検出ではstop-gone完了せず no-update-timeout 経路へ委譲すること', async () => {
         const onComplete = jest.fn();
 
         mockCdpService.call.mockResolvedValueOnce({ result: { value: null } }); // baseline
@@ -826,7 +834,8 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
         expect(onComplete).not.toHaveBeenCalled();
 
         await jest.advanceTimersByTimeAsync(500);  // poll4
-        expect(onComplete).toHaveBeenCalledWith('');
+        expect(onComplete).not.toHaveBeenCalled();
+        expect(monitor.getPhase()).toBe('thinking');
     });
 
     // ──────────────────────────────────────────────────────
@@ -884,9 +893,32 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     });
 
     // ──────────────────────────────────────────────────────
+    // テスト 19b: stop診断オブジェクトの空構造でも isGenerating=false を解釈できること
+    // ──────────────────────────────────────────────────────
+    it('stop診断オブジェクトが空でも誤って生成中扱いにしないこと', async () => {
+        mockCdpService.call.mockResolvedValueOnce({ result: { value: null } }); // baseline
+        mockCdpService.call
+            .mockResolvedValueOnce({ result: { value: { isGenerating: false, diagnostics: {} } } }) // stop
+            .mockResolvedValueOnce({ result: { value: false } }) // quota
+            .mockResolvedValueOnce({ result: { value: [] } }) // activity
+            .mockResolvedValueOnce({ result: { value: null } }); // text
+
+        monitor = new ResponseMonitor({
+            cdpService: mockCdpService,
+            pollIntervalMs: 500,
+            textStabilityCompleteMs: 0,
+            noUpdateTimeoutMs: 60000,
+        });
+        await monitor.start();
+        await jest.advanceTimersByTimeAsync(500);
+
+        expect(monitor.getPhase()).toBe('waiting');
+    });
+
+    // ──────────────────────────────────────────────────────
     // テスト 20: stopボタン未検出の環境では完了安定時間を短縮すること
     // ──────────────────────────────────────────────────────
-    it('stopボタンが一度も検出されない場合はstop消失完了の安定時間を短縮すること', async () => {
+    it('stopボタンが一度も検出されない場合はstop消失経路でcompleteしないこと', async () => {
         const onComplete = jest.fn();
 
         mockCdpService.call.mockResolvedValueOnce({ result: { value: null } }); // baseline
@@ -916,7 +948,8 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
         expect(onComplete).not.toHaveBeenCalled();
 
         await jest.advanceTimersByTimeAsync(1000); // poll6-7 (計3500ms)
-        expect(onComplete).toHaveBeenCalledWith('本文');
+        expect(onComplete).not.toHaveBeenCalled();
+        expect(monitor.getPhase()).toBe('generating');
     });
 
     // ──────────────────────────────────────────────────────
@@ -1006,5 +1039,35 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
 
         await jest.advanceTimersByTimeAsync(3500); // poll1-7
         expect(onComplete).not.toHaveBeenCalled();
+    });
+
+    // ──────────────────────────────────────────────────────
+    // テスト 23: stop誤陰性時に本文未取得ならstop-button-goneで完了しないこと
+    // ──────────────────────────────────────────────────────
+    it('stop=false誤判定 + activityあり + 本文未取得では早期completeしないこと', async () => {
+        const onComplete = jest.fn();
+
+        mockCdpService.call.mockResolvedValueOnce({ result: { value: null } }); // baseline
+        mockPollResult(mockCdpService, false, null, ['Analyzed 1 file']);
+        mockPollResult(mockCdpService, false, null, ['Analyzed 2 files']);
+        mockPollResult(mockCdpService, false, null, ['Analyzed 3 files']);
+        mockPollResult(mockCdpService, false, null, ['Analyzed 3 files']);
+
+        monitor = new ResponseMonitor({
+            cdpService: mockCdpService,
+            pollIntervalMs: 500,
+            stopButtonGoneConfirmCount: 1,
+            noTextCompletionDelayMs: 500,
+            completionStabilityMs: 500,
+            textStabilityCompleteMs: 0,
+            noUpdateTimeoutMs: 60000,
+            onComplete,
+        });
+        await monitor.start();
+
+        await jest.advanceTimersByTimeAsync(2000); // poll1-4
+
+        expect(onComplete).not.toHaveBeenCalled();
+        expect(monitor.getPhase()).toBe('thinking');
     });
 });

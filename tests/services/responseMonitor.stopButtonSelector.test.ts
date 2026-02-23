@@ -75,6 +75,15 @@ function runSelectorScript(script: string, panel: ReturnType<typeof createScope>
     return vm.runInNewContext(script, { document, window, Array, Math, Set, Number });
 }
 
+function runStopSelector(panel: ReturnType<typeof createScope>): boolean {
+    const value = runSelectorScript(RESPONSE_SELECTORS.STOP_BUTTON, panel);
+    if (typeof value === 'boolean') return value;
+    if (value && typeof value === 'object' && typeof (value as { isGenerating?: unknown }).isGenerating === 'boolean') {
+        return Boolean((value as { isGenerating: boolean }).isGenerating);
+    }
+    return false;
+}
+
 describe('ResponseMonitor stop selector robustness', () => {
     it('fixed配置でoffsetParentがnullでもストップボタンを検出できること', () => {
         const button: MockButton = {
@@ -87,7 +96,7 @@ describe('ResponseMonitor stop selector robustness', () => {
         };
 
         const panel = createScope(button);
-        const isStopVisible = runSelectorScript(RESPONSE_SELECTORS.STOP_BUTTON, panel);
+        const isStopVisible = runStopSelector(panel);
 
         expect(isStopVisible).toBe(true);
     });
@@ -172,7 +181,7 @@ describe('ResponseMonitor stop selector robustness', () => {
         };
 
         const panel = createScope(neutralButton, [genericControl]);
-        const isStopVisible = runSelectorScript(RESPONSE_SELECTORS.STOP_BUTTON, panel);
+        const isStopVisible = runStopSelector(panel);
 
         expect(isStopVisible).toBe(false);
     });
@@ -194,7 +203,7 @@ describe('ResponseMonitor stop selector robustness', () => {
         };
 
         const panel = createScope(squareButton, [], [input]);
-        const isStopVisible = runSelectorScript(RESPONSE_SELECTORS.STOP_BUTTON, panel);
+        const isStopVisible = runStopSelector(panel);
 
         expect(isStopVisible).toBe(true);
     });
@@ -217,7 +226,7 @@ describe('ResponseMonitor stop selector robustness', () => {
         };
 
         const panel = createScope(sendButton, [], [input]);
-        const isStopVisible = runSelectorScript(RESPONSE_SELECTORS.STOP_BUTTON, panel);
+        const isStopVisible = runStopSelector(panel);
 
         expect(isStopVisible).toBe(false);
     });
@@ -242,7 +251,7 @@ describe('ResponseMonitor stop selector robustness', () => {
         };
 
         const panel = createScope(micButton, [], [input]);
-        const isStopVisible = runSelectorScript(RESPONSE_SELECTORS.STOP_BUTTON, panel);
+        const isStopVisible = runStopSelector(panel);
 
         expect(isStopVisible).toBe(false);
     });
@@ -295,7 +304,7 @@ describe('ResponseMonitor stop selector robustness', () => {
         };
 
         const panel = createScope(stopButton, [], [input]);
-        const isStopVisible = runSelectorScript(RESPONSE_SELECTORS.STOP_BUTTON, panel);
+        const isStopVisible = runStopSelector(panel);
 
         expect(isStopVisible).toBe(true);
     });

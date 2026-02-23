@@ -90,6 +90,39 @@ const PHASE_ICONS = {
 const MAX_OUTBOUND_GENERATED_IMAGES = 4;
 const RESPONSE_DELIVERY_MODE = resolveResponseDeliveryMode();
 export const getResponseDeliveryModeForTest = (): string => RESPONSE_DELIVERY_MODE;
+const ACTIVE_GENERATION_GRACE_MS = 4000;
+const LEGACY_PARTIAL_OUTPUT_MAX_LEN = 80;
+
+export function shouldDelayFinalizationForActiveGeneration(params: {
+    finalText: string;
+    lastProgressText: string;
+    lastActivityLogText: string;
+    lastActivitySignalAt: number;
+    now: number;
+    extractionSource: 'dom-structured' | 'legacy-fallback';
+}): boolean {
+    const finalText = (params.finalText || '').trim();
+    const progressText = (params.lastProgressText || '').trim();
+    const activityText = (params.lastActivityLogText || '').trim();
+    const activeSignalRecent = (params.now - params.lastActivitySignalAt) <= ACTIVE_GENERATION_GRACE_MS;
+    const hasNoOutput = finalText.length === 0 && progressText.length === 0;
+    const hasRecentActivity = activeSignalRecent && activityText.length > 0;
+    const looksLikePartialLegacy =
+        params.extractionSource === 'legacy-fallback' &&
+        progressText.length > 0 &&
+        progressText.length <= LEGACY_PARTIAL_OUTPUT_MAX_LEN &&
+        /^(initializing|starting|loading|thinking|analy[sz]ing|processing|preparing)/i.test(progressText);
+
+    if (hasNoOutput && hasRecentActivity) {
+        return true;
+    }
+
+    if (looksLikePartialLegacy && hasRecentActivity) {
+        return true;
+    }
+
+    return false;
+}
 
 export function createSerialTaskQueueForTest(queueName: string, traceId: string): (task: () => Promise<void>, label?: string) => Promise<void> {
     let queue: Promise<void> = Promise.resolve();
@@ -307,6 +340,7 @@ async function sendPromptToAntigravity(
     let isFinalized = false;
     let lastProgressText = '';
     let lastActivityLogText = '';
+    let lastActivitySignalAt = Date.now();
     const LIVE_RESPONSE_MAX_LEN = 3800;
     const LIVE_ACTIVITY_MAX_LEN = 3800;
     const liveResponseMessages: any[] = [];
@@ -517,7 +551,7 @@ async function sendPromptToAntigravity(
             cdpService: cdp,
             pollIntervalMs: 1000,
             maxDurationMs: 300000, // 5分タイムアウト
-            stopButtonGoneConfirmCount: 1, // Stop消失を1回確認で完了判定へ
+            stopButtonGoneConfirmCount: 2, // Stop消失は2回連続確認して誤判定耐性を上げる
             completionStabilityMs: 10000, // GitHub版に合わせて10秒安定で完了
             noUpdateTimeoutMs: 30000, // 30秒更新停止でフォールバック完了
             noTextCompletionDelayMs: 8000, // 本文未取得時の待機（抽出失敗時の体感遅延を抑制）
@@ -548,6 +582,7 @@ async function sendPromptToAntigravity(
                 if (sanitizedLogs && sanitizedLogs.trim().length > 0) {
                     lastActivityLogText = sanitizedLogs;
                 }
+                lastActivitySignalAt = Date.now();
                 const elapsed = Math.round((Date.now() - startTime) / 1000);
                 liveResponseUpdateVersion += 1;
                 const responseVersion = liveResponseUpdateVersion;
@@ -587,6 +622,7 @@ async function sendPromptToAntigravity(
                     .join('\n'));
                 if (!activityText) return;
                 lastActivityLogText = activityText;
+                lastActivitySignalAt = Date.now();
                 liveActivityUpdateVersion += 1;
                 const activityVersion = liveActivityUpdateVersion;
                 upsertLiveActivityEmbeds(
@@ -603,6 +639,23 @@ async function sendPromptToAntigravity(
             },
 
             onComplete: async (finalText) => {
+                const extractionSourceAtComplete = monitor.getLastExtractionSource();
+                if (shouldDelayFinalizationForActiveGeneration({
+                    finalText,
+                    lastProgressText,
+                    lastActivityLogText,
+                    lastActivitySignalAt,
+                    now: Date.now(),
+                    extractionSource: extractionSourceAtComplete,
+                })) {
+                    logger.warn(
+                        `[sendPromptToAntigravity:${monitorTraceId}] onComplete deferred by active-generation guard ` +
+                        `source=${extractionSourceAtComplete} finalLen=${finalText?.length ?? 0} ` +
+                        `progressLen=${lastProgressText.length} activityAge=${Date.now() - lastActivitySignalAt}ms`,
+                    );
+                    await new Promise((resolve) => setTimeout(resolve, 2000));
+                }
+
                 isFinalized = true;
                 logger.info(
                     `[sendPromptToAntigravity:${monitorTraceId}] onComplete start ` +

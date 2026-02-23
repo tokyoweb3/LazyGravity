@@ -1,6 +1,7 @@
 import { Client, Events } from 'discord.js';
 import { startBot } from '../../src/bot';
 import { createSerialTaskQueueForTest } from '../../src/bot';
+import { shouldDelayFinalizationForActiveGeneration } from '../../src/bot';
 
 jest.mock('discord.js', () => {
     return {
@@ -192,5 +193,44 @@ describe('Bot Refactor Baseline', () => {
         }, 'response-after');
 
         expect(events).toContain('response:end');
+    });
+
+    it('最終テキストも進捗テキストも空で activity が直近更新されている場合は最終化を遅延すること', () => {
+        const shouldDelay = shouldDelayFinalizationForActiveGeneration({
+            finalText: '',
+            lastProgressText: '',
+            lastActivityLogText: 'Analyzing files...',
+            lastActivitySignalAt: 9_900,
+            now: 10_000,
+            extractionSource: 'legacy-fallback',
+        });
+
+        expect(shouldDelay).toBe(true);
+    });
+
+    it('legacy-fallback の短文進捗のみで activity が継続している場合は最終化を遅延すること', () => {
+        const shouldDelay = shouldDelayFinalizationForActiveGeneration({
+            finalText: '',
+            lastProgressText: 'Initializing the Project',
+            lastActivityLogText: 'Thinking...',
+            lastActivitySignalAt: 9_500,
+            now: 10_000,
+            extractionSource: 'legacy-fallback',
+        });
+
+        expect(shouldDelay).toBe(true);
+    });
+
+    it('activity 更新が十分古い場合は最終化を遅延しないこと', () => {
+        const shouldDelay = shouldDelayFinalizationForActiveGeneration({
+            finalText: '',
+            lastProgressText: '',
+            lastActivityLogText: 'Analyzing files...',
+            lastActivitySignalAt: 1_000,
+            now: 10_000,
+            extractionSource: 'legacy-fallback',
+        });
+
+        expect(shouldDelay).toBe(false);
     });
 });
