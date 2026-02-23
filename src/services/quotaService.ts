@@ -95,8 +95,19 @@ export class QuotaService {
                     }
                     try {
                         const parsed = JSON.parse(body);
-                        const configs = parsed?.userStatus?.cascadeModelConfigData?.clientModelConfigs;
-                        resolve({ clientModelConfigs: configs || [] });
+                        const cascadeData = parsed?.userStatus?.cascadeModelConfigData;
+                        const rawConfigs: any[] = cascadeData?.clientModelConfigs || [];
+                        const configs: ModelQuota[] = rawConfigs.map((c: any) => {
+                            const label = c.label || c.displayName || c.modelName || c.model || '';
+                            const model = c.model || c.modelId || '';
+                            const qi = c.quotaInfo || c.quota || c.usageInfo;
+                            const quotaInfo = qi ? {
+                                remainingFraction: qi.remainingFraction ?? qi.remaining ?? 1,
+                                resetTime: qi.resetTime || qi.resetAt || '',
+                            } : undefined;
+                            return { label, model, quotaInfo };
+                        });
+                        resolve({ clientModelConfigs: configs });
                     } catch (e) {
                         reject(new Error('Invalid JSON response'));
                     }

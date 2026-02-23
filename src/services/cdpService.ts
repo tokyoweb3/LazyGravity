@@ -98,47 +98,51 @@ export class CdpService extends EventEmitter {
     }
 
     async discoverTarget(): Promise<string> {
+        let allPages: any[] = [];
         for (const port of this.ports) {
             try {
                 const list = await this.getJson(`http://127.0.0.1:${port}/json/list`);
-                let target = list.find(t =>
-                    t.type === 'page' &&
-                    t.webSocketDebuggerUrl &&
-                    !t.title?.includes('Launchpad') &&
-                    !t.url?.includes('workbench-jetski-agent') &&
-                    (t.url?.includes('workbench') || t.title?.includes('Antigravity') || t.title?.includes('Cascade'))
-                );
-
-                if (!target) {
-                    target = list.find(t =>
-                        t.webSocketDebuggerUrl &&
-                        (t.url?.includes('workbench') || t.title?.includes('Antigravity') || t.title?.includes('Cascade')) &&
-                        !t.title?.includes('Launchpad')
-                    );
-                }
-
-                if (!target) {
-                    target = list.find(t =>
-                        t.webSocketDebuggerUrl &&
-                        (t.url?.includes('workbench') || t.title?.includes('Antigravity') || t.title?.includes('Cascade') || t.title?.includes('Launchpad'))
-                    );
-                }
-
-                if (target && target.webSocketDebuggerUrl) {
-                    this.targetUrl = target.webSocketDebuggerUrl;
-                    // タイトルからワークスペース名を抽出（例: "ProjectName — Antigravity"）
-                    if (target.title && !this.currentWorkspaceName) {
-                        const titleParts = target.title.split(/\s[—–-]\s/);
-                        if (titleParts.length > 0) {
-                            this.currentWorkspaceName = titleParts[0].trim();
-                        }
-                    }
-                    return target.webSocketDebuggerUrl;
-                }
+                allPages.push(...list);
             } catch (e) {
                 // Ignore port not found
             }
         }
+
+        let target = allPages.find(t =>
+            t.type === 'page' &&
+            t.webSocketDebuggerUrl &&
+            !t.title?.includes('Launchpad') &&
+            !t.url?.includes('workbench-jetski-agent') &&
+            (t.url?.includes('workbench') || t.title?.includes('Antigravity') || t.title?.includes('Cascade'))
+        );
+
+        if (!target) {
+            target = allPages.find(t =>
+                t.webSocketDebuggerUrl &&
+                (t.url?.includes('workbench') || t.title?.includes('Antigravity') || t.title?.includes('Cascade')) &&
+                !t.title?.includes('Launchpad')
+            );
+        }
+
+        if (!target) {
+            target = allPages.find(t =>
+                t.webSocketDebuggerUrl &&
+                (t.url?.includes('workbench') || t.title?.includes('Antigravity') || t.title?.includes('Cascade') || t.title?.includes('Launchpad'))
+            );
+        }
+
+        if (target && target.webSocketDebuggerUrl) {
+            this.targetUrl = target.webSocketDebuggerUrl;
+            // タイトルからワークスペース名を抽出（例: "ProjectName — Antigravity"）
+            if (target.title && !this.currentWorkspaceName) {
+                const titleParts = target.title.split(/\\s[—–-]\\s/);
+                if (titleParts.length > 0) {
+                    this.currentWorkspaceName = titleParts[0].trim();
+                }
+            }
+            return target.webSocketDebuggerUrl;
+        }
+
         throw new Error('CDP target not found on any port.');
     }
 
@@ -177,6 +181,11 @@ export class CdpService extends EventEmitter {
                     const idx = this.contexts.findIndex(c => c.id === data.params.executionContextId);
                     if (idx !== -1) this.contexts.splice(idx, 1);
                 }
+
+                // CDP イベントを EventEmitter で転送（Network.*, Runtime.* 等）
+                if (data.method) {
+                    this.emit(data.method, data.params);
+                }
             } catch (e) { }
         });
 
@@ -197,6 +206,14 @@ export class CdpService extends EventEmitter {
 
         // Initialize Runtime to get execution contexts
         await this.call('Runtime.enable', {});
+
+        // Enable Network domain for event-based completion detection
+        try {
+            await this.call('Network.enable', {});
+        } catch {
+            // Network.enable failure is non-fatal; polling fallback still works
+            logger.warn('[CdpService] Network.enable failed — network event detection disabled');
+        }
     }
 
     async call(method: string, params: any = {}): Promise<any> {
@@ -271,21 +288,20 @@ export class CdpService extends EventEmitter {
         for (const port of this.ports) {
             try {
                 const list = await this.getJson(`http://127.0.0.1:${port}/json/list`);
-                // workbench を含むページがあるポートを優先
+                pages.push(...list);
+                // workbench を含むページがあるポートを優先的に記録
                 const hasWorkbench = list.some((t: any) => t.url?.includes('workbench'));
-                if (hasWorkbench) {
-                    pages = list;
-                    respondingPort = port;
-                    break;
-                }
-                // workbench がなくても応答があれば控えておく
-                if (pages.length === 0) {
-                    pages = list;
+                if (hasWorkbench && respondingPort === null) {
                     respondingPort = port;
                 }
             } catch {
                 // このポートは応答なし、次へ
             }
+        }
+
+        if (respondingPort === null && pages.length > 0) {
+            // workbenchは見つからなかったが応答はあった場合
+            respondingPort = this.ports[0]; // logging purposes
         }
 
         if (respondingPort === null) {
@@ -508,8 +524,9 @@ export class CdpService extends EventEmitter {
         for (const port of this.ports) {
             try {
                 const preLaunchPages = await this.getJson(`http://127.0.0.1:${port}/json/list`);
-                knownPageIds = new Set(preLaunchPages.map((p: any) => p.id).filter(Boolean));
-                break;
+                preLaunchPages.forEach((p: any) => {
+                    if (p.id) knownPageIds.add(p.id);
+                });
             } catch {
                 // このポートは応答なし
             }
@@ -518,12 +535,11 @@ export class CdpService extends EventEmitter {
         while (Date.now() - startTime < maxWaitMs) {
             await new Promise(r => setTimeout(r, pollIntervalMs));
 
-            // 応答するポートを探す
             let pages: any[] = [];
             for (const port of this.ports) {
                 try {
-                    pages = await this.getJson(`http://127.0.0.1:${port}/json/list`);
-                    if (pages.length > 0) break;
+                    const list = await this.getJson(`http://127.0.0.1:${port}/json/list`);
+                    pages.push(...list);
                 } catch {
                     // 次のポートへ
                 }
@@ -1217,62 +1233,62 @@ export class CdpService extends EventEmitter {
     /**
      * AntigravityのUIから利用可能なモデル一覧を動的に取得する
      */
-    async getUiModels(): Promise < string[] > {
-    if(!this.isConnectedFlag || !this.ws) {
-    throw new Error('CDPに接続されていません。');
-}
+    async getUiModels(): Promise<string[]> {
+        if (!this.isConnectedFlag || !this.ws) {
+            throw new Error('CDPに接続されていません。');
+        }
 
-const expression = `(async () => {
+        const expression = `(async () => {
             return Array.from(document.querySelectorAll('div.cursor-pointer'))
                 .map(e => ({text: (e.textContent || '').trim().replace(/New$/, ''), class: e.className}))
                 .filter(e => e.class.includes('px-2 py-1 flex items-center justify-between') || e.text.includes('Gemini') || e.text.includes('GPT') || e.text.includes('Claude'))
                 .map(e => e.text);
         })()`;
 
-try {
-    const contextId = this.getPrimaryContextId();
-    const callParams: any = {
-        expression,
-        returnByValue: true,
-        awaitPromise: true,
-    };
-    if (contextId !== null) callParams.contextId = contextId;
+        try {
+            const contextId = this.getPrimaryContextId();
+            const callParams: any = {
+                expression,
+                returnByValue: true,
+                awaitPromise: true,
+            };
+            if (contextId !== null) callParams.contextId = contextId;
 
-    const res = await this.call('Runtime.evaluate', callParams);
-    const value = res?.result?.value;
-    if (Array.isArray(value) && value.length > 0) {
-        // remove duplicates
-        return Array.from(new Set(value));
-    }
-    return [];
-} catch (error: any) {
-    logger.error('Failed to get UI models:', error);
-    return [];
-}
+            const res = await this.call('Runtime.evaluate', callParams);
+            const value = res?.result?.value;
+            if (Array.isArray(value) && value.length > 0) {
+                // remove duplicates
+                return Array.from(new Set(value));
+            }
+            return [];
+        } catch (error: any) {
+            logger.error('Failed to get UI models:', error);
+            return [];
+        }
     }
 
     /**
      * AntigravityのUIから現在選択されているモデルを取得する
      */
-    async getCurrentModel(): Promise < string | null > {
-    if(!this.isConnectedFlag || !this.ws) {
-    return null;
-}
-const expression = `(() => {
+    async getCurrentModel(): Promise<string | null> {
+        if (!this.isConnectedFlag || !this.ws) {
+            return null;
+        }
+        const expression = `(() => {
             return Array.from(document.querySelectorAll('div.cursor-pointer'))
                 .find(e => e.className.includes('px-2 py-1 flex items-center justify-between') && e.className.includes('bg-gray-500/20'))
                 ?.textContent?.trim().replace(/New$/, '') || null;
         })()`;
-try {
-    const contextId = this.getPrimaryContextId();
-    const res = await this.call('Runtime.evaluate', {
-        expression, returnByValue: true, awaitPromise: true,
-        contextId: contextId || undefined
-    });
-    return res?.result?.value || null;
-} catch (e: any) {
-    return null;
-}
+        try {
+            const contextId = this.getPrimaryContextId();
+            const res = await this.call('Runtime.evaluate', {
+                expression, returnByValue: true, awaitPromise: true,
+                contextId: contextId || undefined
+            });
+            return res?.result?.value || null;
+        } catch (e: any) {
+            return null;
+        }
     }
 
     /**
@@ -1281,17 +1297,17 @@ try {
      *
      * @param modelName 設定するモデル名（例: 'gpt-4o', 'claude-3-opus'）
      */
-    async setUiModel(modelName: string): Promise < UiSyncResult > {
-    if(!this.isConnectedFlag || !this.ws) {
-    throw new Error('CDPに接続されていません。connect()を先に呼んでください。');
-}
+    async setUiModel(modelName: string): Promise<UiSyncResult> {
+        if (!this.isConnectedFlag || !this.ws) {
+            throw new Error('CDPに接続されていません。connect()を先に呼んでください。');
+        }
 
-// DOM操作スクリプト: 実際のAntigravity UIのDOM構造に基づく
-// モデル一覧は div.cursor-pointer 要素で class に 'px-2 py-1 flex items-center justify-between' を含む
-// 現在選択中は 'bg-gray-500/20' を持ち、それ以外は 'hover:bg-gray-500/10' を持つ
-// textContent末尾に "New" が付く場合がある
-const safeModel = JSON.stringify(modelName);
-const expression = `(async () => {
+        // DOM操作スクリプト: 実際のAntigravity UIのDOM構造に基づく
+        // モデル一覧は div.cursor-pointer 要素で class に 'px-2 py-1 flex items-center justify-between' を含む
+        // 現在選択中は 'bg-gray-500/20' を持ち、それ以外は 'hover:bg-gray-500/10' を持つ
+        // textContent末尾に "New" が付く場合がある
+        const safeModel = JSON.stringify(modelName);
+        const expression = `(async () => {
             const targetModel = ${safeModel};
             
             // モデルリスト内の全アイテムを取得
@@ -1338,23 +1354,23 @@ const expression = `(async () => {
             return { ok: true, model: targetModel, verified: false };
         })()`;
 
-try {
-    const contextId = this.getPrimaryContextId();
-    const callParams: any = {
-        expression,
-        returnByValue: true,
-        awaitPromise: true,
-    };
-    if (contextId !== null) callParams.contextId = contextId;
+        try {
+            const contextId = this.getPrimaryContextId();
+            const callParams: any = {
+                expression,
+                returnByValue: true,
+                awaitPromise: true,
+            };
+            if (contextId !== null) callParams.contextId = contextId;
 
-    const res = await this.call('Runtime.evaluate', callParams);
-    const value = res?.result?.value;
-    if (value?.ok) {
-        return { ok: true, model: value.model };
-    }
-    return { ok: false, error: value?.error || 'UI操作に失敗しました（setUiModel）' };
-} catch (error: any) {
-    return { ok: false, error: error?.message || String(error) };
-}
+            const res = await this.call('Runtime.evaluate', callParams);
+            const value = res?.result?.value;
+            if (value?.ok) {
+                return { ok: true, model: value.model };
+            }
+            return { ok: false, error: value?.error || 'UI操作に失敗しました（setUiModel）' };
+        } catch (error: any) {
+            return { ok: false, error: error?.message || String(error) };
+        }
     }
 }

@@ -72,7 +72,7 @@ function runSelectorScript(script: string, panel: ReturnType<typeof createScope>
         }),
     };
 
-    return vm.runInNewContext(script, { document, window, Array });
+    return vm.runInNewContext(script, { document, window, Array, Math, Set, Number });
 }
 
 describe('ResponseMonitor stop selector robustness', () => {
@@ -220,5 +220,83 @@ describe('ResponseMonitor stop selector robustness', () => {
         const isStopVisible = runSelectorScript(RESPONSE_SELECTORS.STOP_BUTTON, panel);
 
         expect(isStopVisible).toBe(false);
+    });
+
+    it('マイクボタン（path+rect SVG）をストップボタンと誤判定しないこと', () => {
+        const input = createInput();
+        const micButton: MockButton = {
+            tagName: 'BUTTON',
+            offsetParent: null,
+            click: jest.fn(),
+            getAttribute: () => null,
+            querySelector: (selector: string) => {
+                if (selector === 'svg') return { getAttribute: () => '' };
+                if (selector === 'svg > rect') return { nodeName: 'rect' };
+                if (selector === 'svg rect') return { nodeName: 'rect' };
+                if (selector === 'svg path') return { nodeName: 'path' };
+                if (selector === 'svg path, svg polyline, svg line') return { nodeName: 'path' };
+                return null;
+            },
+            querySelectorAll: () => [],
+            getBoundingClientRect: () => ({ top: 430, left: 330, width: 36, height: 36 }),
+        };
+
+        const panel = createScope(micButton, [], [input]);
+        const isStopVisible = runSelectorScript(RESPONSE_SELECTORS.STOP_BUTTON, panel);
+
+        expect(isStopVisible).toBe(false);
+    });
+
+    it('マイクボタン（path+rect SVG）をクリックしないこと', () => {
+        const input = createInput();
+        const micButton: MockButton = {
+            tagName: 'BUTTON',
+            offsetParent: null,
+            click: jest.fn(),
+            getAttribute: () => null,
+            querySelector: (selector: string) => {
+                if (selector === 'svg') return { getAttribute: () => '' };
+                if (selector === 'svg > rect') return { nodeName: 'rect' };
+                if (selector === 'svg rect') return { nodeName: 'rect' };
+                if (selector === 'svg path') return { nodeName: 'path' };
+                if (selector === 'svg path, svg polyline, svg line') return { nodeName: 'path' };
+                return null;
+            },
+            querySelectorAll: () => [],
+            getBoundingClientRect: () => ({ top: 430, left: 330, width: 36, height: 36 }),
+        };
+
+        const panel = createScope(micButton, [], [input]);
+        const result = runSelectorScript(RESPONSE_SELECTORS.CLICK_STOP_BUTTON, panel) as {
+            ok?: boolean;
+        };
+
+        expect(result.ok).toBe(false);
+        expect(micButton.click).not.toHaveBeenCalled();
+    });
+
+    it('rect のみの SVG（pathなし）は引き続きストップボタンと判定すること', () => {
+        const input = createInput();
+        const stopButton: MockButton = {
+            tagName: 'BUTTON',
+            offsetParent: null,
+            click: jest.fn(),
+            getAttribute: () => null,
+            querySelector: (selector: string) => {
+                if (selector === 'svg') return { getAttribute: () => '' };
+                if (selector === 'svg > rect') return { nodeName: 'rect' };
+                if (selector === 'svg rect') return { nodeName: 'rect' };
+                if (selector === 'svg path') return null;
+                if (selector === 'svg path, svg polyline, svg line') return null;
+                return null;
+            },
+            querySelectorAll: () => [],
+            getBoundingClientRect: () => ({ top: 430, left: 330, width: 36, height: 36 }),
+        };
+
+        const panel = createScope(stopButton, [], [input]);
+        const isStopVisible = runSelectorScript(RESPONSE_SELECTORS.STOP_BUTTON, panel);
+
+        expect(isStopVisible).toBe(true);
     });
 });
