@@ -220,25 +220,14 @@ export const RESPONSE_SELECTORS = {
         }
 
         const panel = document.querySelector('.antigravity-agent-side-panel');
-        const scope = panel || document;
+        const scopes = [panel, document].filter(Boolean);
 
         const looksLikeActivityLog = (text) => {
             const normalized = (text || '').trim().toLowerCase();
             if (!normalized) return false;
 
             const activityPattern = /^(?:analy[sz]ing|reading|writing|running|searching|planning|thinking|processing|loading|executing|testing|debugging|analyzed|read|wrote|ran|処理中|実行中|生成中|思考中|分析中|解析中|読み込み中|書き込み中|待機中)/i;
-            if (activityPattern.test(normalized) && normalized.length <= 220) {
-                return true;
-            }
-
-            // 箇条書き状の短い活動ログ塊は除外
-            const lines = normalized.split('\n').map((line) => line.trim()).filter(Boolean);
-            if (lines.length > 0 && lines.length <= 6) {
-                const allActivity = lines.every((line) => activityPattern.test(line));
-                if (allActivity) return true;
-            }
-
-            return false;
+            return activityPattern.test(normalized) && normalized.length <= 220;
         };
 
         const looksLikeFeedbackFooter = (text) => {
@@ -261,17 +250,25 @@ export const RESPONSE_SELECTORS = {
 
         const candidates = [];
         const seen = new Set();
-        for (const selector of candidateSelectors) {
-            const nodes = scope.querySelectorAll(selector);
-            for (const node of nodes) {
-                if (!node || seen.has(node)) continue;
-                seen.add(node);
-                candidates.push(node);
+        for (const scope of scopes) {
+            for (const selector of candidateSelectors) {
+                const nodes = scope.querySelectorAll(selector);
+                for (const node of nodes) {
+                    if (!node || seen.has(node)) continue;
+                    seen.add(node);
+                    candidates.push(node);
+                }
             }
         }
 
+        // エディタ、ターミナル、入力フィールド内の要素を除外するフィルタ
+        const isInsideExcludedArea = (node) => {
+            return node.closest('[contenteditable="true"], textarea, .xterm, [role="textbox"], nav, header, footer, [class*="terminal"], [class*="editor-container"]');
+        };
+
         for (let i = candidates.length - 1; i >= 0; i--) {
             const node = candidates[i];
+            if (isInsideExcludedArea(node)) continue;
             const md = cleanMarkdown(htmlToMarkdown(node, { listDepth: 0, orderedIndex: 0, inPre: false }));
             if (!md) continue;
             if (looksLikeActivityLog(md)) continue;
@@ -281,6 +278,7 @@ export const RESPONSE_SELECTORS = {
 
         // 最終フォールバック: 可視テキストをそのまま抽出（Markdown変換が合わないUI向け）
         for (let i = candidates.length - 1; i >= 0; i--) {
+            if (isInsideExcludedArea(candidates[i])) continue;
             const text = (candidates[i].innerText || '').trim();
             if (!text) continue;
             if (looksLikeActivityLog(text)) continue;
@@ -289,15 +287,97 @@ export const RESPONSE_SELECTORS = {
         }
 
         // 汎用フォールバック: よく使われるテキストブロックから最後の有効テキストを拾う
-        const genericBlocks = scope.querySelectorAll('article, section, div, p, li, pre, blockquote');
-        for (let i = genericBlocks.length - 1; i >= 0; i--) {
-            const node = genericBlocks[i];
-            if (!node) continue;
-            if (node.closest('button, [role="button"], nav, header, footer, textarea, [contenteditable="true"], form')) {
-                continue;
+        for (const scope of scopes) {
+            const genericBlocks = scope.querySelectorAll('article, section, div, p, li, pre, blockquote');
+            for (let i = genericBlocks.length - 1; i >= 0; i--) {
+                const node = genericBlocks[i];
+                if (!node) continue;
+                if (node.closest('button, [role="button"], nav, header, footer, textarea, [contenteditable="true"], form')) {
+                    continue;
+                }
+                const text = (node.innerText || '').trim();
+                if (!text || text.length < 8) continue;
+                if (looksLikeActivityLog(text)) continue;
+                if (looksLikeFeedbackFooter(text)) continue;
+                return text;
             }
-            const text = (node.innerText || '').trim();
-            if (!text || text.length < 20) continue;
+        }
+
+        // 緊急フォールバック: onComplete側の抽出ロジック相当を同梱
+        // （進捗中にも本文が取れる可能性を上げる）
+        try {
+            const emergencyScope = panel || document;
+            const emergencyCandidates = [];
+            const emergencySeen = new Set();
+            for (const selector of candidateSelectors) {
+                const nodes = emergencyScope.querySelectorAll(selector);
+                for (const node of nodes) {
+                    if (!node || emergencySeen.has(node)) continue;
+                    emergencySeen.add(node);
+                    emergencyCandidates.push(node);
+                }
+            }
+            for (let i = emergencyCandidates.length - 1; i >= 0; i--) {
+                const node = emergencyCandidates[i];
+                if (isInsideExcludedArea(node)) continue;
+                const text = cleanMarkdown((node.innerText || node.textContent || '').replace(/\\r/g, ''));
+                if (!text || text.length < 20) continue;
+                if (looksLikeActivityLog(text)) continue;
+                if (/^(good|bad)$/i.test(text)) continue;
+                return text;
+            }
+        } catch {
+            // no-op
+        }
+
+        return null;
+    })()`,
+    /** 先頭側（DOM順）からテキストを取得する補助セレクタ（baseline回避用） */
+    RESPONSE_TEXT_FROM_START: `(() => {
+        const panel = document.querySelector('.antigravity-agent-side-panel');
+        const scopes = [panel, document].filter(Boolean);
+
+        const looksLikeActivityLog = (text) => {
+            const normalized = (text || '').trim().toLowerCase();
+            if (!normalized) return false;
+            const activityPattern = /^(?:analy[sz]ing|reading|writing|running|searching|planning|thinking|processing|loading|executing|testing|debugging|analyzed|read|wrote|ran|処理中|実行中|生成中|思考中|分析中|解析中|読み込み中|書き込み中|待機中)/i;
+            return activityPattern.test(normalized) && normalized.length <= 220;
+        };
+
+        const looksLikeFeedbackFooter = (text) => {
+            const normalized = (text || '').trim().toLowerCase().replace(/\\s+/g, ' ');
+            if (!normalized) return false;
+            return normalized === 'good bad' || normalized === 'good' || normalized === 'bad';
+        };
+
+        const candidateSelectors = [
+            '.rendered-markdown',
+            '.leading-relaxed.select-text',
+            '.flex.flex-col.gap-y-3',
+            '[data-message-author-role="assistant"]',
+            '[data-message-role="assistant"]',
+            '[class*="assistant-message"]',
+            '[class*="message-content"]',
+            '[class*="markdown-body"]',
+            '.prose',
+        ];
+
+        const candidates = [];
+        const seen = new Set();
+        for (const scope of scopes) {
+            for (const selector of candidateSelectors) {
+                const nodes = scope.querySelectorAll(selector);
+                for (const node of nodes) {
+                    if (!node || seen.has(node)) continue;
+                    seen.add(node);
+                    candidates.push(node);
+                }
+            }
+        }
+
+        for (let i = 0; i < candidates.length; i++) {
+            const text = (candidates[i].innerText || candidates[i].textContent || '').replace(/\\r/g, '').trim();
+            if (!text || text.length < 8) continue;
             if (looksLikeActivityLog(text)) continue;
             if (looksLikeFeedbackFooter(text)) continue;
             return text;
@@ -373,7 +453,7 @@ export const RESPONSE_SELECTORS = {
 
         const pickComposerActionButton = () => {
             const inputCandidate = pickLatestInput();
-            if (!inputCandidate) return null;
+            if (!inputCandidate) return [];
 
             const inputEl = inputCandidate.input;
             const inputRect = inputCandidate.rect;
@@ -383,11 +463,12 @@ export const RESPONSE_SELECTORS = {
             for (let depth = 0; depth < 6 && node; depth++) {
                 node = node.parentElement;
                 if (!node) break;
-                const buttons = Array.from(node.querySelectorAll('button, [role="button"]'));
-                for (const btn of buttons) {
+                const buttons = node.querySelectorAll('button, [role="button"]');
+                for (let i = 0; i < buttons.length; i++) {
+                    const btn = buttons[i];
                     if (!isVisible(btn)) continue;
                     const rect = getRect(btn);
-                    if (rect.width < 20 || rect.height < 20) continue;
+                    if (rect.width < 12 || rect.height < 12) continue;
                     scopedButtons.push({ btn, rect });
                 }
                 if (scopedButtons.length > 0) break;
@@ -398,11 +479,12 @@ export const RESPONSE_SELECTORS = {
                 : (() => {
                     const candidates = [];
                     for (const scope of scopes) {
-                        const buttons = Array.from(scope.querySelectorAll('button, [role="button"]'));
-                        for (const btn of buttons) {
+                        const buttons = scope.querySelectorAll('button, [role="button"]');
+                        for (let i = 0; i < buttons.length; i++) {
+                            const btn = buttons[i];
                             if (!isVisible(btn)) continue;
                             const rect = getRect(btn);
-                            if (rect.width < 20 || rect.height < 20) continue;
+                            if (rect.width < 12 || rect.height < 12) continue;
                             const nearComposer = rect.top >= (inputRect.top - 120);
                             if (!nearComposer) continue;
                             candidates.push({ btn, rect });
@@ -412,12 +494,16 @@ export const RESPONSE_SELECTORS = {
                 })();
 
             const unique = uniqueElements(allButtons);
-            if (unique.length === 0) return null;
+            if (unique.length === 0) return [];
             unique.sort((a, b) => {
                 if (Math.abs(a.rect.top - b.rect.top) > 2) return b.rect.top - a.rect.top;
                 return b.rect.left - a.rect.left;
             });
-            return unique[0].btn;
+            const result = [];
+            for (let i = 0; i < unique.length; i++) {
+                result.push(unique[i].btn);
+            }
+            return result;
         };
 
         const classifyComposerAction = (button) => {
@@ -434,7 +520,8 @@ export const RESPONSE_SELECTORS = {
 
             const hasArrowLikeIcon = !!button.querySelector('svg path, svg polyline, svg line');
             const hasDirectRectIcon = !!button.querySelector('svg > rect');
-            const hasRectIcon = hasDirectRectIcon || (!!button.querySelector('svg rect') && !hasArrowLikeIcon);
+            const hasSvgPath = !!button.querySelector('svg path');
+            const hasRectIcon = (hasDirectRectIcon && !hasSvgPath) || (!!button.querySelector('svg rect') && !hasArrowLikeIcon);
             const looksStop = hasKeyword(blob, STOP_KEYWORDS) || hasKeyword(blob, STOP_ICON_KEYWORDS) || hasRectIcon;
             const looksSend = hasKeyword(blob, SEND_KEYWORDS) || (hasArrowLikeIcon && !hasRectIcon);
 
@@ -464,10 +551,11 @@ export const RESPONSE_SELECTORS = {
             }
         }
 
-        const composerButton = pickComposerActionButton();
-        const composerState = classifyComposerAction(composerButton);
-        if (composerState.known) {
-            return composerState.isGenerating;
+        const composerButtons = pickComposerActionButton();
+        for (let i = 0; i < composerButtons.length; i++) {
+            const btn = composerButtons[i];
+            const state = classifyComposerAction(btn);
+            if (state.known && state.isGenerating) return true;
         }
 
         for (const scope of scopes) {
@@ -528,9 +616,12 @@ export const RESPONSE_SELECTORS = {
         const uniqueElements = (elements) => {
             const unique = [];
             const seen = new Set();
-            for (const el of elements) {
-                if (!el || seen.has(el)) continue;
-                seen.add(el);
+            for (let i = 0; i < elements.length; i++) {
+                const el = elements[i];
+                if (!el) continue;
+                const key = el.btn || el;
+                if (seen.has(key)) continue;
+                seen.add(key);
                 unique.push(el);
             }
             return unique;
@@ -562,7 +653,7 @@ export const RESPONSE_SELECTORS = {
 
         const pickComposerActionButton = () => {
             const inputCandidate = pickLatestInput();
-            if (!inputCandidate) return null;
+            if (!inputCandidate) return [];
 
             const inputEl = inputCandidate.input;
             const inputRect = inputCandidate.rect;
@@ -572,11 +663,12 @@ export const RESPONSE_SELECTORS = {
             for (let depth = 0; depth < 6 && node; depth++) {
                 node = node.parentElement;
                 if (!node) break;
-                const buttons = Array.from(node.querySelectorAll('button, [role="button"]'));
-                for (const btn of buttons) {
+                const buttons = node.querySelectorAll('button, [role="button"]');
+                for (let i = 0; i < buttons.length; i++) {
+                    const btn = buttons[i];
                     if (!isVisible(btn)) continue;
                     const rect = getRect(btn);
-                    if (rect.width < 20 || rect.height < 20) continue;
+                    if (rect.width < 12 || rect.height < 12) continue;
                     scopedButtons.push({ btn, rect });
                 }
                 if (scopedButtons.length > 0) break;
@@ -587,11 +679,12 @@ export const RESPONSE_SELECTORS = {
                 : (() => {
                     const candidates = [];
                     for (const scope of scopes) {
-                        const buttons = Array.from(scope.querySelectorAll('button, [role="button"]'));
-                        for (const btn of buttons) {
+                        const buttons = scope.querySelectorAll('button, [role="button"]');
+                        for (let i = 0; i < buttons.length; i++) {
+                            const btn = buttons[i];
                             if (!isVisible(btn)) continue;
                             const rect = getRect(btn);
-                            if (rect.width < 20 || rect.height < 20) continue;
+                            if (rect.width < 12 || rect.height < 12) continue;
                             const nearComposer = rect.top >= (inputRect.top - 120);
                             if (!nearComposer) continue;
                             candidates.push({ btn, rect });
@@ -601,12 +694,16 @@ export const RESPONSE_SELECTORS = {
                 })();
 
             const unique = uniqueElements(allButtons);
-            if (unique.length === 0) return null;
+            if (unique.length === 0) return [];
             unique.sort((a, b) => {
                 if (Math.abs(a.rect.top - b.rect.top) > 2) return b.rect.top - a.rect.top;
                 return b.rect.left - a.rect.left;
             });
-            return unique[0].btn;
+            const result = [];
+            for (let i = 0; i < unique.length; i++) {
+                result.push(unique[i].btn);
+            }
+            return result;
         };
 
         const classifyComposerAction = (button) => {
@@ -623,7 +720,8 @@ export const RESPONSE_SELECTORS = {
 
             const hasArrowLikeIcon = !!button.querySelector('svg path, svg polyline, svg line');
             const hasDirectRectIcon = !!button.querySelector('svg > rect');
-            const hasRectIcon = hasDirectRectIcon || (!!button.querySelector('svg rect') && !hasArrowLikeIcon);
+            const hasSvgPath = !!button.querySelector('svg path');
+            const hasRectIcon = (hasDirectRectIcon && !hasSvgPath) || (!!button.querySelector('svg rect') && !hasArrowLikeIcon);
             const looksStop = hasKeyword(blob, STOP_KEYWORDS) || hasKeyword(blob, STOP_ICON_KEYWORDS) || hasRectIcon;
             const looksSend = hasKeyword(blob, SEND_KEYWORDS) || (hasArrowLikeIcon && !hasRectIcon);
 
@@ -632,10 +730,13 @@ export const RESPONSE_SELECTORS = {
             return { known: false, isGenerating: false };
         };
 
-        const composerButton = pickComposerActionButton();
-        const composerState = classifyComposerAction(composerButton);
-        if (composerState.known && composerState.isGenerating && clickControl(composerButton)) {
-            return { ok: true, method: 'composer-action' };
+        const composerButtons = pickComposerActionButton();
+        for (let i = 0; i < composerButtons.length; i++) {
+            const btn = composerButtons[i];
+            const state = classifyComposerAction(btn);
+            if (state.known && state.isGenerating && clickControl(btn)) {
+                return { ok: true, method: 'composer-action' };
+            }
         }
 
         const stopSelectors = [
@@ -675,7 +776,8 @@ export const RESPONSE_SELECTORS = {
                 const svg = control.querySelector('svg');
                 const hasArrowLikeIcon = !!control.querySelector('svg path, svg polyline, svg line');
                 const hasDirectRectIcon = !!control.querySelector('svg > rect');
-                const hasRectIcon = hasDirectRectIcon || (!!control.querySelector('svg rect') && !hasArrowLikeIcon);
+                const hasSvgPath = !!control.querySelector('svg path');
+                const hasRectIcon = (hasDirectRectIcon && !hasSvgPath) || (!!control.querySelector('svg rect') && !hasArrowLikeIcon);
                 const svgText = svg
                     ? [
                         svg.getAttribute('class') || '',
@@ -759,7 +861,7 @@ export const RESPONSE_SELECTORS = {
             const text = (el.textContent || '').trim();
             if (!text || text.length > 150 || text.length < 5) continue;
             // アクティビティパターンにマッチ
-            if (/^(Analy[sz]|Read|Writ|Ran |Creat|Edit|Search|Generat|Execut|Check|Install|Build|Deploy|Fix|Updat|Delet|Modif|Refactor|Test|Debug|Compil|Fetch|Download|Upload|Commit|Push|Pull|Merg)/i.test(text)) {
+            if (/^(Analy[sz]|Read|Writ|Ran |Creat|Edit|Search|Generat|Execut|Check|Install|Build|Deploy|Fix|Updat|Delet|Modif|Refactor|Test|Debug|Compil|Fetch|Download|Upload|Commit|Push|Pull|Merg|Thought|Think|Look|Open|Clos|Connect|Send|Receiv|Pars|Process|Load|Sav|Scan|Validat|Compar|Comput|Evaluat|Launch)/i.test(text)) {
                 activities.push(text);
             }
             // 日本語パターン
@@ -772,10 +874,74 @@ export const RESPONSE_SELECTORS = {
         const unique = [...new Set(activities)];
         return unique.slice(-6);
     })()`,
+    /** モデルのクォータ上限到達エラーを検出する（エラーバナー/トースト要素のみ） */
+    QUOTA_ERROR: `(() => {
+        const panel = document.querySelector('.antigravity-agent-side-panel');
+        const scope = panel || document;
+
+        // エラーバナー、トースト、アラート要素のみを対象にする
+        const errorSelectors = [
+            '[role="alert"]',
+            '[class*="error"]',
+            '[class*="warning"]',
+            '[class*="toast"]',
+            '[class*="banner"]',
+            '[class*="notification"]',
+            '[class*="alert"]',
+            '[class*="quota"]',
+            '[class*="rate-limit"]',
+        ];
+        const errorElements = scope.querySelectorAll(errorSelectors.join(', '));
+        for (const el of errorElements) {
+            // アシスタントメッセージ内やコードブロック内の要素は除外
+            if (el.closest('.rendered-markdown, .prose, pre, code, [data-message-author-role="assistant"], [data-message-role="assistant"], [class*="message-content"]')) {
+                continue;
+            }
+            const text = (el.textContent || '').trim().toLowerCase();
+            if (text.includes('model quota reached') || text.includes('rate limit') || text.includes('quota exceeded')
+                || text.includes('クォータ') || text.includes('レート制限')) {
+                return true;
+            }
+        }
+        return false;
+    })()`,
+    /** 待機が長引いた時の診断情報（デバッグ用） */
+    RESPONSE_DIAGNOSTICS: `(() => {
+        const panel = document.querySelector('.antigravity-agent-side-panel');
+        const scope = panel || document;
+        const clean = (v) => (v || '').replace(/\\s+/g, ' ').trim();
+
+        const selectors = {
+            renderedMarkdown: '.rendered-markdown',
+            assistantRole: '[data-message-author-role="assistant"], [data-message-role="assistant"]',
+            messageContent: '[class*="assistant-message"], [class*="message-content"], [class*="markdown-body"], .prose',
+            activityLike: '[class*="tool-"], [class*="activity"], [class*="status-message"], [class*="tool_call"], [class*="thinking"], [class*="loading"]',
+            input: 'div[role="textbox"]:not(.xterm-helper-textarea), textarea, [contenteditable="true"]',
+        };
+
+        const counts = {};
+        for (const [key, selector] of Object.entries(selectors)) {
+            counts[key] = scope.querySelectorAll(selector).length;
+        }
+
+        const sampleTexts = [];
+        const sampleNodes = scope.querySelectorAll('.rendered-markdown, [data-message-author-role="assistant"], [data-message-role="assistant"], .prose, [class*="message-content"]');
+        for (let i = sampleNodes.length - 1; i >= 0 && sampleTexts.length < 3; i--) {
+            const txt = clean(sampleNodes[i]?.innerText || sampleNodes[i]?.textContent || '');
+            if (!txt) continue;
+            sampleTexts.push(txt.slice(0, 180));
+        }
+
+        return {
+            panelFound: !!panel,
+            counts,
+            sampleTexts,
+        };
+    })()`,
 };
 
 /** レスポンス生成のフェーズ */
-export type ResponsePhase = 'waiting' | 'thinking' | 'generating' | 'complete' | 'timeout';
+export type ResponsePhase = 'waiting' | 'thinking' | 'generating' | 'complete' | 'timeout' | 'quotaReached';
 
 export interface ResponseMonitorOptions {
     /** CDPサービスインスタンス */
@@ -794,6 +960,18 @@ export interface ResponseMonitorOptions {
     noUpdateTimeoutMs?: number;
     /** ストップ消失後、本文未取得のままcompleteにしてよい最短待機時間（ミリ秒） */
     noTextCompletionDelayMs?: number;
+    /**
+     * テキスト安定性のみで完了判定する独立パスの待機時間（ミリ秒）。
+     * ストップボタン検出に依存せず、テキストがこの時間変化しなければ完了。
+     * デフォルト: 15000ms（15秒）。0で無効。
+     */
+    textStabilityCompleteMs?: number;
+    /**
+     * ネットワーク完了検知後のテキスト安定待ち時間（ミリ秒）。
+     * Network.loadingFinished 発火後、この時間テキストが安定していれば完了。
+     * デフォルト: 3000ms（3秒）。
+     */
+    networkCompleteDelayMs?: number;
     /** テキスト更新時のコールバック */
     onProgress?: (text: string) => void;
     /** 生成完了時のコールバック */
@@ -812,10 +990,11 @@ export interface ResponseMonitorOptions {
  * ポーリングによりAntigravityのDOMからAIの応答テキストを定期的に取得し、
  * テキストの変化・生成完了・タイムアウトを検知してコールバックで通知する。
  *
- * 完了判定:
- *   - ストップボタンが一度出現した後、連続N回（デフォルト1回）消失を確認
- *   - かつテキストが安定時間（デフォルト10秒）変化しなければ完了
- *   - 生成開始後、テキスト更新が一定時間（デフォルト60秒）止まったらフォールバック完了
+ * 完了判定（3段構え）:
+ *   1. (最速) Network.loadingFinished — ストリーミングAPI終了を検知 → 3秒安定待ち → 完了
+ *   2. (安定) テキスト安定 — テキストが15秒変化しなければ完了（ストップボタン非依存）
+ *   3. (フォールバック) 更新停止 — 30秒間テキスト更新なしで完了
+ *   既存のストップボタン検出もそのまま維持（動く環境では高速検知に貢献）
  *   - 5分経過でタイムアウト
  */
 export class ResponseMonitor {
@@ -826,6 +1005,8 @@ export class ResponseMonitor {
     private completionStabilityMs: number;
     private noUpdateTimeoutMs: number;
     private noTextCompletionDelayMs: number;
+    private textStabilityCompleteMs: number;
+    private networkCompleteDelayMs: number;
     private onProgress?: (text: string) => void;
     private onComplete?: (finalText: string) => void;
     private onTimeout?: (lastText: string) => void;
@@ -842,6 +1023,10 @@ export class ResponseMonitor {
     private baselineText: string | null = null;
     /** ストップボタンが一度でも出現したか（生成開始を検知済みか） */
     private generationStarted: boolean = false;
+    /** ストップボタン（生成中UI）を1度でも検出したか */
+    private stopButtonSeenOnce: boolean = false;
+    /** クォータエラーが検出されたがテキスト取得済みのためフラグのみ */
+    private quotaDetected: boolean = false;
     /** 現在のフェーズ */
     private currentPhase: ResponsePhase = 'waiting';
     /** ストップボタン消失の連続確認カウント */
@@ -850,15 +1035,34 @@ export class ResponseMonitor {
     private lastActivities: string = '';
     /** 最後にテキスト更新を検出した時刻 */
     private lastTextChangeAt: number = 0;
+    /** 最後に「進捗シグナル」を検出した時刻（テキスト/アクティビティ変化/ネットワーク完了など） */
+    private lastSignalAt: number = 0;
+    /** アクティビティを一度でも検出したか（ストップ/本文が取れない環境向け） */
+    private activitySeen: boolean = false;
+    /** ポーリング実行回数（デバッグ用） */
+    private pollCount: number = 0;
+    /** ベースライン抑制が有効か（前回応答の再取得を避ける） */
+    private baselineSuppressionActive: boolean = false;
+
+    // --- ネットワークベース完了検知 ---
+    /** 追跡中のストリーミングリクエストID集合 */
+    private trackedRequestIds: Set<string> = new Set();
+    /** ネットワーク完了シグナルが発火した時刻（0 = 未発火） */
+    private networkFinishedAt: number = 0;
+    /** CDP イベントリスナーの参照（stop時に解除用） */
+    private networkRequestHandler: ((params: any) => void) | null = null;
+    private networkFinishedHandler: ((params: any) => void) | null = null;
 
     constructor(options: ResponseMonitorOptions) {
         this.cdpService = options.cdpService;
         this.pollIntervalMs = options.pollIntervalMs ?? 1000;
         this.maxDurationMs = options.maxDurationMs ?? 300000;
         this.stopButtonGoneConfirmCount = options.stopButtonGoneConfirmCount ?? 1;
-        this.completionStabilityMs = options.completionStabilityMs ?? 10000;
-        this.noUpdateTimeoutMs = options.noUpdateTimeoutMs ?? options.generatingStallMs ?? 60000;
+        this.completionStabilityMs = options.completionStabilityMs ?? 1500;
+        this.noUpdateTimeoutMs = options.noUpdateTimeoutMs ?? options.generatingStallMs ?? 30000;
         this.noTextCompletionDelayMs = options.noTextCompletionDelayMs ?? Math.min(15000, this.noUpdateTimeoutMs);
+        this.textStabilityCompleteMs = options.textStabilityCompleteMs ?? 15000;
+        this.networkCompleteDelayMs = options.networkCompleteDelayMs ?? 3000;
         this.onProgress = options.onProgress;
         this.onComplete = options.onComplete;
         this.onTimeout = options.onTimeout;
@@ -870,32 +1074,53 @@ export class ResponseMonitor {
      * 監視を開始する。
      * まず現在のテキストをベースラインとして記録し、
      * 内部でポーリングタイマーとタイムアウトタイマーを設定する。
+     * ネットワークイベント購読も開始する。
      */
     async start(): Promise<void> {
         if (this.isRunning) return;
         this.isRunning = true;
         this.lastText = null;
         this.generationStarted = false;
+        this.stopButtonSeenOnce = false;
         this.currentPhase = 'waiting';
         this.stopGoneCount = 0;
         this.lastActivities = '';
         this.startTime = Date.now();
         this.lastTextChangeAt = this.startTime;
+        this.lastSignalAt = this.startTime;
+        this.activitySeen = false;
+        this.pollCount = 0;
+        this.baselineSuppressionActive = false;
+        this.trackedRequestIds.clear();
+        this.networkFinishedAt = 0;
+
+        logger.info(
+            `[ResponseMonitor] start: pollInterval=${this.pollIntervalMs}ms maxDuration=${this.maxDurationMs}ms ` +
+            `stopGoneConfirm=${this.stopButtonGoneConfirmCount} completionStability=${this.completionStabilityMs}ms ` +
+            `textStability=${this.textStabilityCompleteMs}ms noUpdateTimeout=${this.noUpdateTimeoutMs}ms ` +
+            `networkDelay=${this.networkCompleteDelayMs}ms`,
+        );
 
         // 初期フェーズ通知
         this.setPhase('waiting', null);
 
         // ベースライン取得: 送信前の既存テキストを記録して除外対象にする
         try {
-            const baseResult = await this.cdpService.call('Runtime.evaluate', {
-                expression: RESPONSE_SELECTORS.RESPONSE_TEXT,
-                returnByValue: true,
-                awaitPromise: true,
-            });
+            const baseResult = await this.cdpService.call(
+                'Runtime.evaluate',
+                this.buildEvaluateParams(RESPONSE_SELECTORS.RESPONSE_TEXT, true),
+            );
             this.baselineText = baseResult?.result?.value ?? null;
+            this.baselineSuppressionActive = !!(this.baselineText && this.baselineText.trim().length > 0);
+            logger.debug(`[ResponseMonitor] baseline captured (len=${this.baselineText?.length ?? 0})`);
         } catch {
             this.baselineText = null;
+            this.baselineSuppressionActive = false;
+            logger.debug('[ResponseMonitor] baseline capture failed');
         }
+
+        // ネットワークイベント購読を開始
+        this.subscribeNetworkEvents();
 
         // タイムアウトタイマーの設定
         if (this.maxDurationMs > 0) {
@@ -903,7 +1128,7 @@ export class ResponseMonitor {
                 const lastText = this.lastText ?? '';
                 this.setPhase('timeout', lastText);
                 await this.stop();
-                this.onTimeout?.(lastText);
+                await this.invokeTimeoutCallback(lastText);
             }, this.maxDurationMs);
         }
 
@@ -912,9 +1137,77 @@ export class ResponseMonitor {
     }
 
     /**
+     * Network CDP イベントを購読し、ストリーミングAPIリクエストの完了を追跡する。
+     */
+    private subscribeNetworkEvents(): void {
+        const STREAMING_URL_PATTERN = /\/api\/|stream|chat|generate|completions|messages/i;
+        const STATIC_ASSET_PATTERN = /\.(?:json|js|css|map|png|jpe?g|gif|svg|ico|woff2?|ttf|otf)(?:\?|#|$)/i;
+        const IGNORE_HOST_PATTERN = /(?:^|\/\/)(?:main\.)?vscode-cdn\.net(?:\/|$)/i;
+        const TRACKABLE_TYPES = new Set(['Fetch', 'XHR', 'EventSource', 'Other']);
+
+        this.networkRequestHandler = (params: any) => {
+            if (!this.isRunning) return;
+            const url = params?.request?.url || '';
+            const type = params?.type as string | undefined;
+            const isStreamingLikeUrl = STREAMING_URL_PATTERN.test(url);
+            const isStaticAsset = STATIC_ASSET_PATTERN.test(url);
+            const isIgnoredHost = IGNORE_HOST_PATTERN.test(url);
+            const isTrackableType = !type || TRACKABLE_TYPES.has(type);
+
+            if (!isStreamingLikeUrl || isStaticAsset || isIgnoredHost || !isTrackableType) {
+                logger.debug(
+                    `[ResponseMonitor] Network request ignored: ${params?.requestId ?? 'unknown'} ` +
+                    `type=${type ?? 'unknown'} url=${url}`,
+                );
+                return;
+            }
+
+            this.trackedRequestIds.add(params.requestId);
+            if (!this.generationStarted) {
+                this.generationStarted = true;
+                this.setPhase('thinking', null);
+            }
+            this.lastSignalAt = Date.now();
+            logger.info(`[ResponseMonitor] Network request tracked: ${params.requestId} type=${type ?? 'unknown'} url=${url}`);
+        };
+
+        this.networkFinishedHandler = (params: any) => {
+            if (!this.isRunning) return;
+            if (this.trackedRequestIds.has(params?.requestId)) {
+                this.trackedRequestIds.delete(params.requestId);
+                logger.info(`[ResponseMonitor] Network request finished: ${params.requestId} (remaining: ${this.trackedRequestIds.size})`);
+                // 全ストリーミングリクエストが完了 → 完了シグナル発火
+                if (this.trackedRequestIds.size === 0) {
+                    this.networkFinishedAt = Date.now();
+                    this.lastSignalAt = this.networkFinishedAt;
+                    logger.info('[ResponseMonitor] All tracked network requests finished — completion signal set');
+                }
+            }
+        };
+
+        this.cdpService.on('Network.requestWillBeSent', this.networkRequestHandler);
+        this.cdpService.on('Network.loadingFinished', this.networkFinishedHandler);
+    }
+
+    /**
+     * ネットワークイベントリスナーを解除する。
+     */
+    private unsubscribeNetworkEvents(): void {
+        if (this.networkRequestHandler) {
+            this.cdpService.removeListener('Network.requestWillBeSent', this.networkRequestHandler);
+            this.networkRequestHandler = null;
+        }
+        if (this.networkFinishedHandler) {
+            this.cdpService.removeListener('Network.loadingFinished', this.networkFinishedHandler);
+            this.networkFinishedHandler = null;
+        }
+    }
+
+    /**
      * 監視を停止する（外部から呼び出し可能）。
      */
     async stop(): Promise<void> {
+        logger.debug(`[ResponseMonitor] stop called (phase=${this.currentPhase}, running=${this.isRunning})`);
         this.isRunning = false;
         if (this.pollTimer) {
             clearTimeout(this.pollTimer);
@@ -924,6 +1217,56 @@ export class ResponseMonitor {
             clearTimeout(this.timeoutTimer);
             this.timeoutTimer = null;
         }
+        this.unsubscribeNetworkEvents();
+    }
+
+    private async invokeCompleteCallback(finalText: string, reason: string): Promise<void> {
+        logger.info(
+            `[ResponseMonitor] complete callback start: reason=${reason} ` +
+            `textLen=${finalText.length} phase=${this.currentPhase}`,
+        );
+        try {
+            await Promise.resolve(this.onComplete?.(finalText));
+            logger.info(`[ResponseMonitor] complete callback finished: reason=${reason}`);
+        } catch (error) {
+            logger.error(`[ResponseMonitor] complete callback failed: reason=${reason}`, error);
+        }
+    }
+
+    private async invokeTimeoutCallback(lastText: string): Promise<void> {
+        logger.info(`[ResponseMonitor] timeout callback start: textLen=${lastText.length}`);
+        try {
+            await Promise.resolve(this.onTimeout?.(lastText));
+            logger.info('[ResponseMonitor] timeout callback finished');
+        } catch (error) {
+            logger.error('[ResponseMonitor] timeout callback failed:', error);
+        }
+    }
+
+    private async emitWaitingDiagnostics(pollId: number): Promise<void> {
+        try {
+            const result = await this.cdpService.call(
+                'Runtime.evaluate',
+                this.buildEvaluateParams(RESPONSE_SELECTORS.RESPONSE_DIAGNOSTICS, true),
+            );
+            const value = result?.result?.value;
+            logger.warn(`[ResponseMonitor] waiting diagnostics poll#${pollId}: ${JSON.stringify(value)}`);
+        } catch (error) {
+            logger.debug(`[ResponseMonitor] waiting diagnostics failed poll#${pollId}`);
+        }
+    }
+
+    private buildEvaluateParams(expression: string, awaitPromise: boolean = true): Record<string, unknown> {
+        const params: Record<string, unknown> = {
+            expression,
+            returnByValue: true,
+            awaitPromise,
+        };
+        const contextId = this.cdpService.getPrimaryContextId?.();
+        if (contextId !== null && contextId !== undefined) {
+            params.contextId = contextId;
+        }
+        return params;
     }
 
     /** フェーズを変更し、コールバックを呼ぶ */
@@ -937,6 +1280,11 @@ export class ResponseMonitor {
     /** 現在のフェーズを取得 */
     getPhase(): ResponsePhase {
         return this.currentPhase;
+    }
+
+    /** クォータエラーが検出されたがテキスト取得済みだったかどうか */
+    getQuotaDetected(): boolean {
+        return this.quotaDetected;
     }
 
     /** 次のポーリングをスケジュールする */
@@ -960,13 +1308,18 @@ export class ResponseMonitor {
      */
     private async poll(): Promise<void> {
         try {
+            this.pollCount += 1;
+            const pollId = this.pollCount;
             // ストップボタンの存在チェック（生成中かどうか）
-            const stopResult = await this.cdpService.call('Runtime.evaluate', {
-                expression: RESPONSE_SELECTORS.STOP_BUTTON,
-                returnByValue: true,
-                awaitPromise: true,
-            });
+            const stopResult = await this.cdpService.call(
+                'Runtime.evaluate',
+                this.buildEvaluateParams(RESPONSE_SELECTORS.STOP_BUTTON, true),
+            );
             const isGenerating: boolean = stopResult?.result?.value ?? false;
+            logger.debug(
+                `[ResponseMonitor] poll#${pollId} stop=${isGenerating} phase=${this.currentPhase} ` +
+                `started=${this.generationStarted} stopGoneCount=${this.stopGoneCount}`,
+            );
 
             // ストップボタンが出現したら生成開始を記録
             if (isGenerating) {
@@ -974,23 +1327,56 @@ export class ResponseMonitor {
                     this.generationStarted = true;
                     this.setPhase('thinking', null);
                 }
+                this.stopButtonSeenOnce = true;
                 // ストップボタンが再度出現 → カウンターリセット
                 this.stopGoneCount = 0;
             }
 
+            // クォータ上限到達チェック
+            // TODO: "Our servers are experiencing high traffic right now" エラー発生時の対応を追加する（リトライやフォールバック等）
+            try {
+                const quotaResult = await this.cdpService.call(
+                    'Runtime.evaluate',
+                    this.buildEvaluateParams(RESPONSE_SELECTORS.QUOTA_ERROR, true),
+                );
+                if (quotaResult?.result?.value === true) {
+                    const hasText = !!this.lastText && this.lastText.trim().length > 0;
+                    if (hasText) {
+                        // テキストが取得済みの場合はクォータ状態をフラグし、通常の完了フローに任せる
+                        logger.warn('[ResponseMonitor] クォータ上限到達を検出（テキスト取得済み — 通常完了フローで処理）');
+                        this.quotaDetected = true;
+                    } else {
+                        // テキスト未取得の場合のみ即時中断
+                        logger.warn('[ResponseMonitor] クォータ上限到達を検出（テキスト未取得 — 即時中断）');
+                        this.setPhase('quotaReached', '');
+                        await this.stop();
+                        await this.invokeCompleteCallback('', 'quota-reached');
+                        return;
+                    }
+                }
+            } catch {
+                // クォータチェック失敗は無視
+            }
+
             // アクティビティ情報の取得
             try {
-                const actResult = await this.cdpService.call('Runtime.evaluate', {
-                    expression: RESPONSE_SELECTORS.ACTIVITY_STATUS,
-                    returnByValue: true,
-                    awaitPromise: true,
-                });
+                const actResult = await this.cdpService.call(
+                    'Runtime.evaluate',
+                    this.buildEvaluateParams(RESPONSE_SELECTORS.ACTIVITY_STATUS, true),
+                );
                 const rawActivities: string[] = actResult?.result?.value ?? [];
                 const activities = rawActivities;
                 if (activities.length > 0) {
+                    this.activitySeen = true;
+                    if (!this.generationStarted) {
+                        this.generationStarted = true;
+                        this.setPhase('thinking', null);
+                        logger.info('[ResponseMonitor] generation start inferred from activity');
+                    }
                     const actStr = JSON.stringify(activities);
                     if (actStr !== this.lastActivities) {
                         this.lastActivities = actStr;
+                        this.lastSignalAt = Date.now();
                         this.onActivity?.(activities);
                     }
                 }
@@ -999,27 +1385,73 @@ export class ResponseMonitor {
             }
 
             // テキスト取得
-            const textResult = await this.cdpService.call('Runtime.evaluate', {
-                expression: RESPONSE_SELECTORS.RESPONSE_TEXT,
-                returnByValue: true,
-                awaitPromise: true,
-            });
+            const textResult = await this.cdpService.call(
+                'Runtime.evaluate',
+                this.buildEvaluateParams(RESPONSE_SELECTORS.RESPONSE_TEXT, true),
+            );
             const currentText: string | null = textResult?.result?.value ?? null;
 
             // ベースライン（送信前の古い応答）と同じテキストは送信直後のみ無視
             // 生成開始後も同一テキストが返るケースがあるため、恒久的には除外しない。
-            if (
-                currentText !== null &&
-                currentText === this.baselineText &&
-                this.lastText === null &&
-                (Date.now() - this.startTime) < 5000
-            ) {
+            if (currentText !== null && this.lastText === null && this.baselineSuppressionActive && currentText === this.baselineText) {
+                const elapsed = Date.now() - this.startTime;
+                // 逆順DOM（新規応答が先頭側）対策: 先頭側抽出を試す
+                if (pollId % 2 === 0) {
+                    try {
+                        const altResult = await this.cdpService.call(
+                            'Runtime.evaluate',
+                            this.buildEvaluateParams(RESPONSE_SELECTORS.RESPONSE_TEXT_FROM_START, true),
+                        );
+                        const altText: string | null = altResult?.result?.value ?? null;
+                        if (
+                            altText !== null &&
+                            altText.trim().length > 0 &&
+                            altText !== this.baselineText &&
+                            altText !== this.lastText
+                        ) {
+                            this.lastText = altText;
+                            this.baselineSuppressionActive = false;
+                            logger.info(`[ResponseMonitor] poll#${pollId} baseline bypass by start-side extractor (len=${altText.length})`);
+                            if (this.currentPhase === 'waiting' || this.currentPhase === 'thinking') {
+                                this.setPhase('generating', altText);
+                                if (!this.generationStarted) {
+                                    this.generationStarted = true;
+                                }
+                            }
+                            this.onProgress?.(altText);
+                            this.stopGoneCount = 0;
+                            this.lastTextChangeAt = Date.now();
+                            this.lastSignalAt = this.lastTextChangeAt;
+                        }
+                    } catch {
+                        // no-op
+                    }
+                }
+
+                if (this.lastText !== null) {
+                    // 先頭側抽出で更新できたため、通常処理へ
+                } else if (elapsed < 20000) {
+                    if (pollId % 5 === 0) {
+                        logger.debug(`[ResponseMonitor] poll#${pollId} baseline text suppressed elapsed=${elapsed}ms`);
+                    }
+                    return;
+                }
+                if (pollId % 5 === 0) {
+                    logger.warn(
+                        `[ResponseMonitor] baseline suppression timeout (${elapsed}ms): ` +
+                        'baselineと同一テキストのため採用を継続抑止（旧回答誤採用防止）',
+                    );
+                }
                 return;
             }
 
             // テキストが変化した場合のみ通知
             if (currentText !== null && currentText !== this.lastText) {
                 this.lastText = currentText;
+                if (currentText !== this.baselineText) {
+                    this.baselineSuppressionActive = false;
+                }
+                logger.debug(`[ResponseMonitor] poll#${pollId} text updated (len=${currentText.length})`);
 
                 // テキストが来たらgeneratingフェーズに移行
                 if (this.currentPhase === 'waiting' || this.currentPhase === 'thinking') {
@@ -1034,45 +1466,128 @@ export class ResponseMonitor {
                 // テキストが変化した = まだ生成中
                 this.stopGoneCount = 0;
                 this.lastTextChangeAt = Date.now();
+                this.lastSignalAt = this.lastTextChangeAt;
             }
 
             const hasAnyText = !!(this.lastText && this.lastText.trim().length > 0);
+            const now = Date.now();
+            const stalledFor = now - this.lastTextChangeAt;
+            const signalStalledFor = now - this.lastSignalAt;
+            logger.debug(
+                `[ResponseMonitor] poll#${pollId} state hasText=${hasAnyText} stalledFor=${stalledFor}ms ` +
+                `signalStalledFor=${signalStalledFor}ms started=${this.generationStarted} activitySeen=${this.activitySeen} ` +
+                `trackedReq=${this.trackedRequestIds.size} networkFinishedAt=${this.networkFinishedAt}`,
+            );
 
-            // 完了判定: ストップボタンが消失し、連続N回確認で完了
+            if (!hasAnyText && (this.currentPhase === 'waiting' || this.currentPhase === 'thinking' || this.currentPhase === 'generating') && this.pollCount % 5 === 0) {
+                await this.emitWaitingDiagnostics(pollId);
+            }
+
+            // ───────────────────────────────────────────────────
+            // 完了判定パス 1 (最速): ネットワーク完了シグナル
+            // Network.loadingFinished でストリーミングAPIの終了を検知済み
+            // かつテキストが networkCompleteDelayMs 安定していれば完了
+            // ───────────────────────────────────────────────────
+            if (this.networkFinishedAt > 0 && (this.generationStarted || hasAnyText)) {
+                const sinceNetworkFinished = now - this.networkFinishedAt;
+                if (sinceNetworkFinished >= this.networkCompleteDelayMs && stalledFor >= this.networkCompleteDelayMs) {
+                    logger.info(`[ResponseMonitor] ネットワーク完了 + ${sinceNetworkFinished}ms安定 → 完了と判定`);
+                    const finalText = this.lastText ?? '';
+                    this.setPhase('complete', finalText);
+                    await this.stop();
+                    await this.invokeCompleteCallback(finalText, 'network-finished');
+                    return;
+                }
+            }
+
+            // ───────────────────────────────────────────────────
+            // 完了判定パス (既存): ストップボタン消失検知
+            // ストップボタンが消失し、連続N回確認で完了
+            // ───────────────────────────────────────────────────
             if (!isGenerating && (this.generationStarted || hasAnyText)) {
                 // 本文未取得の状態では、Stop消失直後の誤完了を避けるため少し待つ
                 if (!hasAnyText) {
-                    const elapsedFromStart = Date.now() - this.startTime;
+                    const elapsedFromStart = now - this.startTime;
                     if (elapsedFromStart < this.noTextCompletionDelayMs) {
+                        if (pollId % 5 === 0) {
+                            logger.debug(
+                                `[ResponseMonitor] poll#${pollId} no-text completion hold ` +
+                                `elapsed=${elapsedFromStart}ms need=${this.noTextCompletionDelayMs}ms`,
+                            );
+                        }
                         return;
                     }
                 }
                 this.stopGoneCount++;
                 if (this.stopGoneCount >= this.stopButtonGoneConfirmCount) {
-                    const stableFor = Date.now() - this.lastTextChangeAt;
-                    if (stableFor < this.completionStabilityMs) {
+                    const stopDetectionReliable = this.stopButtonSeenOnce;
+                    const requiredStabilityMs = hasAnyText
+                        ? (stopDetectionReliable ? this.completionStabilityMs : Math.min(this.completionStabilityMs, 3000))
+                        : Math.min(this.completionStabilityMs, 3000);
+                    // 本文未取得ケースではアクティビティ変化で signalStalledFor が更新され続けるため、
+                    // stop消失後の完了判定はテキスト更新基準（stalledFor）で評価する。
+                    const effectiveStalledFor = stalledFor;
+                    // stop検出が一度も無い環境では、短縮判定に加えて
+                    // 「直近の進捗シグナルが静止している」ことも要求し、早すぎる誤完了を防ぐ。
+                    if (!stopDetectionReliable) {
+                        const signalQuietMs = Math.max(500, Math.floor(this.pollIntervalMs * 0.8));
+                        if (signalStalledFor < signalQuietMs) {
+                            if (pollId % 5 === 0) {
+                                logger.debug(
+                                    `[ResponseMonitor] poll#${pollId} stop-gone blocked by active-signal ` +
+                                    `signalStalled=${signalStalledFor}ms need=${signalQuietMs}ms`,
+                                );
+                            }
+                            return;
+                        }
+                    }
+                    if (effectiveStalledFor < requiredStabilityMs) {
+                        if (pollId % 5 === 0) {
+                            logger.debug(
+                                `[ResponseMonitor] poll#${pollId} stop-gone pending ` +
+                                `stalled=${effectiveStalledFor}ms need=${requiredStabilityMs}ms hasText=${hasAnyText} ` +
+                                `stopSeen=${this.stopButtonSeenOnce}`,
+                            );
+                        }
                         return;
                     }
                     logger.info(`[ResponseMonitor] ストップボタン消失を${this.stopGoneCount}回連続確認。完了と判定。`);
                     const finalText = this.lastText ?? '';
                     this.setPhase('complete', finalText);
                     await this.stop();
-                    this.onComplete?.(finalText);
+                    await this.invokeCompleteCallback(finalText, 'stop-button-gone');
                     return;
                 }
             }
 
-            // フォールバック完了判定:
-            // ストップボタン誤検知で isGenerating=true が張り付いても、
-            // テキスト更新が長時間止まっていれば完了扱いにする
-            if (this.noUpdateTimeoutMs > 0 && (this.generationStarted || hasAnyText)) {
-                const stalledFor = Date.now() - this.lastTextChangeAt;
-                if (stalledFor >= this.noUpdateTimeoutMs) {
-                    logger.warn(`[ResponseMonitor] 生成中判定が継続していますが、${stalledFor}ms更新が無いため完了扱いにします。`);
+            // ───────────────────────────────────────────────────
+            // 完了判定パス 2 (安定): テキスト安定性のみで完了判定
+            // ストップボタン検出に依存しない独立パス
+            // 生成が開始済み AND テキストあり AND テキストが一定時間変化なし → 完了
+            // ───────────────────────────────────────────────────
+            if (this.textStabilityCompleteMs > 0 && this.generationStarted && hasAnyText) {
+                if (stalledFor >= this.textStabilityCompleteMs) {
+                    logger.info(`[ResponseMonitor] テキスト安定 ${stalledFor}ms（閾値 ${this.textStabilityCompleteMs}ms）→ 完了と判定`);
                     const finalText = this.lastText ?? '';
                     this.setPhase('complete', finalText);
                     await this.stop();
-                    this.onComplete?.(finalText);
+                    await this.invokeCompleteCallback(finalText, 'text-stability');
+                    return;
+                }
+            }
+
+            // ───────────────────────────────────────────────────
+            // 完了判定パス 3 (フォールバック): 更新停止タイムアウト
+            // ストップボタン誤検知で isGenerating=true が張り付いても、
+            // テキスト更新が長時間止まっていれば完了扱いにする
+            // ───────────────────────────────────────────────────
+            if (this.noUpdateTimeoutMs > 0 && (this.generationStarted || hasAnyText)) {
+                if (signalStalledFor >= this.noUpdateTimeoutMs) {
+                    logger.warn(`[ResponseMonitor] 生成中判定が継続していますが、${signalStalledFor}ms進捗更新が無いため完了扱いにします。`);
+                    const finalText = this.lastText ?? '';
+                    this.setPhase('complete', finalText);
+                    await this.stop();
+                    await this.invokeCompleteCallback(finalText, 'no-update-timeout');
                     return;
                 }
             }
