@@ -23,6 +23,18 @@ jest.mock('discord.js', () => {
             return this;
         }
 
+        addIntegerOption(fn: (option: any) => void) {
+            const option = {
+                setName: jest.fn().mockReturnThis(),
+                setDescription: jest.fn().mockReturnThis(),
+                setRequired: jest.fn().mockReturnThis(),
+                setMinValue: jest.fn().mockReturnThis(),
+                setMaxValue: jest.fn().mockReturnThis(),
+            };
+            fn(option);
+            return this;
+        }
+
         addSubcommand(fn: (sub: any) => void) {
             const sub = {
                 setName: jest.fn().mockReturnThis(),

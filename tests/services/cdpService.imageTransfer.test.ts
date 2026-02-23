@@ -51,6 +51,11 @@ describe('CdpService - 画像転送', () => {
                     return;
                 }
 
+                if (req.method === 'Network.enable') {
+                    ws.send(JSON.stringify({ id: req.id, result: {} }));
+                    return;
+                }
+
                 if (req.method === 'Runtime.evaluate') {
                     evaluateCalls += 1;
 

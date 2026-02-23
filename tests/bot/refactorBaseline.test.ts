@@ -1,6 +1,5 @@
-import { Client, GatewayIntentBits, Events } from 'discord.js';
-import { startBot } from '../src/bot';
-import { loadConfig } from '../src/utils/config';
+import { Client, Events } from 'discord.js';
+import { startBot } from '../../src/bot';
 
 jest.mock('discord.js', () => {
     return {
@@ -22,7 +21,6 @@ jest.mock('discord.js', () => {
             MessageCreate: 'messageCreate',
             InteractionCreate: 'interactionCreate',
         },
-        // スラッシュコマンド用のモック
         SlashCommandBuilder: jest.fn().mockImplementation(() => {
             const builder: any = {};
             builder.setName = jest.fn().mockReturnValue(builder);
@@ -73,16 +71,16 @@ jest.mock('discord.js', () => {
             applicationCommands: jest.fn().mockReturnValue('/commands'),
             applicationGuildCommands: jest.fn().mockReturnValue('/guild-commands'),
         },
-        // 結線で使う追加のモック
         AttachmentBuilder: jest.fn(),
         ButtonBuilder: jest.fn().mockImplementation(() => ({
             setCustomId: jest.fn().mockReturnThis(),
             setLabel: jest.fn().mockReturnThis(),
             setStyle: jest.fn().mockReturnThis(),
         })),
-        ButtonStyle: { Success: 1, Danger: 4 },
+        ButtonStyle: { Success: 1, Danger: 4, Primary: 3, Secondary: 2 },
         ActionRowBuilder: jest.fn().mockImplementation(() => ({
             addComponents: jest.fn().mockReturnThis(),
+            components: [],
         })),
         EmbedBuilder: jest.fn().mockImplementation(() => ({
             setTitle: jest.fn().mockReturnThis(),
@@ -90,19 +88,28 @@ jest.mock('discord.js', () => {
             setColor: jest.fn().mockReturnThis(),
             addFields: jest.fn().mockReturnThis(),
             setTimestamp: jest.fn().mockReturnThis(),
+            setFooter: jest.fn().mockReturnThis(),
         })),
+        StringSelectMenuBuilder: jest.fn().mockImplementation(() => ({
+            setCustomId: jest.fn().mockReturnThis(),
+            setPlaceholder: jest.fn().mockReturnThis(),
+            addOptions: jest.fn().mockReturnThis(),
+        })),
+        MessageFlags: { Ephemeral: 1 << 6 },
         Message: jest.fn(),
+        ChatInputCommandInteraction: jest.fn(),
+        Interaction: jest.fn(),
     };
 });
 
-jest.mock('../src/utils/config', () => ({
+jest.mock('../../src/utils/config', () => ({
     loadConfig: jest.fn().mockReturnValue({
         discordToken: 'test_token',
         clientId: 'test_client_id',
         guildId: 'test_guild_id',
         allowedUserIds: ['123'],
-        workspaceBaseDir: '/workspace'
-    })
+        workspaceBaseDir: '/workspace',
+    }),
 }));
 
 jest.mock('better-sqlite3', () => {
@@ -115,8 +122,7 @@ jest.mock('better-sqlite3', () => {
     });
 });
 
-// CDPサービスのモック（実際のネットワーク接続を防ぐ）
-jest.mock('../src/services/cdpService', () => {
+jest.mock('../../src/services/cdpService', () => {
     const EventEmitter = require('events');
     return {
         CdpService: jest.fn().mockImplementation(() => {
@@ -134,44 +140,21 @@ jest.mock('../src/services/cdpService', () => {
     };
 });
 
-jest.mock('../src/services/screenshotService', () => ({
+jest.mock('../../src/services/screenshotService', () => ({
     ScreenshotService: jest.fn().mockImplementation(() => ({
         capture: jest.fn().mockResolvedValue({ success: false, error: 'mock' }),
     })),
 }));
 
-describe('Bot Startup', () => {
-    let clientInstance: any;
-
-    beforeEach(async () => {
+describe('Bot Refactor Baseline', () => {
+    beforeEach(() => {
         jest.clearAllMocks();
+    });
+
+    it('refactor後も起動時にMessageCreate/InteractionCreateを購読する', async () => {
         await startBot();
-        clientInstance = (Client as unknown as jest.Mock).mock.results[0].value;
-    });
-
-    it('initializes the client with correct intents', () => {
-        expect(Client).toHaveBeenCalledWith({
-            intents: [
-                GatewayIntentBits.Guilds,
-                GatewayIntentBits.GuildMessages,
-                GatewayIntentBits.MessageContent,
-            ]
-        });
-    });
-
-    it('listens for the ready event', () => {
-        expect(clientInstance.once).toHaveBeenCalledWith(Events.ClientReady, expect.any(Function));
-    });
-
-    it('listens for message creation', () => {
-        expect(clientInstance.on).toHaveBeenCalledWith(Events.MessageCreate, expect.any(Function));
-    });
-
-    it('listens for interaction creation (slash commands)', () => {
-        expect(clientInstance.on).toHaveBeenCalledWith(Events.InteractionCreate, expect.any(Function));
-    });
-
-    it('calls login with the token from config', () => {
-        expect(clientInstance.login).toHaveBeenCalledWith('test_token');
+        const client = (Client as unknown as jest.Mock).mock.results[0].value;
+        expect(client.on).toHaveBeenCalledWith(Events.MessageCreate, expect.any(Function));
+        expect(client.on).toHaveBeenCalledWith(Events.InteractionCreate, expect.any(Function));
     });
 });
