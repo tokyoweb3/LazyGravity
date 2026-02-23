@@ -29,6 +29,49 @@ describe('discordFormatter', () => {
             expect(separated.output).toContain('Analyzing inside code block');
             expect(separated.logs).toBe('');
         });
+
+        it('MCPツールログと思考文を最終アウトプットから除去する', () => {
+            const input = [
+                '今日の日本円ドル円レートは？',
+                'jina-mcp-server / search_web',
+                'json',
+                '{',
+                '"query": "今日 2026年2月23日 ドル円 レート"',
+                '}',
+                'Full output written to',
+                'output.txt',
+                'output.txt#L1-131',
+                '',
+                'Pinpointing a Future Rate',
+                '',
+                "Okay, I've got some search results, but they don't give me the specific rate I need.",
+                'jina-mcp-server / search_web',
+                'json',
+                '{',
+                '"query": "USD/JPY current rate 2026-02-23 21:00 JST"',
+                '}',
+                'Full output written to',
+                'output.txt',
+                'output.txt#L1-127',
+                '',
+                "I've just been looking at some recent data points concerning USD/JPY.",
+                '',
+                '2026年2月23日（月）現在のドル円レートは、1ドル＝154円台後半で推移しています。',
+                '',
+                'Good',
+                'Bad',
+            ].join('\n');
+
+            const separated = splitOutputAndLogs(input);
+
+            expect(separated.output).toContain('2026年2月23日（月）現在のドル円レートは、1ドル＝154円台後半で推移しています。');
+            expect(separated.output).not.toContain('jina-mcp-server / search_web');
+            expect(separated.output).not.toContain('Full output written to');
+            expect(separated.output).not.toContain('Pinpointing a Future Rate');
+            expect(separated.output).not.toContain("I've just been looking at some recent data points");
+            expect(separated.output).not.toMatch(/\bGood\b/i);
+            expect(separated.output).not.toMatch(/\bBad\b/i);
+        });
     });
 
     describe('sanitizeActivityLines', () => {

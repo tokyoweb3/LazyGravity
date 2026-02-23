@@ -4,6 +4,33 @@ const PROCESS_PARAGRAPH_PATTERN = /(?:thought for\s*<?\d+s|initiating step[- ]by
 const FIRST_PERSON_PATTERN = /\b(?:i|i'm|i’ve|i'll|i am|my|we|we're|our)\b|(?:私|僕|わたし|我々)/i;
 const ABSTRACT_PROGRESS_PATTERN = /\b(?:focus|focusing|plan|planning|progress|goal|milestone|subsequent|approach|action|execution|execute|next step|aim|zeroing in|steadily)\b|(?:方針|手順|進捗|目標|計画|実行方針|次の段階)/i;
 const TOOL_TRACE_LINE_PATTERN = /^(?:mcp tool\b|show details\b|thought for\s*<?\d+s|initiating task execution\b|commencing information retrieval\b|checking global skills directory\b|tool call:|tool result:|calling tool\b|tool response\b|running mcp\b|\[mcp\]|mcp server\b)/i;
+const TOOL_SERVER_CALL_PATTERN = /^[a-z0-9][a-z0-9._-]*\s*\/\s*[a-z0-9][a-z0-9._-]*$/i;
+const TOOL_ARTIFACT_PATTERN = /^(?:json|full output written to|output\.[a-z0-9._-]+(?:#l\d+(?:-\d+)?)?)$/i;
+const THINKING_HEADING_PATTERN = /^(?:pinpointing|analysis|analyzing|reasoning|planning)\b/i;
+const THINKING_INTENT_PATTERN = /\b(?:search results|dig deeper|looks promising|data source methodology|need to dig|may need|prompting me)\b/i;
+const THINKING_OPENING_PATTERN = /^(?:okay[, ]|let me\b|looks like i\b|i['’]?(?:m|ve)\s+(?:just\s+)?(?:been|got|have|am)\b|i am\s+(?:looking|analyzing|noting|reviewing)\b)/i;
+const GOOD_BAD_PATTERN = /^(?:good|bad|good bad)$/i;
+
+function isToolServerCallLine(line: string): boolean {
+    return TOOL_SERVER_CALL_PATTERN.test(line);
+}
+
+function isToolArtifactLine(line: string): boolean {
+    return TOOL_ARTIFACT_PATTERN.test(line);
+}
+
+function isGoodBadLine(line: string): boolean {
+    return GOOD_BAD_PATTERN.test(line);
+}
+
+function isLikelyThinkingLine(line: string): boolean {
+    if (isGoodBadLine(line)) return true;
+    if (THINKING_HEADING_PATTERN.test(line) && line.length <= 120) return true;
+    if (PROCESS_PARAGRAPH_PATTERN.test(line)) return true;
+    if (THINKING_OPENING_PATTERN.test(line) && line.length <= 500) return true;
+    if (FIRST_PERSON_PATTERN.test(line) && THINKING_INTENT_PATTERN.test(line) && line.length <= 500) return true;
+    return false;
+}
 
 /**
  * Discord Embed用にテキストをフォーマットする。
@@ -61,6 +88,7 @@ export function splitOutputAndLogs(rawText: string): { output: string; logs: str
     const outputLines: string[] = [];
     const logLines: string[] = [];
     let inCodeBlock = false;
+    let inToolTraceBlock = false;
 
     const lines = normalized.split('\n');
     for (const originalLine of lines) {
@@ -79,7 +107,30 @@ export function splitOutputAndLogs(rawText: string): { output: string; logs: str
         }
 
         if (!trimmed) {
+            inToolTraceBlock = false;
             outputLines.push(line);
+            continue;
+        }
+
+        const looksLikeToolStart = TOOL_TRACE_LINE_PATTERN.test(trimmed) || isToolServerCallLine(trimmed);
+        const looksLikeToolArtifact = isToolArtifactLine(trimmed);
+        const looksLikeStructuredToolPayload =
+            inToolTraceBlock &&
+            (/^[\[\]{}]$/.test(trimmed) || /^".*"$/.test(trimmed) || /^".*":\s*.*$/.test(trimmed));
+
+        if (looksLikeToolStart) {
+            inToolTraceBlock = true;
+            logLines.push(trimmed);
+            continue;
+        }
+
+        if (inToolTraceBlock && (looksLikeToolArtifact || looksLikeStructuredToolPayload || isLikelyThinkingLine(trimmed))) {
+            logLines.push(trimmed);
+            continue;
+        }
+
+        if (isGoodBadLine(trimmed)) {
+            logLines.push(trimmed);
             continue;
         }
 
@@ -87,6 +138,8 @@ export function splitOutputAndLogs(rawText: string): { output: string; logs: str
             PROCESS_LINE_PATTERN.test(trimmed) ||
             PROCESS_PARAGRAPH_PATTERN.test(trimmed) ||
             TOOL_TRACE_LINE_PATTERN.test(trimmed) ||
+            looksLikeToolArtifact ||
+            isLikelyThinkingLine(trimmed) ||
             (/^\[[^\]]+\]/.test(trimmed) && trimmed.length <= 280) ||
             (/^(?:\d+\.\s*)?(?:tool|step|action|task)\b/i.test(trimmed) && trimmed.length <= 280) ||
             (/^(?:ran|read|wrote|executed|searching|searched|planning|thinking|processing|thought for|looked|opened|closed|connected|sent|received|parsed|fetched|created|deleted|updated|scanned|launched)\b/i.test(trimmed) && trimmed.length <= 280) ||
@@ -111,13 +164,23 @@ export function splitOutputAndLogs(rawText: string): { output: string; logs: str
     for (const block of outputBlocks) {
         const trimmed = (block || '').trim();
         if (!trimmed) continue;
+        const blockLines = trimmed
+            .split('\n')
+            .map((line) => line.trim())
+            .filter((line) => line.length > 0);
+        const blockIsToolDump = blockLines.some((line) => isToolServerCallLine(line) || isToolArtifactLine(line));
+        const blockIsOnlyVote = blockLines.length > 0 && blockLines.every((line) => isGoodBadLine(line));
+        const blockIsThinkingHeading = blockLines.length === 1 && THINKING_HEADING_PATTERN.test(blockLines[0]);
 
         const looksAbstractProcess =
+            blockIsToolDump ||
+            blockIsOnlyVote ||
+            blockIsThinkingHeading ||
             PROCESS_PARAGRAPH_PATTERN.test(trimmed) ||
             TOOL_TRACE_LINE_PATTERN.test(trimmed) ||
             (
                 FIRST_PERSON_PATTERN.test(trimmed) &&
-                ABSTRACT_PROGRESS_PATTERN.test(trimmed) &&
+                (ABSTRACT_PROGRESS_PATTERN.test(trimmed) || THINKING_INTENT_PATTERN.test(trimmed)) &&
                 trimmed.length >= 40 &&
                 !/```|`[^`]+`/.test(trimmed)
             ) ||
@@ -154,6 +217,10 @@ export function sanitizeActivityLines(raw: string): string {
 
     const kept = lines.filter((line) => {
         if (TOOL_TRACE_LINE_PATTERN.test(line)) return false;
+        if (isToolServerCallLine(line)) return false;
+        if (isToolArtifactLine(line)) return false;
+        if (isGoodBadLine(line)) return false;
+        if (isLikelyThinkingLine(line) && line.length >= 60) return false;
         if (/^mcp\b/i.test(line) && line.length > 120) return false;
         if (FIRST_PERSON_PATTERN.test(line) && ABSTRACT_PROGRESS_PATTERN.test(line) && line.length >= 60) {
             return false;
