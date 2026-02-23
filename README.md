@@ -172,9 +172,9 @@ Antigravity本体を再起動した場合は、Botが自動でCDPの再接続を
 
 LazyGravityは以下のようにAntigravityのUIへ接続します:
 
-```
-Discord (スマホ) ←→ LazyGravity Bot ←→ CDP (WebSocket) ←→ Antigravity UI
-```
+<p align="center">
+  <img src="docs/images/architecture.svg" alt="LazyGravity Architecture" width="100%" />
+</p>
 
 1. Botがデバッグポート（デフォルト: 9222）をスキャンし、Antigravityのターゲットを自動検出
 2. WebSocket経由でCDPに接続（`Runtime.evaluate` でDOM操作）
