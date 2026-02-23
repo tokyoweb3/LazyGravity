@@ -135,6 +135,19 @@ const chatCommand = new SlashCommandBuilder()
     .setName('chat')
     .setDescription(t('Display current chat session info and session list'));
 
+/** /cleanup コマンド定義 */
+const cleanupCommand = new SlashCommandBuilder()
+    .setName('cleanup')
+    .setDescription(t('Scan and clean up inactive session channels and categories'))
+    .addIntegerOption((option) =>
+        option
+            .setName('days')
+            .setDescription(t('Number of days of inactivity (default: 7)'))
+            .setRequired(false)
+            .setMinValue(1)
+            .setMaxValue(365)
+    );
+
 /** /help コマンド定義 */
 const helpCommand = new SlashCommandBuilder()
     .setName('help')
@@ -153,6 +166,7 @@ export const slashCommands = [
     projectCommand,
     newCommand,
     chatCommand,
+    cleanupCommand,
 ];
 
 /**
