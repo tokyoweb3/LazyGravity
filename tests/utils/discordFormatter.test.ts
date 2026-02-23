@@ -15,6 +15,14 @@ describe('discordFormatter', () => {
             expect(output).toContain('| a | b |');
             expect(output).toContain('終端');
         });
+
+        it('Task 3: ファイル参照（例: src/bot/index.ts:54）をそのままにせずバッククォートで保護する', () => {
+            const input = '対象ファイルは src/bot/index.ts:54 です。';
+            const output = formatForDiscord(input);
+            expect(output).toContain('`src/bot/index.ts:54`');
+            expect(output).not.toContain(' `src/bot/index.ts:54` です。'); // checking exact format maybe?
+            // Test that it wraps the file name with line number
+        });
     });
 
     describe('splitOutputAndLogs', () => {

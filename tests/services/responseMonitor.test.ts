@@ -798,6 +798,50 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     });
 
     // ──────────────────────────────────────────────────────
+    // Task 5 失敗テスト: 最終本文抽出済み・アクティビティ静穏なら、stop未検出でも早期完了すること
+    // ──────────────────────────────────────────────────────
+    it('Task 5: activity静穏状態でDOMに最終本文があれば、ストップボタン未検出時でも30秒待たずに完了すること', async () => {
+        const onComplete = jest.fn();
+
+        mockCdpService.call.mockResolvedValueOnce({ result: { value: null } });
+
+        // poll1: stopなし / activityあり / textなし -> thinking
+        mockPollResult(mockCdpService, false, null, ['Analyzed files']);
+
+        // poll2: stopなし / activityなし / DOM抽出成功 (hasText=false相当のfallback)
+        const payload = {
+            source: 'dom-structured',
+            extractedAt: Date.now(),
+            segments: [{ kind: 'assistant-body', text: '最終本文です。', role: 'assistant', messageIndex: 1 }]
+        };
+        mockPollResultWithPayload(mockCdpService, false, payload, []);
+        mockPollResultWithPayload(mockCdpService, false, payload, []);
+        mockPollResultWithPayload(mockCdpService, false, payload, []);
+
+        monitor = new ResponseMonitor({
+            cdpService: mockCdpService,
+            pollIntervalMs: 500,
+            noTextCompletionDelayMs: 15000,
+            completionStabilityMs: 1500,
+            textStabilityCompleteMs: 15000,
+            noUpdateTimeoutMs: 30000,
+            onComplete,
+        });
+        await monitor.start();
+
+        await jest.advanceTimersByTimeAsync(500); // poll1
+        await jest.advanceTimersByTimeAsync(500); // poll2: 本文抽出、activityなし
+        await jest.advanceTimersByTimeAsync(500); // poll3
+        await jest.advanceTimersByTimeAsync(500); // poll4
+
+        // さらに数秒待つ (30秒も15秒も待たず、2~3秒で完了してほしい)
+        await jest.advanceTimersByTimeAsync(2000);
+
+        // 期待値: stopButtonSeenOnce=false でも early finalize パスにより完了していること
+        expect(onComplete).toHaveBeenCalledWith('最終本文です。');
+    });
+
+    // ──────────────────────────────────────────────────────
     // テスト 18c: 本文未取得時、アクティビティ更新が続いても stop 消失完了が過剰遅延しないこと
     // ──────────────────────────────────────────────────────
     it('本文未取得 + stop未検出ではstop-gone完了せず no-update-timeout 経路へ委譲すること', async () => {
