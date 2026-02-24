@@ -81,7 +81,7 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
 
             if (parsed.commandName === 'screenshot') {
                 await deps.handleScreenshot(message, getCurrentCdp(deps.bridge));
-                await message.reply({ content: '💡 スラッシュコマンド `/screenshot` でも同じ操作ができます。' }).catch(() => { });
+                await message.reply({ content: '💡 You can also use the slash command `/screenshot`.' }).catch(() => { });
                 return;
             }
 
@@ -90,26 +90,26 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                 const currentMode = deps.modeService.getCurrentMode();
 
                 const embed = new EmbedBuilder()
-                    .setTitle('🔧 Bot ステータス')
+                    .setTitle('🔧 Bot Status')
                     .setColor(activeNames.length > 0 ? 0x00CC88 : 0x888888)
                     .addFields(
-                        { name: 'CDP接続', value: activeNames.length > 0 ? `🟢 ${activeNames.length} プロジェクト接続中` : '⚪ 未接続', inline: true },
-                        { name: 'モード', value: MODE_DISPLAY_NAMES[currentMode] || currentMode, inline: true },
-                        { name: '自動承認', value: deps.bridge.autoAccept.isEnabled() ? '🟢 ON' : '⚪ OFF', inline: true },
+                        { name: 'CDP Connection', value: activeNames.length > 0 ? `🟢 ${activeNames.length} project(s) connected` : '⚪ Disconnected', inline: true },
+                        { name: 'Mode', value: MODE_DISPLAY_NAMES[currentMode] || currentMode, inline: true },
+                        { name: 'Auto Approve', value: deps.bridge.autoAccept.isEnabled() ? '🟢 ON' : '⚪ OFF', inline: true },
                     )
-                    .setFooter({ text: '💡 スラッシュコマンド /status でより詳しい情報が見られます' })
+                    .setFooter({ text: '💡 Use the slash command /status for more detailed information' })
                     .setTimestamp();
 
                 if (activeNames.length > 0) {
                     const lines = activeNames.map((name) => {
                         const cdp = deps.bridge.pool.getConnected(name);
                         const contexts = cdp ? cdp.getContexts().length : 0;
-                        const detectorActive = deps.bridge.pool.getApprovalDetector(name)?.isActive() ? ' [検出中]' : '';
-                        return `• **${name}** — コンテキスト: ${contexts}${detectorActive}`;
+                        const detectorActive = deps.bridge.pool.getApprovalDetector(name)?.isActive() ? ' [Detecting]' : '';
+                        return `• **${name}** — Contexts: ${contexts}${detectorActive}`;
                     });
-                    embed.setDescription(`**接続中のプロジェクト:**\n${lines.join('\n')}`);
+                    embed.setDescription(`**Connected Projects:**\n${lines.join('\n')}`);
                 } else {
-                    embed.setDescription('メッセージを送信すると自動的にプロジェクトに接続します。');
+                    embed.setDescription('Send a message to auto-connect to a project.');
                 }
 
                 await message.reply({ embeds: [embed] });
@@ -119,7 +119,7 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
             const slashOnlyCommands = ['help', 'stop', 'model', 'mode', 'project', 'chat', 'new', 'cleanup'];
             if (slashOnlyCommands.includes(parsed.commandName)) {
                 await message.reply({
-                    content: `💡 \`/${parsed.commandName}\` はスラッシュコマンドとして使用してください。\nDiscordの入力欄で \`/${parsed.commandName}\` と入力すると候補が表示されます。`,
+                    content: `💡 Please use \`/${parsed.commandName}\` as a slash command.\nType \`/${parsed.commandName}\` in the Discord input field to see suggestions.`,
                 }).catch(logger.error);
                 return;
             }
@@ -140,7 +140,7 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                         titleGenerator: deps.titleGenerator,
                     });
                 } else {
-                    await message.reply('CDPに未接続です。先にメッセージを送信してプロジェクトに接続してください。');
+                    await message.reply('Not connected to CDP. Send a message first to connect to a project.');
                 }
             }
             return;
@@ -149,11 +149,11 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
         const hasImageAttachments = Array.from(message.attachments.values())
             .some((attachment) => isImageAttachment(attachment.contentType, attachment.name));
         if (message.content.trim() || hasImageAttachments) {
-            const promptText = message.content.trim() || '添付画像を確認して対応してください。';
+            const promptText = message.content.trim() || 'Please review the attached images and respond accordingly.';
             const inboundImages = await downloadInboundImageAttachments(message);
 
             if (hasImageAttachments && inboundImages.length === 0) {
-                await message.reply('添付画像の取得に失敗しました。時間をおいて再送してください。').catch(() => { });
+                await message.reply('Failed to retrieve attached images. Please wait and try again.').catch(() => { });
                 return;
             }
 
@@ -175,12 +175,12 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                             try {
                                 const chatResult = await deps.chatSessionService.startNewChat(cdp);
                                 if (!chatResult.ok) {
-                                    logger.warn('[MessageCreate] Antigravityでの新規チャット開始に失敗:', chatResult.error);
-                                    (message.channel as any).send(`⚠️ Antigravityで新規チャットを開けませんでした。既存チャットに送信します。`).catch(() => { });
+                                    logger.warn('[MessageCreate] Failed to start new chat in Antigravity:', chatResult.error);
+                                    (message.channel as any).send(`⚠️ Could not open a new chat in Antigravity. Sending to existing chat.`).catch(() => { });
                                 }
                             } catch (err) {
-                                logger.error('[MessageCreate] startNewChat エラー:', err);
-                                (message.channel as any).send(`⚠️ Antigravityで新規チャットを開けませんでした。既存チャットに送信します。`).catch(() => { });
+                                logger.error('[MessageCreate] startNewChat error:', err);
+                                (message.channel as any).send(`⚠️ Could not open a new chat in Antigravity. Sending to existing chat.`).catch(() => { });
                             }
                         }
 
@@ -193,7 +193,7 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                             titleGenerator: deps.titleGenerator,
                         });
                     } catch (e: any) {
-                        await message.reply(`ワークスペース接続に失敗しました: ${e.message}`);
+                        await message.reply(`Failed to connect to workspace: ${e.message}`);
                         return;
                     }
                 } else {
@@ -206,12 +206,12 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                             try {
                                 const chatResult = await deps.chatSessionService.startNewChat(cdp);
                                 if (!chatResult.ok) {
-                                    logger.warn('[MessageCreate|Fallback] Antigravityでの新規チャット開始に失敗:', chatResult.error);
-                                    (message.channel as any).send(`⚠️ Antigravityで新規チャットを開けませんでした。既存チャットに送信します。`).catch(() => { });
+                                    logger.warn('[MessageCreate|Fallback] Failed to start new chat in Antigravity:', chatResult.error);
+                                    (message.channel as any).send(`⚠️ Could not open a new chat in Antigravity. Sending to existing chat.`).catch(() => { });
                                 }
                             } catch (err) {
-                                logger.error('[MessageCreate|Fallback] startNewChat エラー:', err);
-                                (message.channel as any).send(`⚠️ Antigravityで新規チャットを開けませんでした。既存チャットに送信します。`).catch(() => { });
+                                logger.error('[MessageCreate|Fallback] startNewChat error:', err);
+                                (message.channel as any).send(`⚠️ Could not open a new chat in Antigravity. Sending to existing chat.`).catch(() => { });
                             }
                         }
 
@@ -223,7 +223,7 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                             titleGenerator: deps.titleGenerator,
                         });
                     } else {
-                        await message.reply('プロジェクトが設定されていません。`/project` でプロジェクトを作成してください。');
+                        await message.reply('No project is configured. Please create a project with `/project`.');
                     }
                 }
             } finally {

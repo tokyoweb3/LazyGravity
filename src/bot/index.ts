@@ -35,7 +35,7 @@ import {
 import { ChannelManager } from '../services/channelManager';
 import { TitleGeneratorService } from '../services/titleGeneratorService';
 
-// CDP連携サービス
+// CDP integration services
 import { CdpService } from '../services/cdpService';
 import { ChatSessionService } from '../services/chatSessionService';
 import { ResponseMonitor, RESPONSE_SELECTORS } from '../services/responseMonitor';
@@ -68,15 +68,15 @@ import { createInteractionCreateHandler } from '../events/interactionCreateHandl
 import { createMessageCreateHandler } from '../events/messageCreateHandler';
 
 // =============================================================================
-// Embed カラーパレット（フェーズごとの色分け）
+// Embed color palette (color-coded by phase)
 // =============================================================================
 const PHASE_COLORS = {
-    sending: 0x5865F2,     // ブルー
-    thinking: 0x9B59B6,    // パープル
-    generating: 0xF39C12,  // ゴールド
-    complete: 0x2ECC71,    // グリーン
-    timeout: 0xE74C3C,     // レッド
-    error: 0xC0392B,       // ダークレッド
+    sending: 0x5865F2,     // Blue
+    thinking: 0x9B59B6,    // Purple
+    generating: 0xF39C12,  // Gold
+    complete: 0x2ECC71,    // Green
+    timeout: 0xE74C3C,     // Red
+    error: 0xC0392B,       // Dark Red
 } as const;
 
 const PHASE_ICONS = {
@@ -117,11 +117,11 @@ export function createSerialTaskQueueForTest(queueName: string, traceId: string)
 }
 
 /**
- * Discordのメッセージ（プロンプト）をAntigravityに送信し、応答を待ってDiscordに返す
+ * Send a Discord message (prompt) to Antigravity, wait for the response, and relay it back to Discord
  *
- * メッセージ戦略:
- *   - 編集ではなく工程ごとに新規メッセージを送信して履歴を残す
- *   - 計画/分析/実行確認/実装内容の流れをログとして可視化する
+ * Message strategy:
+ *   - Send new messages per phase instead of editing, to preserve history
+ *   - Visualize the flow of planning/analysis/execution confirmation/implementation as logs
  */
 async function sendPromptToAntigravity(
     bridge: CdpBridge,
@@ -138,7 +138,7 @@ async function sendPromptToAntigravity(
         titleGenerator: TitleGeneratorService;
     }
 ): Promise<void> {
-    // コマンド受付のリアクションを追加
+    // Add reaction to acknowledge command receipt
     await message.react('👀').catch(() => { });
 
     const channel = (message.channel && 'send' in message.channel) ? message.channel as any : null;
@@ -172,7 +172,7 @@ async function sendPromptToAntigravity(
     const shouldTryGeneratedImages = (inputPrompt: string, responseText: string): boolean => {
         const prompt = (inputPrompt || '').toLowerCase();
         const response = (responseText || '').toLowerCase();
-        const imageIntentPattern = /(image|images|png|jpg|jpeg|gif|webp|illustration|diagram|render|画像|イメージ|図|描いて|生成して)/i;
+        const imageIntentPattern = /(image|images|png|jpg|jpeg|gif|webp|illustration|diagram|render)/i;
         const imageUrlPattern = /https?:\/\/\S+\.(png|jpg|jpeg|gif|webp)/i;
 
         if (imageIntentPattern.test(prompt)) return true;
@@ -224,7 +224,7 @@ async function sendPromptToAntigravity(
                 const looksLikeActivity = (text) => {
                     const normalized = (text || '').trim().toLowerCase();
                     if (!normalized) return true;
-                    const activityPattern = /^(?:analy[sz]ing|reading|writing|running|searching|planning|thinking|processing|loading|executing|testing|debugging|analyzed|read|wrote|ran|処理中|実行中|生成中|思考中|分析中|解析中|読み込み中|書き込み中|待機中)/i;
+                    const activityPattern = /^(?:analy[sz]ing|reading|writing|running|searching|planning|thinking|processing|loading|executing|testing|debugging|analyzed|read|wrote|ran)/i;
                     return activityPattern.test(normalized) && normalized.length <= 220;
                 };
 
@@ -276,8 +276,8 @@ async function sendPromptToAntigravity(
 
     if (!cdp.isConnected()) {
         await sendEmbed(
-            `${PHASE_ICONS.error} 接続エラー`,
-            'Antigravityに接続されていません。\n`open -a Antigravity --args --remote-debugging-port=9223` で起動後、メッセージを送信すると自動接続されます。',
+            `${PHASE_ICONS.error} Connection Error`,
+            'Not connected to Antigravity.\nStart with `open -a Antigravity --args --remote-debugging-port=9223`, then send a message to auto-connect.',
             PHASE_COLORS.error,
         );
         await clearWatchingReaction();
@@ -292,7 +292,7 @@ async function sendPromptToAntigravity(
     const planModel = currentModel;
 
     await sendEmbed(
-        `${PHASE_ICONS.sending} [${modeName} - ${currentModel}${localMode === 'plan' ? ' (Thinking)' : ''}] 伝達中...`,
+        `${PHASE_ICONS.sending} [${modeName} - ${currentModel}${localMode === 'plan' ? ' (Thinking)' : ''}] Sending...`,
         buildModeModelLines(modeName, fastModel, planModel).join('\n'),
         PHASE_COLORS.sending,
     );
@@ -364,7 +364,7 @@ async function sendPromptToAntigravity(
             });
         }
 
-        // 以前よりページ数が減った場合は余剰メッセージを削除
+        // Delete excess messages if page count decreased
         while (liveResponseMessages.length > descriptions.length) {
             const extra = liveResponseMessages.pop();
             if (!extra) continue;
@@ -444,8 +444,8 @@ async function sendPromptToAntigravity(
         if (!injectResult.ok) {
             isFinalized = true;
             await sendEmbed(
-                `${PHASE_ICONS.error} メッセージ注入失敗`,
-                `メッセージの送信に失敗しました: ${injectResult.error}`,
+                `${PHASE_ICONS.error} Message Injection Failed`,
+                `Failed to send message: ${injectResult.error}`,
                 PHASE_COLORS.error,
             );
             await clearWatchingReaction();
@@ -455,14 +455,14 @@ async function sendPromptToAntigravity(
 
         const startTime = Date.now();
         await upsertLiveActivityEmbeds(
-            `${PHASE_ICONS.thinking} 生成プロセスログ`,
+            `${PHASE_ICONS.thinking} Process Log`,
             '',
             PHASE_COLORS.thinking,
             t('⏱️ Elapsed: 0s | Process log'),
             { source: 'initial' },
         );
         await upsertLiveResponseEmbeds(
-            `${PHASE_ICONS.generating} 生成中アウトプット`,
+            `${PHASE_ICONS.generating} Generating Output`,
             '',
             PHASE_COLORS.generating,
             t('⏱️ Elapsed: 0s | Waiting to start'),
@@ -488,7 +488,7 @@ async function sendPromptToAntigravity(
                 liveActivityUpdateVersion += 1;
                 const activityVersion = liveActivityUpdateVersion;
                 upsertLiveActivityEmbeds(
-                    `${PHASE_ICONS.thinking} 生成プロセスログ`,
+                    `${PHASE_ICONS.thinking} Process Log`,
                     logText || lastActivityLogText || ACTIVITY_PLACEHOLDER,
                     PHASE_COLORS.thinking,
                     t(`⏱️ Elapsed: ${elapsed}s | Process log`),
@@ -514,7 +514,7 @@ async function sendPromptToAntigravity(
                 liveResponseUpdateVersion += 1;
                 const responseVersion = liveResponseUpdateVersion;
                 upsertLiveResponseEmbeds(
-                    `${PHASE_ICONS.generating} 生成中アウトプット`,
+                    `${PHASE_ICONS.generating} Generating Output`,
                     separated.output || lastProgressText || '',
                     PHASE_COLORS.generating,
                     t(`⏱️ Elapsed: ${elapsed}s | Generating`),
@@ -528,7 +528,7 @@ async function sendPromptToAntigravity(
                 liveActivityUpdateVersion += 1;
                 const activityVersion = liveActivityUpdateVersion;
                 upsertLiveActivityEmbeds(
-                    `${PHASE_ICONS.thinking} 生成プロセスログ`,
+                    `${PHASE_ICONS.thinking} Process Log`,
                     sanitizedLogs || lastActivityLogText || ACTIVITY_PLACEHOLDER,
                     PHASE_COLORS.thinking,
                     t(`⏱️ Elapsed: ${elapsed}s | Process log`),
@@ -573,7 +573,7 @@ async function sendPromptToAntigravity(
                     liveActivityUpdateVersion += 1;
                     const activityVersion = liveActivityUpdateVersion;
                     await upsertLiveActivityEmbeds(
-                        `${PHASE_ICONS.thinking} プロセスログ`,
+                        `${PHASE_ICONS.thinking} Process Log`,
                         finalLogText || ACTIVITY_PLACEHOLDER,
                         PHASE_COLORS.thinking,
                         t(`⏱️ Time: ${elapsed}s | Process log`),
@@ -587,7 +587,7 @@ async function sendPromptToAntigravity(
                     const responseVersion = liveResponseUpdateVersion;
                     if (finalOutputText && finalOutputText.trim().length > 0) {
                         await upsertLiveResponseEmbeds(
-                            `${PHASE_ICONS.complete} 最終アウトプット`,
+                            `${PHASE_ICONS.complete} Final Output`,
                             finalOutputText,
                             PHASE_COLORS.complete,
                             t(`⏱️ Time: ${elapsed}s | Complete`),
@@ -598,7 +598,7 @@ async function sendPromptToAntigravity(
                         );
                     } else {
                         await upsertLiveResponseEmbeds(
-                            `${PHASE_ICONS.complete} 完了`,
+                            `${PHASE_ICONS.complete} Complete`,
                             t('Failed to extract response. Use `/screenshot` to verify.'),
                             PHASE_COLORS.complete,
                             t(`⏱️ Time: ${elapsed}s | Complete`),
@@ -622,17 +622,17 @@ async function sendPromptToAntigravity(
                                 }
                             }
                         } catch (e) {
-                            logger.error('[Rename] Antigravityからのタイトル取得とリネームに失敗:', e);
+                            logger.error('[Rename] Failed to get title from Antigravity and rename:', e);
                         }
                     }
 
                     if (monitor.getPhase() === 'quotaReached' || monitor.getQuotaDetected()) {
                         await sendEmbed(
-                            '⚠️ モデルクォータ上限到達',
-                            'モデルのクォータ上限に達しました。しばらく待つか、`/model` で別のモデルに切り替えてください。',
+                            '⚠️ Model Quota Reached',
+                            'Model quota limit reached. Please wait or switch to a different model with `/model`.',
                             0xFF6B6B,
                             undefined,
-                            'Quota Reached — モデル変更を推奨',
+                            'Quota Reached — consider switching models',
                         );
                         await clearWatchingReaction();
                         await message.react('⚠️').catch(() => { });
@@ -659,15 +659,15 @@ async function sendPromptToAntigravity(
                     const sanitizedTimeoutLogs = lastActivityLogText || '';
                     const payload = separated.output && separated.output.trim().length > 0
                         ? t(`${separated.output}\n\n[Monitor Ended] Timeout after 5 minutes.`)
-                        : '5分経過により監視を終了しました。テキストは取得できませんでした。';
+                        : 'Monitor ended after 5 minutes. No text was retrieved.';
 
                     liveResponseUpdateVersion += 1;
                     const responseVersion = liveResponseUpdateVersion;
                     await upsertLiveResponseEmbeds(
-                        `${PHASE_ICONS.timeout} タイムアウト`,
+                        `${PHASE_ICONS.timeout} Timeout`,
                         payload,
                         PHASE_COLORS.timeout,
-                        `⏱️ 所要時間: ${elapsed}秒 | タイムアウト`,
+                        `⏱️ Elapsed: ${elapsed}s | Timeout`,
                         {
                             source: 'timeout',
                             expectedVersion: responseVersion,
@@ -677,7 +677,7 @@ async function sendPromptToAntigravity(
                     liveActivityUpdateVersion += 1;
                     const activityVersion = liveActivityUpdateVersion;
                     await upsertLiveActivityEmbeds(
-                        `${PHASE_ICONS.thinking} プロセスログ`,
+                        `${PHASE_ICONS.thinking} Process Log`,
                         sanitizedTimeoutLogs || ACTIVITY_PLACEHOLDER,
                         PHASE_COLORS.thinking,
                         t(`⏱️ Time: ${elapsed}s | Process log`),
@@ -699,7 +699,7 @@ async function sendPromptToAntigravity(
     } catch (e: any) {
         isFinalized = true;
         await sendEmbed(
-            `${PHASE_ICONS.error} エラー`,
+            `${PHASE_ICONS.error} Error`,
             t(`Error occurred during processing: ${e.message}`),
             PHASE_COLORS.error,
         );
@@ -709,7 +709,7 @@ async function sendPromptToAntigravity(
 }
 
 // =============================================================================
-// Bot メインエントリー
+// Bot main entry point
 // =============================================================================
 
 export const startBot = async () => {
@@ -725,13 +725,13 @@ export const startBot = async () => {
     const workspaceService = new WorkspaceService(config.workspaceBaseDir);
     const channelManager = new ChannelManager();
 
-    // Antigravityが起動していなければCDPポート付きで自動起動
+    // Auto-launch Antigravity with CDP port if not already running
     await ensureAntigravityRunning();
 
-    // CDPブリッジの初期化（遅延接続: プール作成のみ）
+    // Initialize CDP bridge (lazy connection: pool creation only)
     const bridge = initCdpBridge(config.autoApproveFileEdits);
 
-    // CDP依存サービスの初期化（コンストラクタCDP依存を除去済み）
+    // Initialize CDP-dependent services (constructor CDP dependency removed)
     const chatSessionService = new ChatSessionService();
     const titleGenerator = new TitleGeneratorService();
     const promptDispatcher = new PromptDispatcher({
@@ -741,7 +741,7 @@ export const startBot = async () => {
         sendPromptImpl: sendPromptToAntigravity,
     });
 
-    // コマンドハンドラーの初期化
+    // Initialize command handlers
     const wsHandler = new WorkspaceCommandHandler(workspaceBindingRepo, chatSessionRepo, workspaceService, channelManager);
     const chatHandler = new ChatCommandHandler(chatSessionService, chatSessionRepo, workspaceBindingRepo, channelManager, workspaceService, bridge.pool);
     const cleanupHandler = new CleanupCommandHandler(chatSessionRepo, workspaceBindingRepo);
@@ -762,11 +762,11 @@ export const startBot = async () => {
         try {
             await registerSlashCommands(config.discordToken, config.clientId, config.guildId);
         } catch (error) {
-            logger.warn('スラッシュコマンドの登録に失敗しましたが、テキストコマンドは引き続き利用可能です。');
+            logger.warn('Failed to register slash commands, but text commands remain available.');
         }
     });
 
-    // 【Discord Interactions API】スラッシュコマンドインタラクション処理
+    // [Discord Interactions API] Slash command interaction handler
     client.on(Events.InteractionCreate, createInteractionCreateHandler({
         config,
         bridge,
@@ -810,7 +810,7 @@ export const startBot = async () => {
             const template = templateRepo.findById(templateId);
             if (!template) {
                 await interaction.followUp({
-                    content: 'テンプレートが見つかりません。削除された可能性があります。',
+                    content: 'Template not found. It may have been deleted.',
                     flags: MessageFlags.Ephemeral,
                 });
                 return;
@@ -830,7 +830,7 @@ export const startBot = async () => {
                     ensureApprovalDetector(bridge, cdp, dirName, client);
                 } catch (e: any) {
                     await interaction.followUp({
-                        content: `ワークスペース接続に失敗しました: ${e.message}`,
+                        content: `Failed to connect to workspace: ${e.message}`,
                         flags: MessageFlags.Ephemeral,
                     });
                     return;
@@ -841,14 +841,14 @@ export const startBot = async () => {
 
             if (!cdp) {
                 await interaction.followUp({
-                    content: 'CDPに未接続です。先にプロジェクトに接続してください。',
+                    content: 'Not connected to CDP. Please connect to a project first.',
                     flags: MessageFlags.Ephemeral,
                 });
                 return;
             }
 
             const followUp = await interaction.followUp({
-                content: `テンプレート **${template.name}** を実行中...`,
+                content: `Executing template **${template.name}**...`,
             });
 
             if (followUp instanceof Message) {
@@ -868,7 +868,7 @@ export const startBot = async () => {
         },
     }));
 
-    // 【テキストメッセージ処理】
+    // [Text message handler]
     client.on(Events.MessageCreate, createMessageCreateHandler({
         config,
         bridge,
@@ -905,7 +905,7 @@ export const startBot = async () => {
 };
 
 /**
- * 初回メッセージ送信時にチャンネル名を自動リネームする
+ * Auto-rename channel on first message send
  */
 async function autoRenameChannel(
     message: Message,
@@ -926,12 +926,12 @@ async function autoRenameChannel(
         await channelManager.renameChannel(guild, message.channelId, newName);
         chatSessionRepo.updateDisplayName(message.channelId, title);
     } catch (err) {
-        logger.error('[AutoRename] リネーム失敗:', err);
+        logger.error('[AutoRename] Rename failed:', err);
     }
 }
 
 /**
- * Discord Interactions API のスラッシュコマンドを処理する
+ * Handle Discord Interactions API slash commands
  */
 async function handleSlashInteraction(
     interaction: ChatInputCommandInteraction,
@@ -952,51 +952,51 @@ async function handleSlashInteraction(
     switch (commandName) {
         case 'help': {
             const embed = new EmbedBuilder()
-                .setTitle('📖 LazyGravity コマンド一覧')
+                .setTitle('📖 LazyGravity Commands')
                 .setColor(0x5865F2)
-                .setDescription('Antigravity を Discord から操作するためのコマンドです。')
+                .setDescription('Commands for controlling Antigravity from Discord.')
                 .addFields(
                     {
-                        name: '💬 チャット', value: [
-                            '`/new` — 新しいチャットセッションを開始',
-                            '`/chat` — 現在のセッション情報 + 一覧を表示',
+                        name: '💬 Chat', value: [
+                            '`/new` — Start a new chat session',
+                            '`/chat` — Show current session info + list',
                         ].join('\n')
                     },
                     {
-                        name: '⏹️ 制御', value: [
-                            '`/stop` — 動作中のLLM生成を中断',
-                            '`/screenshot` — Antigravityの画面をキャプチャ',
+                        name: '⏹️ Control', value: [
+                            '`/stop` — Interrupt active LLM generation',
+                            '`/screenshot` — Capture Antigravity screen',
                         ].join('\n')
                     },
                     {
-                        name: '⚙️ 設定', value: [
-                            '`/mode` — 実行モードを表示・変更',
-                            '`/model [name]` — LLMモデルを表示・変更',
+                        name: '⚙️ Settings', value: [
+                            '`/mode` — Display and change execution mode',
+                            '`/model [name]` — Display and change LLM model',
                         ].join('\n')
                     },
                     {
-                        name: '📁 プロジェクト', value: [
-                            '`/project` — プロジェクト一覧を表示',
-                            '`/project create <name>` — 新規プロジェクトを作成',
+                        name: '📁 Projects', value: [
+                            '`/project` — Display project list',
+                            '`/project create <name>` — Create a new project',
                         ].join('\n')
                     },
                     {
-                        name: '📝 テンプレート', value: [
-                            '`/template list` — テンプレート一覧をボタン表示（クリックで即実行）',
-                            '`/template add <name> <prompt>` — テンプレートを登録',
-                            '`/template delete <name>` — テンプレートを削除',
+                        name: '📝 Templates', value: [
+                            '`/template list` — Show templates with execute buttons (click to run)',
+                            '`/template add <name> <prompt>` — Register a template',
+                            '`/template delete <name>` — Delete a template',
                         ].join('\n')
                     },
                     {
-                        name: '🔧 システム', value: [
-                            '`/status` — Bot全体のステータスを表示',
-                            '`/autoaccept [on|off|status]` — 承認の自動許可モードを切替',
-                            '`/cleanup [days]` — 未使用チャンネル/カテゴリのクリーンアップ',
-                            '`/help` — このヘルプを表示',
+                        name: '🔧 System', value: [
+                            '`/status` — Display overall bot status',
+                            '`/autoaccept [on|off|status]` — Toggle auto-approve mode for approval dialogs',
+                            '`/cleanup [days]` — Clean up unused channels/categories',
+                            '`/help` — Show this help',
                         ].join('\n')
                     },
                 )
-                .setFooter({ text: 'テキストメッセージはそのままAntigravityに送信されます' })
+                .setFooter({ text: 'Text messages are sent directly to Antigravity' })
                 .setTimestamp();
             await interaction.editReply({ embeds: [embed] });
             break;
@@ -1017,14 +1017,14 @@ async function handleSlashInteraction(
             } else {
                 const cdp = getCurrentCdp(bridge);
                 if (!cdp) {
-                    await interaction.editReply({ content: 'CDPに未接続です。' });
+                    await interaction.editReply({ content: 'Not connected to CDP.' });
                     break;
                 }
                 const res = await cdp.setUiModel(modelName);
                 if (res.ok) {
-                    await interaction.editReply({ content: `モデルを **${res.model}** に変更しました。` });
+                    await interaction.editReply({ content: `Model changed to **${res.model}**.` });
                 } else {
-                    await interaction.editReply({ content: res.error || 'モデルの変更に失敗しました。' });
+                    await interaction.editReply({ content: res.error || 'Failed to change model.' });
                 }
             }
             break;
@@ -1065,17 +1065,17 @@ async function handleSlashInteraction(
             const activeNames = bridge.pool.getActiveWorkspaceNames();
             const currentModel = (() => {
                 const cdp = getCurrentCdp(bridge);
-                return cdp ? 'CDP接続中' : '未接続';
+                return cdp ? 'CDP Connected' : 'Disconnected';
             })();
             const currentMode = modeService.getCurrentMode();
 
             const embed = new EmbedBuilder()
-                .setTitle('🔧 Bot ステータス')
+                .setTitle('🔧 Bot Status')
                 .setColor(activeNames.length > 0 ? 0x00CC88 : 0x888888)
                 .addFields(
-                    { name: 'CDP接続', value: activeNames.length > 0 ? `🟢 ${activeNames.length} プロジェクト接続中` : '⚪ 未接続', inline: true },
-                    { name: 'モード', value: MODE_DISPLAY_NAMES[currentMode] || currentMode, inline: true },
-                    { name: '自動承認', value: autoAcceptService.isEnabled() ? '🟢 ON' : '⚪ OFF', inline: true },
+                    { name: 'CDP Connection', value: activeNames.length > 0 ? `🟢 ${activeNames.length} project(s) connected` : '⚪ Disconnected', inline: true },
+                    { name: 'Mode', value: MODE_DISPLAY_NAMES[currentMode] || currentMode, inline: true },
+                    { name: 'Auto Approve', value: autoAcceptService.isEnabled() ? '🟢 ON' : '⚪ OFF', inline: true },
                 )
                 .setTimestamp();
 
@@ -1083,12 +1083,12 @@ async function handleSlashInteraction(
                 const lines = activeNames.map((name) => {
                     const cdp = bridge.pool.getConnected(name);
                     const contexts = cdp ? cdp.getContexts().length : 0;
-                    const detectorActive = bridge.pool.getApprovalDetector(name)?.isActive() ? ' [検出中]' : '';
-                    return `• **${name}** — コンテキスト: ${contexts}${detectorActive}`;
+                    const detectorActive = bridge.pool.getApprovalDetector(name)?.isActive() ? ' [Detecting]' : '';
+                    return `• **${name}** — Contexts: ${contexts}${detectorActive}`;
                 });
-                embed.setDescription(`**接続中のプロジェクト:**\n${lines.join('\n')}`);
+                embed.setDescription(`**Connected Projects:**\n${lines.join('\n')}`);
             } else {
-                embed.setDescription('メッセージを送信すると自動的にプロジェクトに接続します。');
+                embed.setDescription('Send a message to auto-connect to a project.');
             }
 
             await interaction.editReply({ embeds: [embed] });
@@ -1110,7 +1110,7 @@ async function handleSlashInteraction(
         case 'stop': {
             const cdp = getCurrentCdp(bridge);
             if (!cdp) {
-                await interaction.editReply({ content: '⚠️ CDPに未接続です。先にプロジェクトに接続してください。' });
+                await interaction.editReply({ content: '⚠️ Not connected to CDP. Please connect to a project first.' });
                 break;
             }
 
@@ -1130,21 +1130,21 @@ async function handleSlashInteraction(
 
                 if (value?.ok) {
                     const embed = new EmbedBuilder()
-                        .setTitle('⏹️ 生成を中断しました')
-                        .setDescription('AIの回答生成を安全に停止しました。')
+                        .setTitle('⏹️ Generation Interrupted')
+                        .setDescription('AI response generation was safely stopped.')
                         .setColor(0xE74C3C)
                         .setTimestamp();
                     await interaction.editReply({ embeds: [embed] });
                 } else {
                     const embed = new EmbedBuilder()
-                        .setTitle('⚠️ 停止できませんでした')
-                        .setDescription(value?.error || 'ストップボタンが見つかりません。LLMが動作中でない可能性があります。')
+                        .setTitle('⚠️ Could Not Stop')
+                        .setDescription(value?.error || 'Stop button not found. The LLM may not be running.')
                         .setColor(0xF39C12)
                         .setTimestamp();
                     await interaction.editReply({ embeds: [embed] });
                 }
             } catch (e: any) {
-                await interaction.editReply({ content: `❌ 停止処理中にエラーが発生しました: ${e.message}` });
+                await interaction.editReply({ content: `❌ Error during stop processing: ${e.message}` });
             }
             break;
         }
@@ -1153,12 +1153,12 @@ async function handleSlashInteraction(
             const wsSub = interaction.options.getSubcommand(false);
             if (wsSub === 'create') {
                 if (!interaction.guild) {
-                    await interaction.editReply({ content: 'サーバー内でのみ使用できます。' });
+                    await interaction.editReply({ content: 'This command can only be used in a server.' });
                     break;
                 }
                 await wsHandler.handleCreate(interaction, interaction.guild);
             } else {
-                // /project list or /project (デフォルト)
+                // /project list or /project (default)
                 await wsHandler.handleShow(interaction);
             }
             break;
@@ -1181,7 +1181,7 @@ async function handleSlashInteraction(
 
         default:
             await interaction.editReply({
-                content: `未知のコマンドです: /${commandName}`,
+                content: `Unknown command: /${commandName}`,
             });
     }
 }

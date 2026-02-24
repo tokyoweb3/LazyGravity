@@ -9,16 +9,16 @@ import { AVAILABLE_MODELS } from '../services/modelService';
 import { AVAILABLE_MODES } from '../services/modeService';
 
 /**
- * Discord Interactions API 用のスラッシュコマンド定義
- * Botのスラッシュコマンドをアプリケーションに登録する
+ * Slash command definitions for the Discord Interactions API.
+ * Registers bot slash commands to the application.
  */
 
-/** /mode コマンド定義 */
+/** /mode command definition */
 const modeCommand = new SlashCommandBuilder()
     .setName('mode')
     .setDescription(t('Display and change execution mode via a dropdown'));
 
-/** /model コマンド定義（旧 /models → 単数形に統一） */
+/** /model command definition (formerly /models, unified to singular) */
 const modelCommand = new SlashCommandBuilder()
     .setName('model')
     .setDescription(t('Display and change available LLM models'))
@@ -29,7 +29,7 @@ const modelCommand = new SlashCommandBuilder()
             .setRequired(false)
     );
 
-/** /template コマンド定義（旧 /templates → 単数形に統一） */
+/** /template command definition (formerly /templates, unified to singular) */
 const templateCommand = new SlashCommandBuilder()
     .setName('template')
     .setDescription(t('List, register, or delete templates'))
@@ -67,22 +67,22 @@ const templateCommand = new SlashCommandBuilder()
             )
     );
 
-/** /stop コマンド定義 */
+/** /stop command definition */
 const stopCommand = new SlashCommandBuilder()
     .setName('stop')
     .setDescription(t('Interrupt active LLM generation'));
 
-/** /screenshot コマンド定義 */
+/** /screenshot command definition */
 const screenshotCommand = new SlashCommandBuilder()
     .setName('screenshot')
     .setDescription(t('Capture current Antigravity screen'));
 
-/** /status コマンド定義（旧 /cdp status → Bot全体のステータスに拡張） */
+/** /status command definition (formerly /cdp status, extended to overall bot status) */
 const statusCommand = new SlashCommandBuilder()
     .setName('status')
     .setDescription(t('Display overall bot status including connection, model, mode'));
 
-/** /autoaccept コマンド定義 */
+/** /autoaccept command definition */
 const autoAcceptCommand = new SlashCommandBuilder()
     .setName('autoaccept')
     .setDescription(t('Toggle auto-allow mode for approval dialogs'))
@@ -93,7 +93,7 @@ const autoAcceptCommand = new SlashCommandBuilder()
             .setRequired(false)
     );
 
-/** /project コマンド定義（旧 /workspace → プロジェクトに名称変更） */
+/** /project command definition (formerly /workspace, renamed to project) */
 const projectCommand = new SlashCommandBuilder()
     .setName('project')
     .setDescription(t('List projects, on select auto-create channel and bind'))
@@ -114,17 +114,17 @@ const projectCommand = new SlashCommandBuilder()
             )
     );
 
-/** /new コマンド定義（旧 /chat new → 独立コマンドとして最短化） */
+/** /new command definition (formerly /chat new, made into a standalone command) */
 const newCommand = new SlashCommandBuilder()
     .setName('new')
     .setDescription(t('Start a new chat session in the current project'));
 
-/** /chat コマンド定義（status + list を統合） */
+/** /chat command definition (merged status + list) */
 const chatCommand = new SlashCommandBuilder()
     .setName('chat')
     .setDescription(t('Display current chat session info and session list'));
 
-/** /cleanup コマンド定義 */
+/** /cleanup command definition */
 const cleanupCommand = new SlashCommandBuilder()
     .setName('cleanup')
     .setDescription(t('Scan and clean up inactive session channels and categories'))
@@ -137,12 +137,12 @@ const cleanupCommand = new SlashCommandBuilder()
             .setMaxValue(365)
     );
 
-/** /help コマンド定義 */
+/** /help command definition */
 const helpCommand = new SlashCommandBuilder()
     .setName('help')
     .setDescription(t('Display list of available commands'));
 
-/** 登録するコマンドの配列 */
+/** Array of commands to register */
 export const slashCommands = [
     helpCommand,
     modeCommand,
@@ -159,10 +159,10 @@ export const slashCommands = [
 ];
 
 /**
- * Discord にスラッシュコマンドを登録する
- * @param token Botのトークン
- * @param clientId BotのアプリケーションID
- * @param guildId 登録先のギルド（サーバー）ID（省略時はグローバル登録）
+ * Register slash commands with Discord
+ * @param token Bot token
+ * @param clientId Bot application ID
+ * @param guildId Target guild (server) ID (global registration if omitted)
  */
 export async function registerSlashCommands(
     token: string,
@@ -175,19 +175,19 @@ export async function registerSlashCommands(
 
     try {
         if (guildId) {
-            // ギルド限定登録（即時反映）
+            // Guild-specific registration (takes effect immediately)
             await rest.put(
                 Routes.applicationGuildCommands(clientId, guildId),
                 { body: commandData }
             );
-            logger.info(`✅ スラッシュコマンド ${commandData.length} 件をギルド ${guildId} に登録しました。`);
+            logger.info(`Registered ${commandData.length} slash commands to guild ${guildId}.`);
         } else {
-            // グローバル登録（反映に最大1時間かかる）
+            // Global registration (may take up to 1 hour to take effect)
             await rest.put(
                 Routes.applicationCommands(clientId),
                 { body: commandData }
             );
-            logger.info(`✅ スラッシュコマンド ${commandData.length} 件をグローバルに登録しました。`);
+            logger.info(`Registered ${commandData.length} slash commands globally.`);
         }
     } catch (error) {
         logger.error(t('❌ Failed to register slash commands:'), error);

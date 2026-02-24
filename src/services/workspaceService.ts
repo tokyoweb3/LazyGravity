@@ -2,8 +2,8 @@ import fs from 'fs';
 import { resolveSafePath } from '../middleware/sanitize';
 
 /**
- * ワークスペースのファイルシステム操作とパス検証を担うサービス。
- * WORKSPACE_BASE_DIR 配下のディレクトリを管理する。
+ * Service for workspace filesystem operations and path validation.
+ * Manages directories under WORKSPACE_BASE_DIR.
  */
 export class WorkspaceService {
     private readonly baseDir: string;
@@ -13,7 +13,7 @@ export class WorkspaceService {
     }
 
     /**
-     * ベースディレクトリの存在を確認し、なければ作成する
+     * Ensure the base directory exists, creating it if necessary
      */
     public ensureBaseDir(): void {
         if (!fs.existsSync(this.baseDir)) {
@@ -22,7 +22,7 @@ export class WorkspaceService {
     }
 
     /**
-     * ベースディレクトリ内のサブディレクトリ一覧を返す
+     * Return a list of subdirectories in the base directory
      */
     public scanWorkspaces(): string[] {
         this.ensureBaseDir();
@@ -35,29 +35,29 @@ export class WorkspaceService {
     }
 
     /**
-     * 相対パスを検証し、安全な絶対パスを返す
-     * @throws パストラバーサル検出時
+     * Validate a relative path and return a safe absolute path
+     * @throws On path traversal detection
      */
     public validatePath(relativePath: string): string {
         return resolveSafePath(relativePath, this.baseDir);
     }
 
     /**
-     * ベースディレクトリのパスを取得する
+     * Get the base directory path
      */
     public getBaseDir(): string {
         return this.baseDir;
     }
 
     /**
-     * 指定ワークスペースの絶対パスを返す
+     * Return the absolute path of the specified workspace
      */
     public getWorkspacePath(workspaceName: string): string {
         return this.validatePath(workspaceName);
     }
 
     /**
-     * 指定ワークスペースが存在するか確認する
+     * Check if the specified workspace exists
      */
     public exists(workspaceName: string): boolean {
         const fullPath = this.validatePath(workspaceName);

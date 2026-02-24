@@ -2,7 +2,7 @@ import { ModeService } from '../../src/services/modeService';
 import { sendModeUI } from '../../src/ui/modeUi';
 
 describe('modeUi', () => {
-    it('現在モードを含むUIを editReply に渡す', async () => {
+    it('passes a UI containing the current mode to editReply', async () => {
         const modeService = new ModeService();
         const target = { editReply: jest.fn().mockResolvedValue(undefined) };
 

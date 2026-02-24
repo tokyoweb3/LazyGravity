@@ -2,19 +2,19 @@ import { ScheduleService } from '../../src/services/scheduleService';
 import { ScheduleRepository, ScheduleRecord } from '../../src/database/scheduleRepository';
 import * as cron from 'node-cron';
 
-// node-cronをモック化
+// Mock node-cron
 jest.mock('node-cron', () => ({
     schedule: jest.fn(),
     validate: jest.fn(),
 }));
 
 /**
- * Step 9-2: スケジュールサービスのテスト
+ * Step 9-2: Schedule service tests
  *
- * テスト対象:
- * - Bot起動時にSQLiteのスケジュールを読み込み、node-cronに登録・再開できるか
- * - スケジュールの追加・停止・削除ができるか
- * - 不正なCron式の場合にエラーハンドリングされるか
+ * Test targets:
+ * - Can schedules be loaded from SQLite and registered/resumed in node-cron on bot startup?
+ * - Can schedules be added, stopped, and deleted?
+ * - Is error handling performed for invalid cron expressions?
  */
 describe('ScheduleService', () => {
     let scheduleService: ScheduleService;
@@ -25,7 +25,7 @@ describe('ScheduleService', () => {
     beforeEach(() => {
         jest.clearAllMocks();
 
-        // リポジトリのモック
+        // Mock repository
         mockRepo = {
             create: jest.fn(),
             findAll: jest.fn(),
@@ -41,8 +41,8 @@ describe('ScheduleService', () => {
         scheduleService = new ScheduleService(mockRepo);
     });
 
-    describe('restoreAll - Bot起動時のスケジュール復元', () => {
-        it('有効なスケジュールを全てnode-cronに登録すること', () => {
+    describe('restoreAll - schedule restoration on bot startup', () => {
+        it('registers all enabled schedules with node-cron', () => {
             const schedules: ScheduleRecord[] = [
                 {
                     id: 1,
@@ -62,18 +62,18 @@ describe('ScheduleService', () => {
 
             mockRepo.findEnabled.mockReturnValue(schedules);
 
-            // コールバック関数（ジョブとして実行される処理）
+            // Callback function (process executed as a job)
             const jobCallback = jest.fn();
 
-            // node-cronのモック（ScheduledTaskオブジェクトを返す）
+            // Mock node-cron (returns ScheduledTask objects)
             const mockTask = { stop: jest.fn(), start: jest.fn() };
             mockCronSchedule.mockReturnValue(mockTask);
 
             const restoredCount = scheduleService.restoreAll(jobCallback);
 
-            // 有効なスケジュールのみ取得される
+            // Only enabled schedules are retrieved
             expect(mockRepo.findEnabled).toHaveBeenCalledTimes(1);
-            // node-cron.schedule が2回呼ばれる
+            // node-cron.schedule is called twice
             expect(mockCronSchedule).toHaveBeenCalledTimes(2);
             expect(mockCronSchedule).toHaveBeenCalledWith(
                 '0 9 * * *',
@@ -86,7 +86,7 @@ describe('ScheduleService', () => {
             expect(restoredCount).toBe(2);
         });
 
-        it('有効なスケジュールが無い場合は0を返すこと', () => {
+        it('returns 0 when there are no enabled schedules', () => {
             mockRepo.findEnabled.mockReturnValue([]);
             const jobCallback = jest.fn();
 
@@ -97,8 +97,8 @@ describe('ScheduleService', () => {
         });
     });
 
-    describe('addSchedule - 新規スケジュールの追加', () => {
-        it('バリデーションを通過し、DBに保存してcronに登録すること', () => {
+    describe('addSchedule - add new schedule', () => {
+        it('passes validation, saves to DB, and registers with cron', () => {
             mockCronValidate.mockReturnValue(true);
             const mockTask = { stop: jest.fn(), start: jest.fn() };
             mockCronSchedule.mockReturnValue(mockTask);
@@ -120,21 +120,21 @@ describe('ScheduleService', () => {
                 jobCallback
             );
 
-            // Cron式のバリデーション
+            // Cron expression validation
             expect(mockCronValidate).toHaveBeenCalledWith('*/10 * * * *');
-            // DBに保存される
+            // Saved to DB
             expect(mockRepo.create).toHaveBeenCalledWith({
                 cronExpression: '*/10 * * * *',
                 prompt: '10分毎のチェック',
                 workspacePath: '/service',
                 enabled: true,
             });
-            // node-cronに登録される
+            // Registered with node-cron
             expect(mockCronSchedule).toHaveBeenCalledTimes(1);
             expect(result).toEqual(created);
         });
 
-        it('不正なCron式の場合にエラーをスローすること', () => {
+        it('throws an error for an invalid cron expression', () => {
             mockCronValidate.mockReturnValue(false);
 
             const jobCallback = jest.fn();
@@ -146,16 +146,16 @@ describe('ScheduleService', () => {
                     '/test',
                     jobCallback
                 );
-            }).toThrow('不正なCron式です: invalid-cron');
+            }).toThrow('Invalid cron expression: invalid-cron');
 
             expect(mockRepo.create).not.toHaveBeenCalled();
             expect(mockCronSchedule).not.toHaveBeenCalled();
         });
     });
 
-    describe('removeSchedule - スケジュールの削除', () => {
-        it('実行中のcronジョブを停止し、DBから削除すること', () => {
-            // 先にスケジュールを登録しておく
+    describe('removeSchedule - delete schedule', () => {
+        it('stops the running cron job and deletes from DB', () => {
+            // Register a schedule first
             mockCronValidate.mockReturnValue(true);
             const mockTask = { stop: jest.fn(), start: jest.fn() };
             mockCronSchedule.mockReturnValue(mockTask);
@@ -170,18 +170,18 @@ describe('ScheduleService', () => {
             const jobCallback = jest.fn();
             scheduleService.addSchedule('0 6 * * *', '朝のジョブ', '/morning', jobCallback);
 
-            // 削除
+            // Delete
             mockRepo.delete.mockReturnValue(true);
             const deleted = scheduleService.removeSchedule(5);
 
             expect(deleted).toBe(true);
-            // cronジョブが停止される
+            // Cron job is stopped
             expect(mockTask.stop).toHaveBeenCalled();
-            // DBから削除される
+            // Deleted from DB
             expect(mockRepo.delete).toHaveBeenCalledWith(5);
         });
 
-        it('存在しないスケジュールIDの場合はfalseを返すこと', () => {
+        it('returns false for a non-existent schedule ID', () => {
             mockRepo.delete.mockReturnValue(false);
             const deleted = scheduleService.removeSchedule(999);
 
@@ -189,9 +189,9 @@ describe('ScheduleService', () => {
         });
     });
 
-    describe('stopAll - 全スケジュールの停止', () => {
-        it('全ての実行中cronジョブを停止すること', () => {
-            // 2つのスケジュールを登録
+    describe('stopAll - stop all schedules', () => {
+        it('stops all running cron jobs', () => {
+            // Register two schedules
             mockCronValidate.mockReturnValue(true);
             const mockTask1 = { stop: jest.fn(), start: jest.fn() };
             const mockTask2 = { stop: jest.fn(), start: jest.fn() };
@@ -220,8 +220,8 @@ describe('ScheduleService', () => {
         });
     });
 
-    describe('listSchedules - スケジュール一覧の取得', () => {
-        it('DBから全スケジュールを取得できること', () => {
+    describe('listSchedules - retrieve schedule list', () => {
+        it('retrieves all schedules from DB', () => {
             const schedules: ScheduleRecord[] = [
                 { id: 1, cronExpression: '0 9 * * *', prompt: 'ジョブ1', workspacePath: '/p1', enabled: true },
                 { id: 2, cronExpression: '0 18 * * *', prompt: 'ジョブ2', workspacePath: '/p2', enabled: false },

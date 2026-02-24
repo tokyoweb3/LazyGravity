@@ -1,7 +1,7 @@
 {
   "name": "lazy-gravity",
   "version": "0.0.1",
-  "description": "**LazyGravity** is a local, secure Discord Bot that allows you to remote control and interact with AI coding agents (like Antigravity) running on your home PC from your smartphone's Discord app anywhere.",
+  "description": "Control Antigravity from anywhere — a local, secure Discord Bot that lets you remotely operate Antigravity on your home PC from your smartphone's Discord app.",
   "main": "dist/index.js",
   "bin": {
     "lazy-gravity": "./dist/bin/cli.js"

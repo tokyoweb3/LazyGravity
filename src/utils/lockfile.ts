@@ -5,7 +5,7 @@ import path from 'path';
 const LOCK_FILE = path.resolve(process.cwd(), '.bot.lock');
 
 /**
- * 指定PIDのプロセスが生きているか確認する
+ * Check if a process with the given PID is running
  */
 function isProcessRunning(pid: number): boolean {
     try {
@@ -17,31 +17,31 @@ function isProcessRunning(pid: number): boolean {
 }
 
 /**
- * 既存プロセスを停止し、終了を待つ
+ * Stop an existing process and wait for it to exit
  */
 function killExistingProcess(pid: number): void {
-    logger.error(`🔄 既存の Bot プロセスを停止します (PID: ${pid})...`);
+    logger.error(`🔄 Stopping existing Bot process (PID: ${pid})...`);
     try {
         process.kill(pid, 'SIGTERM');
     } catch {
-        // 既に終了済みの場合は無視
+        // Ignore if already terminated
         return;
     }
 
-    // 最大5秒間、プロセスの終了を待つ
+    // Wait up to 5 seconds for process to exit
     const deadline = Date.now() + 5000;
     while (Date.now() < deadline) {
         if (!isProcessRunning(pid)) {
-            logger.error(`✅ 既存プロセス (PID: ${pid}) を停止しました`);
+            logger.error(`✅ Existing process (PID: ${pid}) stopped`);
             return;
         }
-        // 50ms待つ (busy wait)
+        // Wait 50ms (busy wait)
         const waitUntil = Date.now() + 50;
         while (Date.now() < waitUntil) { /* spin */ }
     }
 
-    // タイムアウト: SIGKILLで強制終了
-    logger.error(`⚠️  SIGTERM でプロセスが終了しなかったため、強制終了します (SIGKILL)`);
+    // Timeout: force kill with SIGKILL
+    logger.error(`⚠️  Process did not exit with SIGTERM, force killing (SIGKILL)`);
     try {
         process.kill(pid, 'SIGKILL');
     } catch {
@@ -50,48 +50,48 @@ function killExistingProcess(pid: number): void {
 }
 
 /**
- * ロックファイルを取得して二重起動を制御する。
- * 既に別プロセスが起動中の場合は、そのプロセスを停止してから起動する。
+ * Acquire a lockfile to prevent duplicate bot instances.
+ * If another process is already running, stop it before starting.
  *
- * @returns ロック解除用の関数
+ * @returns A function to release the lock
  */
 export function acquireLock(): () => void {
-    // 既存のロックファイルチェック
+    // Check existing lock file
     if (fs.existsSync(LOCK_FILE)) {
         const content = fs.readFileSync(LOCK_FILE, 'utf-8').trim();
         const existingPid = parseInt(content, 10);
 
         if (!isNaN(existingPid) && existingPid !== process.pid && isProcessRunning(existingPid)) {
-            // 既存プロセスを停止して再起動
+            // Stop existing process and restart
             killExistingProcess(existingPid);
         } else if (!isNaN(existingPid) && !isProcessRunning(existingPid)) {
-            logger.warn(`⚠️  古いロックファイルを検出 (PID: ${existingPid} は終了済み)。クリーンアップします。`);
+            logger.warn(`⚠️  Stale lock file detected (PID: ${existingPid} has exited). Cleaning up.`);
         }
 
-        // 古いロックファイルを削除
+        // Remove stale lock file
         try { fs.unlinkSync(LOCK_FILE); } catch { /* ignore */ }
     }
 
-    // 新しいロックファイルを作成
+    // Create new lock file
     fs.writeFileSync(LOCK_FILE, String(process.pid), 'utf-8');
-    logger.error(`🔒 ロック取得 (PID: ${process.pid})`);
+    logger.error(`🔒 Lock acquired (PID: ${process.pid})`);
 
-    // クリーンアップ関数
+    // Cleanup function
     const releaseLock = () => {
         try {
             if (fs.existsSync(LOCK_FILE)) {
                 const content = fs.readFileSync(LOCK_FILE, 'utf-8').trim();
                 if (parseInt(content, 10) === process.pid) {
                     fs.unlinkSync(LOCK_FILE);
-                    logger.error(`🔓 ロック解除 (PID: ${process.pid})`);
+                    logger.error(`🔓 Lock released (PID: ${process.pid})`);
                 }
             }
         } catch {
-            // クリーンアップ中のエラーは無視
+            // Ignore errors during cleanup
         }
     };
 
-    // プロセス終了時に自動クリーンアップ
+    // Auto cleanup on process exit
     process.on('exit', releaseLock);
     process.on('SIGINT', () => {
         releaseLock();
@@ -102,7 +102,7 @@ export function acquireLock(): () => void {
         process.exit(0);
     });
     process.on('uncaughtException', (err) => {
-        logger.error('未処理の例外:', err);
+        logger.error('Uncaught exception:', err);
         releaseLock();
         process.exit(1);
     });

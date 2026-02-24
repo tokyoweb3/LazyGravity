@@ -62,21 +62,21 @@ describe('ensureAntigravityRunning', () => {
         consoleWarnSpy.mockRestore();
     });
 
-    it('先頭ポートが応答したらそこで探索を停止する', async () => {
+    it('stops scanning when the first port responds', async () => {
         mockHttpSuccessOnce(9222);
 
         await ensureAntigravityRunning();
 
         expect(http.get).toHaveBeenCalledTimes(1);
-        expect(consoleSpy).toHaveBeenCalledWith('[INFO]', '[AntigravityLauncher] OK — Port 9222 responding');
+        expect(consoleSpy).toHaveBeenCalledWith('\x1b[36m[INFO]\x1b[0m', '[AntigravityLauncher] OK — Port 9222 responding');
     });
 
-    it('全ポートが失敗した場合は警告ログを出す', async () => {
+    it('outputs a warning log when all ports fail', async () => {
         mockHttpErrorAlways();
 
         await ensureAntigravityRunning();
 
         expect(http.get).toHaveBeenCalledTimes(6);
-        expect(consoleWarnSpy).toHaveBeenCalledWith('[WARN]', '  Antigravity CDP ports are not responding');
+        expect(consoleWarnSpy).toHaveBeenCalledWith('\x1b[33m[WARN]\x1b[0m', '  Antigravity CDP ports are not responding');
     });
 });

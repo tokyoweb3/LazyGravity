@@ -1,23 +1,23 @@
 import Database from 'better-sqlite3';
 
 /**
- * ワークスペースバインディングのレコード型定義
+ * Workspace binding record type definition
  */
 export interface WorkspaceBindingRecord {
-    /** 一意のID（自動採番） */
+    /** Unique ID (auto-increment) */
     id: number;
-    /** DiscordチャンネルID（一意） */
+    /** Discord channel ID (unique) */
     channelId: string;
-    /** ワークスペースの相対パス */
+    /** Workspace relative path */
     workspacePath: string;
-    /** DiscordギルドID */
+    /** Discord guild ID */
     guildId: string;
-    /** 作成日時（ISO文字列） */
+    /** Creation timestamp (ISO string) */
     createdAt?: string;
 }
 
 /**
- * バインディング作成時の入力型
+ * Input type for binding creation
  */
 export interface CreateWorkspaceBindingInput {
     channelId: string;
@@ -26,8 +26,8 @@ export interface CreateWorkspaceBindingInput {
 }
 
 /**
- * DiscordチャンネルとワークスペースディレクトリのバインディングをSQLiteで永続化するリポジトリ。
- * 1チャンネルにつき1ワークスペースのみバインド可能（UNIQUE制約）。
+ * Repository for persisting Discord channel to workspace directory bindings in SQLite.
+ * Only one workspace can be bound per channel (UNIQUE constraint).
  */
 export class WorkspaceBindingRepository {
     private readonly db: Database.Database;
@@ -38,7 +38,7 @@ export class WorkspaceBindingRepository {
     }
 
     /**
-     * テーブルを初期化する（存在しなければ作成）
+     * Initialize table (create if not exists)
      */
     private initialize(): void {
         this.db.exec(`
@@ -53,7 +53,7 @@ export class WorkspaceBindingRepository {
     }
 
     /**
-     * 新しいバインディングを作成する
+     * Create a new binding
      */
     public create(input: CreateWorkspaceBindingInput): WorkspaceBindingRecord {
         const stmt = this.db.prepare(`
@@ -72,7 +72,7 @@ export class WorkspaceBindingRepository {
     }
 
     /**
-     * チャンネルIDでバインディングを検索する
+     * Find binding by channel ID
      */
     public findByChannelId(channelId: string): WorkspaceBindingRecord | undefined {
         const row = this.db.prepare(
@@ -83,8 +83,8 @@ export class WorkspaceBindingRepository {
     }
 
     /**
-     * ワークスペースパスとギルドIDでバインディングを検索する
-     * 同一ワークスペースの重複作成防止に使用
+     * Find bindings by workspace path and guild ID
+     * Used to prevent duplicate workspace creation
      */
     public findByWorkspacePathAndGuildId(workspacePath: string, guildId: string): WorkspaceBindingRecord[] {
         const rows = this.db.prepare(
@@ -94,7 +94,7 @@ export class WorkspaceBindingRepository {
     }
 
     /**
-     * ギルドIDで全バインディングを検索する
+     * Find all bindings by guild ID
      */
     public findByGuildId(guildId: string): WorkspaceBindingRecord[] {
         const rows = this.db.prepare(
@@ -104,7 +104,7 @@ export class WorkspaceBindingRepository {
     }
 
     /**
-     * すべてのバインディングを取得する
+     * Get all bindings
      */
     public findAll(): WorkspaceBindingRecord[] {
         const rows = this.db.prepare(
@@ -114,7 +114,7 @@ export class WorkspaceBindingRepository {
     }
 
     /**
-     * チャンネルIDでバインディングを削除する
+     * Delete binding by channel ID
      */
     public deleteByChannelId(channelId: string): boolean {
         const result = this.db.prepare(
@@ -124,7 +124,7 @@ export class WorkspaceBindingRepository {
     }
 
     /**
-     * チャンネルのバインディングを作成または更新する（upsert）
+     * Create or update a channel binding (upsert)
      */
     public upsert(input: CreateWorkspaceBindingInput): WorkspaceBindingRecord {
         const stmt = this.db.prepare(`
@@ -141,7 +141,7 @@ export class WorkspaceBindingRepository {
     }
 
     /**
-     * DBの行をWorkspaceBindingRecordにマッピングする
+     * Map a DB row to WorkspaceBindingRecord
      */
     private mapRow(row: any): WorkspaceBindingRecord {
         return {

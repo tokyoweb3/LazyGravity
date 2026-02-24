@@ -2,21 +2,21 @@ import Database from 'better-sqlite3';
 import { ScheduleRepository, ScheduleRecord } from '../../src/database/scheduleRepository';
 
 /**
- * Step 9-1: 定期実行ジョブの永続化テスト
+ * Step 9-1: Scheduled job persistence tests
  *
- * テスト対象:
- * - SQLiteに「Cron式」と「プロンプト」を保存できるか
- * - 保存したスケジュールを全件取得できるか
- * - 個別のスケジュールをIDで取得できるか
- * - スケジュールを削除できるか
- * - テーブルが自動的に作成されるか
+ * Test targets:
+ * - Can cron expressions and prompts be saved to SQLite?
+ * - Can all saved schedules be retrieved?
+ * - Can individual schedules be retrieved by ID?
+ * - Can schedules be deleted?
+ * - Is the table created automatically?
  */
 describe('ScheduleRepository', () => {
     let db: Database.Database;
     let repo: ScheduleRepository;
 
     beforeEach(() => {
-        // インメモリDBを使用（テスト毎にクリーンな状態）
+        // Use in-memory DB (clean state per test)
         db = new Database(':memory:');
         repo = new ScheduleRepository(db);
     });
@@ -25,9 +25,9 @@ describe('ScheduleRepository', () => {
         db.close();
     });
 
-    describe('テーブル初期化', () => {
-        it('初期化時にschedulesテーブルが作成されること', () => {
-            // テーブルの存在を確認
+    describe('table initialization', () => {
+        it('creates the schedules table on initialization', () => {
+            // Verify table existence
             const tableInfo = db.prepare(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='schedules'"
             ).get() as any;
@@ -36,8 +36,8 @@ describe('ScheduleRepository', () => {
         });
     });
 
-    describe('create - スケジュールの保存', () => {
-        it('Cron式とプロンプトを保存し、IDを返すこと', () => {
+    describe('create - save schedule', () => {
+        it('saves the cron expression and prompt, and returns the ID', () => {
             const record = repo.create({
                 cronExpression: '0 9 * * *',
                 prompt: 'テストプロンプト: ビルドを実行',
@@ -53,7 +53,7 @@ describe('ScheduleRepository', () => {
             expect(record.enabled).toBe(true);
         });
 
-        it('複数のスケジュールを保存できること', () => {
+        it('can save multiple schedules', () => {
             repo.create({
                 cronExpression: '0 9 * * *',
                 prompt: '朝のビルド',
@@ -72,8 +72,8 @@ describe('ScheduleRepository', () => {
         });
     });
 
-    describe('findAll - 全スケジュールの取得', () => {
-        it('保存された全スケジュールを取得できること', () => {
+    describe('findAll - retrieve all schedules', () => {
+        it('retrieves all saved schedules', () => {
             repo.create({
                 cronExpression: '*/5 * * * *',
                 prompt: '5分毎のヘルスチェック',
@@ -94,14 +94,14 @@ describe('ScheduleRepository', () => {
             expect(all[1].enabled).toBe(false);
         });
 
-        it('スケジュールが無い場合は空配列を返すこと', () => {
+        it('returns an empty array when there are no schedules', () => {
             const all = repo.findAll();
             expect(all).toEqual([]);
         });
     });
 
-    describe('findById - IDによるスケジュール取得', () => {
-        it('指定したIDのスケジュールを取得できること', () => {
+    describe('findById - retrieve schedule by ID', () => {
+        it('retrieves the schedule with the specified ID', () => {
             const created = repo.create({
                 cronExpression: '30 12 * * *',
                 prompt: 'お昼のリマインダー',
@@ -115,14 +115,14 @@ describe('ScheduleRepository', () => {
             expect(found!.prompt).toBe('お昼のリマインダー');
         });
 
-        it('存在しないIDの場合はundefinedを返すこと', () => {
+        it('returns undefined for a non-existent ID', () => {
             const found = repo.findById(9999);
             expect(found).toBeUndefined();
         });
     });
 
-    describe('findEnabled - 有効なスケジュールのみ取得', () => {
-        it('enabled=true のスケジュールのみ取得できること', () => {
+    describe('findEnabled - retrieve only enabled schedules', () => {
+        it('retrieves only schedules with enabled=true', () => {
             repo.create({
                 cronExpression: '0 9 * * *',
                 prompt: '有効なジョブ',
@@ -142,8 +142,8 @@ describe('ScheduleRepository', () => {
         });
     });
 
-    describe('delete - スケジュールの削除', () => {
-        it('指定したIDのスケジュールを削除できること', () => {
+    describe('delete - delete schedule', () => {
+        it('deletes the schedule with the specified ID', () => {
             const created = repo.create({
                 cronExpression: '0 0 * * *',
                 prompt: '削除対象',
@@ -158,14 +158,14 @@ describe('ScheduleRepository', () => {
             expect(found).toBeUndefined();
         });
 
-        it('存在しないIDの削除はfalseを返すこと', () => {
+        it('returns false when deleting a non-existent ID', () => {
             const deleted = repo.delete(9999);
             expect(deleted).toBe(false);
         });
     });
 
-    describe('update - スケジュールの更新', () => {
-        it('有効/無効の切り替えができること', () => {
+    describe('update - update schedule', () => {
+        it('can toggle enabled/disabled state', () => {
             const created = repo.create({
                 cronExpression: '0 9 * * *',
                 prompt: '更新対象',
@@ -180,7 +180,7 @@ describe('ScheduleRepository', () => {
             expect(found!.enabled).toBe(false);
         });
 
-        it('Cron式の更新ができること', () => {
+        it('can update the cron expression', () => {
             const created = repo.create({
                 cronExpression: '0 9 * * *',
                 prompt: 'テスト',

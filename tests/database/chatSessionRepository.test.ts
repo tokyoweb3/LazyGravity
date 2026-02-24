@@ -14,8 +14,8 @@ describe('ChatSessionRepository', () => {
         db.close();
     });
 
-    describe('テーブル初期化', () => {
-        it('初期化時にchat_sessionsテーブルが作成されること', () => {
+    describe('table initialization', () => {
+        it('creates the chat_sessions table on initialization', () => {
             const tables = db.prepare(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='chat_sessions'"
             ).all();
@@ -23,8 +23,8 @@ describe('ChatSessionRepository', () => {
         });
     });
 
-    describe('create - セッションの作成', () => {
-        it('セッションを作成しIDを返すこと', () => {
+    describe('create - session creation', () => {
+        it('creates a session and returns the ID', () => {
             const result = repo.create({
                 channelId: 'ch-1',
                 categoryId: 'cat-1',
@@ -42,7 +42,7 @@ describe('ChatSessionRepository', () => {
             expect(result.guildId).toBe('guild-1');
         });
 
-        it('同じチャンネルIDで重複作成はエラーになること', () => {
+        it('throws an error on duplicate creation with the same channel ID', () => {
             repo.create({ channelId: 'ch-1', categoryId: 'cat-1', workspacePath: 'proj', sessionNumber: 1, guildId: 'guild-1' });
             expect(() => {
                 repo.create({ channelId: 'ch-1', categoryId: 'cat-1', workspacePath: 'proj', sessionNumber: 2, guildId: 'guild-1' });
@@ -51,7 +51,7 @@ describe('ChatSessionRepository', () => {
     });
 
     describe('findByChannelId', () => {
-        it('存在するセッションを取得できること', () => {
+        it('retrieves an existing session', () => {
             repo.create({ channelId: 'ch-1', categoryId: 'cat-1', workspacePath: 'proj', sessionNumber: 1, guildId: 'guild-1' });
             const found = repo.findByChannelId('ch-1');
             expect(found).toBeDefined();
@@ -59,13 +59,13 @@ describe('ChatSessionRepository', () => {
             expect(found?.isRenamed).toBe(false);
         });
 
-        it('存在しないチャンネルIDの場合はundefinedを返すこと', () => {
+        it('returns undefined for a non-existent channel ID', () => {
             expect(repo.findByChannelId('nonexistent')).toBeUndefined();
         });
     });
 
     describe('findByCategoryId', () => {
-        it('同一カテゴリのセッションをセッション番号順で取得できること', () => {
+        it('retrieves sessions in the same category sorted by session number', () => {
             repo.create({ channelId: 'ch-1', categoryId: 'cat-1', workspacePath: 'proj', sessionNumber: 1, guildId: 'guild-1' });
             repo.create({ channelId: 'ch-2', categoryId: 'cat-1', workspacePath: 'proj', sessionNumber: 2, guildId: 'guild-1' });
             repo.create({ channelId: 'ch-3', categoryId: 'cat-2', workspacePath: 'other', sessionNumber: 1, guildId: 'guild-1' });
@@ -76,30 +76,30 @@ describe('ChatSessionRepository', () => {
             expect(results[1].sessionNumber).toBe(2);
         });
 
-        it('セッションが無い場合は空配列を返すこと', () => {
+        it('returns an empty array when there are no sessions', () => {
             expect(repo.findByCategoryId('nonexistent')).toEqual([]);
         });
     });
 
     describe('getNextSessionNumber', () => {
-        it('セッションが無い場合は1を返すこと', () => {
+        it('returns 1 when there are no sessions', () => {
             expect(repo.getNextSessionNumber('cat-1')).toBe(1);
         });
 
-        it('既存セッションがある場合はMAX+1を返すこと', () => {
+        it('returns MAX+1 when existing sessions exist', () => {
             repo.create({ channelId: 'ch-1', categoryId: 'cat-1', workspacePath: 'proj', sessionNumber: 1, guildId: 'guild-1' });
             repo.create({ channelId: 'ch-2', categoryId: 'cat-1', workspacePath: 'proj', sessionNumber: 3, guildId: 'guild-1' });
             expect(repo.getNextSessionNumber('cat-1')).toBe(4);
         });
 
-        it('異なるカテゴリのセッションは影響しないこと', () => {
+        it('sessions in different categories do not affect each other', () => {
             repo.create({ channelId: 'ch-1', categoryId: 'cat-1', workspacePath: 'proj', sessionNumber: 5, guildId: 'guild-1' });
             expect(repo.getNextSessionNumber('cat-2')).toBe(1);
         });
     });
 
     describe('updateDisplayName', () => {
-        it('表示名を更新しis_renamedをtrueにすること', () => {
+        it('updates the display name and sets is_renamed to true', () => {
             repo.create({ channelId: 'ch-1', categoryId: 'cat-1', workspacePath: 'proj', sessionNumber: 1, guildId: 'guild-1' });
 
             const updated = repo.updateDisplayName('ch-1', 'React認証バグ修正');
@@ -110,19 +110,19 @@ describe('ChatSessionRepository', () => {
             expect(found?.isRenamed).toBe(true);
         });
 
-        it('存在しないチャンネルIDの場合はfalseを返すこと', () => {
+        it('returns false for a non-existent channel ID', () => {
             expect(repo.updateDisplayName('nonexistent', 'title')).toBe(false);
         });
     });
 
     describe('deleteByChannelId', () => {
-        it('セッションを削除できること', () => {
+        it('deletes a session', () => {
             repo.create({ channelId: 'ch-1', categoryId: 'cat-1', workspacePath: 'proj', sessionNumber: 1, guildId: 'guild-1' });
             expect(repo.deleteByChannelId('ch-1')).toBe(true);
             expect(repo.findByChannelId('ch-1')).toBeUndefined();
         });
 
-        it('存在しないチャンネルIDの削除はfalseを返すこと', () => {
+        it('returns false when deleting a non-existent channel ID', () => {
             expect(repo.deleteByChannelId('nonexistent')).toBe(false);
         });
     });

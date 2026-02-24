@@ -1,25 +1,25 @@
 import Database from 'better-sqlite3';
 
 /**
- * スケジュールレコードの型定義
+ * Schedule record type definition
  */
 export interface ScheduleRecord {
-    /** 一意のID（自動採番） */
+    /** Unique ID (auto-increment) */
     id: number;
-    /** Cron式（例: "0 9 * * *"） */
+    /** Cron expression (e.g. "0 9 * * *") */
     cronExpression: string;
-    /** 実行するプロンプト */
+    /** Prompt to execute */
     prompt: string;
-    /** 対象ワークスペースのパス */
+    /** Target workspace path */
     workspacePath: string;
-    /** 有効/無効 */
+    /** Enabled/disabled */
     enabled: boolean;
-    /** 作成日時（ISO文字列） */
+    /** Creation timestamp (ISO string) */
     createdAt?: string;
 }
 
 /**
- * スケジュール作成時の入力型
+ * Input type for schedule creation
  */
 export interface CreateScheduleInput {
     cronExpression: string;
@@ -29,7 +29,7 @@ export interface CreateScheduleInput {
 }
 
 /**
- * スケジュール更新時の入力型（部分更新）
+ * Input type for schedule update (partial update)
  */
 export interface UpdateScheduleInput {
     cronExpression?: string;
@@ -39,8 +39,8 @@ export interface UpdateScheduleInput {
 }
 
 /**
- * 定期実行ジョブのSQLite永続化を担うリポジトリクラス。
- * Cron式とプロンプトの保存・取得・更新・削除を行う。
+ * Repository class for SQLite persistence of scheduled jobs.
+ * Handles saving, retrieving, updating, and deleting cron expressions and prompts.
  */
 export class ScheduleRepository {
     private db: Database.Database;
@@ -51,7 +51,7 @@ export class ScheduleRepository {
     }
 
     /**
-     * テーブルを初期化する（存在しなければ作成）
+     * Initialize table (create if not exists)
      */
     private initialize(): void {
         this.db.exec(`
@@ -67,7 +67,7 @@ export class ScheduleRepository {
     }
 
     /**
-     * 新しいスケジュールを作成する
+     * Create a new schedule
      */
     public create(input: CreateScheduleInput): ScheduleRecord {
         const stmt = this.db.prepare(`
@@ -92,7 +92,7 @@ export class ScheduleRepository {
     }
 
     /**
-     * すべてのスケジュールを取得する
+     * Get all schedules
      */
     public findAll(): ScheduleRecord[] {
         const rows = this.db.prepare('SELECT * FROM schedules ORDER BY id ASC').all() as any[];
@@ -100,7 +100,7 @@ export class ScheduleRepository {
     }
 
     /**
-     * IDでスケジュールを取得する
+     * Get a schedule by ID
      */
     public findById(id: number): ScheduleRecord | undefined {
         const row = this.db.prepare('SELECT * FROM schedules WHERE id = ?').get(id) as any;
@@ -109,7 +109,7 @@ export class ScheduleRepository {
     }
 
     /**
-     * 有効なスケジュールのみ取得する（Bot起動時の再登録用）
+     * Get only enabled schedules (for re-registration on bot startup)
      */
     public findEnabled(): ScheduleRecord[] {
         const rows = this.db.prepare(
@@ -119,7 +119,7 @@ export class ScheduleRepository {
     }
 
     /**
-     * スケジュールを削除する
+     * Delete a schedule
      */
     public delete(id: number): boolean {
         const result = this.db.prepare('DELETE FROM schedules WHERE id = ?').run(id);
@@ -127,7 +127,7 @@ export class ScheduleRepository {
     }
 
     /**
-     * スケジュールを部分更新する
+     * Partially update a schedule
      */
     public update(id: number, input: UpdateScheduleInput): boolean {
         const sets: string[] = [];
@@ -159,7 +159,7 @@ export class ScheduleRepository {
     }
 
     /**
-     * DBの行をScheduleRecordにマッピングする
+     * Map a DB row to ScheduleRecord
      */
     private mapRow(row: any): ScheduleRecord {
         return {

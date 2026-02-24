@@ -1,31 +1,31 @@
 import { logger } from '../utils/logger';
 import { CdpService } from './cdpService';
 
-/** 承認ボタンの情報 */
+/** Approval button information */
 export interface ApprovalInfo {
-    /** 許可ボタンのテキスト（例: "Allow", "許可"） */
+    /** Allow button text (e.g. "Allow") */
     approveText: string;
-    /** 会話単位の許可ボタンのテキスト（例: "Allow This Conversation", "常に許可"） */
+    /** Per-conversation allow button text (e.g. "Allow This Conversation") */
     alwaysAllowText?: string;
-    /** 拒否ボタンのテキスト（例: "Deny", "拒否"） */
+    /** Deny button text (e.g. "Deny") */
     denyText: string;
-    /** アクションの説明文（例: "write to file.ts"） */
+    /** Action description (e.g. "write to file.ts") */
     description: string;
 }
 
 export interface ApprovalDetectorOptions {
-    /** CDPサービスインスタンス */
+    /** CDP service instance */
     cdpService: CdpService;
-    /** ポーリング間隔（ミリ秒）デフォルト: 1500ms */
+    /** Poll interval in milliseconds (default: 1500ms) */
     pollIntervalMs?: number;
-    /** 承認ボタン検出時のコールバック */
+    /** Callback when an approval button is detected */
     onApprovalRequired: (info: ApprovalInfo) => void;
 }
 
 /**
- * Antigravity UIの承認ボタン検出スクリプト
+ * Approval button detection script for the Antigravity UI
  *
- * 許可/拒否ボタンをペアで検出し、説明文もフォールバック付きで抽出する。
+ * Detects allow/deny button pairs and extracts descriptions with fallbacks.
  */
 const DETECT_APPROVAL_SCRIPT = `(() => {
     const ALLOW_ONCE_PATTERNS = ['allow once', 'allow one time', '今回のみ許可', '1回のみ許可', '一度許可'];
@@ -83,10 +83,10 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
     const alwaysAllowText = alwaysAllowBtn ? (alwaysAllowBtn.textContent || '').trim() : '';
     const denyText = (denyBtn.textContent || '').trim();
 
-    // 説明文の抽出（複数フォールバック）
+    // Description extraction (multiple fallbacks)
     let description = '';
 
-    // 1. ダイアログ/モーダル内のpや.description
+    // 1. p or .description inside dialog/modal
     const dialog = container;
     if (dialog) {
         const descEl = dialog.querySelector('p, .description, [data-testid="description"]');
@@ -95,7 +95,7 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
         }
     }
 
-    // 2. ボタンの親要素のテキスト（ボタンテキストを除く）
+    // 2. Parent element text (excluding button text)
     if (!description) {
         const parent = approveBtn.parentElement?.parentElement || approveBtn.parentElement;
         if (parent) {
@@ -109,7 +109,7 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
         }
     }
 
-    // 3. aria-label フォールバック
+    // 3. aria-label fallback
     if (!description) {
         const ariaLabel = approveBtn.getAttribute('aria-label') || '';
         if (ariaLabel) description = ariaLabel;
@@ -119,7 +119,7 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
 })()`;
 
 /**
- * Allow Once の右側トグルを押して Always Allow のドロップダウンを展開する。
+ * Press the toggle on the right side of Allow Once to expand the Always Allow dropdown.
  */
 const EXPAND_ALWAYS_ALLOW_MENU_SCRIPT = `(() => {
     const ALLOW_ONCE_PATTERNS = ['allow once', 'allow one time', '今回のみ許可', '1回のみ許可', '一度許可'];
@@ -192,9 +192,9 @@ const EXPAND_ALWAYS_ALLOW_MENU_SCRIPT = `(() => {
 })()`;
 
 /**
- * ボタンをクリックするCDPスクリプトを生成する
+ * Generate a CDP script that clicks a button
  *
- * @param buttonText クリックするボタンのテキスト
+ * @param buttonText Text of the button to click
  */
 function buildClickScript(buttonText: string): string {
     const safeText = JSON.stringify(buttonText);
@@ -212,17 +212,17 @@ function buildClickScript(buttonText: string): string {
                 buttonText.includes(wanted) ||
                 ariaLabel.includes(wanted);
         });
-        if (!target) return { ok: false, error: 'ボタンが見つかりませんでした: ' + text };
+        if (!target) return { ok: false, error: 'Button not found: ' + text };
         target.click();
         return { ok: true };
     })()`;
 }
 
 /**
- * AntigravityのUIに現れる承認ボタンをポーリングで検出するクラス。
+ * Class that detects approval buttons in the Antigravity UI via polling.
  *
- * 検出したボタン情報を onApprovalRequired コールバックで通知し、
- * approveButton() / denyButton() メソッドで実際のクリック操作を行う。
+ * Notifies detected button info through the onApprovalRequired callback,
+ * and performs the actual click operations via approveButton() / denyButton() methods.
  */
 export class ApprovalDetector {
     private cdpService: CdpService;
@@ -231,9 +231,9 @@ export class ApprovalDetector {
 
     private pollTimer: NodeJS.Timeout | null = null;
     private isRunning: boolean = false;
-    /** 直前に検出したボタン情報（重複通知防止用キー） */
+    /** Key of the last detected button info (for duplicate notification prevention) */
     private lastDetectedKey: string | null = null;
-    /** 直前に検出した完全なApprovalInfo（クリック時に使用） */
+    /** Full ApprovalInfo from the last detection (used for clicking) */
     private lastDetectedInfo: ApprovalInfo | null = null;
 
     constructor(options: ApprovalDetectorOptions) {
@@ -243,7 +243,7 @@ export class ApprovalDetector {
     }
 
     /**
-     * 監視を開始する。
+     * Start monitoring.
      */
     start(): void {
         if (this.isRunning) return;
@@ -254,7 +254,7 @@ export class ApprovalDetector {
     }
 
     /**
-     * 監視を停止する。
+     * Stop monitoring.
      */
     async stop(): Promise<void> {
         this.isRunning = false;
@@ -265,14 +265,14 @@ export class ApprovalDetector {
     }
 
     /**
-     * 最後に検出した承認ボタン情報を返す。
-     * 未検出の場合は null。
+     * Return the last detected approval button info.
+     * Returns null if nothing has been detected.
      */
     getLastDetectedInfo(): ApprovalInfo | null {
         return this.lastDetectedInfo;
     }
 
-    /** 次のポーリングをスケジュールする */
+    /** Schedule the next poll */
     private schedulePoll(): void {
         if (!this.isRunning) return;
         this.pollTimer = setTimeout(async () => {
@@ -284,10 +284,10 @@ export class ApprovalDetector {
     }
 
     /**
-     * 1回のポーリング処理:
-     *   1. DOMから承認ボタン情報を取得（contextId指定）
-     *   2. 新規検出の場合のみコールバック通知（重複防止）
-     *   3. ボタンが消えたら lastDetectedKey / lastDetectedInfo をリセット
+     * Single poll iteration:
+     *   1. Get approval button info from DOM (with contextId)
+     *   2. Notify via callback only on new detection (prevent duplicates)
+     *   3. Reset lastDetectedKey / lastDetectedInfo when buttons disappear
      */
     private async poll(): Promise<void> {
         try {
@@ -305,7 +305,7 @@ export class ApprovalDetector {
             const info: ApprovalInfo | null = result?.result?.value ?? null;
 
             if (info) {
-                // 重複通知防止: approveText + description の組み合わせをキーとする
+                // Duplicate prevention: use approveText + description combination as key
                 const key = `${info.approveText}::${info.description}`;
                 if (key !== this.lastDetectedKey) {
                     this.lastDetectedKey = key;
@@ -313,20 +313,20 @@ export class ApprovalDetector {
                     this.onApprovalRequired(info);
                 }
             } else {
-                // ボタンが消えたらリセット（次回の承認検出に備える）
+                // Reset when buttons disappear (prepare for next approval detection)
                 this.lastDetectedKey = null;
                 this.lastDetectedInfo = null;
             }
         } catch (error) {
-            // CDPエラーは無視して監視を継続
-            logger.error('[ApprovalDetector] ポーリング中にエラーが発生しました:', error);
+            // Ignore CDP errors and continue monitoring
+            logger.error('[ApprovalDetector] Error during polling:', error);
         }
     }
 
     /**
-     * 指定テキストの承認ボタンをCDP経由でクリックする（許可）。
-     * @param buttonText クリックするボタンのテキスト（デフォルト: 検出済みのapproveText or "Allow"）
-     * @returns クリック成功なら true
+     * Click the approve button with the specified text via CDP.
+     * @param buttonText Text of the button to click (default: detected approveText or "Allow")
+     * @returns true if click succeeded
      */
     async approveButton(buttonText?: string): Promise<boolean> {
         const text = buttonText ?? this.lastDetectedInfo?.approveText ?? 'Allow';
@@ -334,8 +334,8 @@ export class ApprovalDetector {
     }
 
     /**
-     * 「Allow This Conversation / Always Allow」を選択する。
-     * 直接ボタンが見えない場合は、Allow Onceのドロップダウンを展開して選択する。
+     * Select "Allow This Conversation / Always Allow".
+     * If the button is not directly visible, expand the Allow Once dropdown and select it.
      */
     async alwaysAllowButton(): Promise<boolean> {
         const directCandidates = [
@@ -367,9 +367,9 @@ export class ApprovalDetector {
     }
 
     /**
-     * 指定テキストの拒否ボタンをCDP経由でクリックする（拒否）。
-     * @param buttonText クリックするボタンのテキスト（デフォルト: 検出済みのdenyText or "Deny"）
-     * @returns クリック成功なら true
+     * Click the deny button with the specified text via CDP.
+     * @param buttonText Text of the button to click (default: detected denyText or "Deny")
+     * @returns true if click succeeded
      */
     async denyButton(buttonText?: string): Promise<boolean> {
         const text = buttonText ?? this.lastDetectedInfo?.denyText ?? 'Deny';
@@ -377,21 +377,21 @@ export class ApprovalDetector {
     }
 
     /**
-     * 内部クリック処理（approveButton / denyButton の共通実装）
-     * contextIdを指定して正しい実行コンテキストでクリックする。
+     * Internal click handler (shared implementation for approveButton / denyButton).
+     * Specifies contextId to click in the correct execution context.
      */
     private async clickButton(buttonText: string): Promise<boolean> {
         try {
             const result = await this.runEvaluateScript(buildClickScript(buttonText));
             return result?.ok === true;
         } catch (error) {
-            logger.error('[ApprovalDetector] ボタンクリック中にエラーが発生しました:', error);
+            logger.error('[ApprovalDetector] Error while clicking button:', error);
             return false;
         }
     }
 
     /**
-     * contextId を指定して Runtime.evaluate を実行し、result.value を返す。
+     * Execute Runtime.evaluate with contextId and return result.value.
      */
     private async runEvaluateScript(expression: string): Promise<any> {
         const contextId = this.cdpService.getPrimaryContextId();
@@ -407,7 +407,7 @@ export class ApprovalDetector {
         return result?.result?.value;
     }
 
-    /** 現在監視中かどうかを返す */
+    /** Returns whether monitoring is currently active */
     isActive(): boolean {
         return this.isRunning;
     }

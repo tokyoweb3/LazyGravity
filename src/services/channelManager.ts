@@ -1,19 +1,19 @@
 import { Guild, ChannelType } from 'discord.js';
 
 /**
- * チャンネル/カテゴリ自動生成の結果
+ * Result of auto-creating a channel/category
  */
 export interface EnsureChannelResult {
-    /** カテゴリのID */
+    /** Category ID */
     categoryId: string;
-    /** テキストチャンネルのID */
+    /** Text channel ID */
     channelId: string;
-    /** 新規作成されたかどうか（false = 既存を流用） */
+    /** Whether newly created (false = reused existing) */
     created: boolean;
 }
 
 /**
- * カテゴリ確保の結果
+ * Result of ensuring a category
  */
 export interface EnsureCategoryResult {
     categoryId: string;
@@ -21,45 +21,45 @@ export interface EnsureCategoryResult {
 }
 
 /**
- * セッションチャンネル作成の結果
+ * Result of creating a session channel
  */
 export interface CreateSessionChannelResult {
     channelId: string;
 }
 
-/** カテゴリ名のプレフィックス絵文字 */
+/** Category name prefix emoji */
 const CATEGORY_PREFIX = '🗂️-';
-/** カテゴリ配下のデフォルトチャンネル名 */
+/** Default channel name under the category */
 const DEFAULT_CHANNEL_NAME = 'general';
 
 /**
- * ワークスペースパスに対応するDiscordカテゴリ・チャンネルを管理するクラス。
- * 指定されたワークスペース名に対し、該当するカテゴリ・チャンネルが無ければ作成し、
- * 存在すれば既存のチャンネルIDを返す。
+ * Class that manages Discord categories and channels corresponding to workspace paths.
+ * Creates the category/channel if they don't exist for the given workspace name,
+ * or returns the existing channel ID if they do.
  */
 export class ChannelManager {
 
     /**
-     * ワークスペースパスに対応するカテゴリを確保する。
-     * 存在しなければ新規作成、存在すれば既存のIDを返す。
+     * Ensure a category exists for the given workspace path.
+     * Creates a new one if it doesn't exist, returns the existing ID otherwise.
      */
     public async ensureCategory(guild: Guild, workspacePath: string): Promise<EnsureCategoryResult> {
         if (!workspacePath || workspacePath.trim() === '') {
-            throw new Error('ワークスペースパスが指定されていません');
+            throw new Error('Workspace path not specified');
         }
 
         const sanitizedName = this.sanitizeCategoryName(workspacePath);
         const categoryName = `${CATEGORY_PREFIX}${sanitizedName}`;
 
-        // まずキャッシュから検索
+        // Search from cache first
         let existingCategory = guild.channels.cache.find(
             (ch) => ch.type === ChannelType.GuildCategory && ch.name === categoryName
         );
 
-        // キャッシュにない場合は全チャンネルをフェッチして再試行
+        // If not in cache, fetch all channels and retry
         if (!existingCategory) {
             const channels = await guild.channels.fetch();
-            // Collection.find は null を返さないが、fetchの結果に null が混じる可能性を考慮
+            // Collection.find doesn't return null, but fetch results may contain null entries
             const found = channels.find(
                 (ch) => ch !== null && ch !== undefined && ch.type === ChannelType.GuildCategory && ch.name === categoryName
             );
@@ -81,7 +81,7 @@ export class ChannelManager {
     }
 
     /**
-     * カテゴリ配下に新しいセッションチャンネルを作成する。
+     * Create a new session channel under the category.
      */
     public async createSessionChannel(
         guild: Guild,
@@ -98,30 +98,30 @@ export class ChannelManager {
     }
 
     /**
-     * チャンネル名をリネームする。
+     * Rename a channel.
      */
     public async renameChannel(guild: Guild, channelId: string, newName: string): Promise<void> {
         const channel = guild.channels.cache.get(channelId);
         if (!channel) {
-            throw new Error(`チャンネル ${channelId} が見つかりません`);
+            throw new Error(`Channel ${channelId} not found`);
         }
 
         await channel.setName(newName);
     }
 
     /**
-     * ワークスペースパスに対応するカテゴリとテキストチャンネルを確保する。
-     * 後方互換のため維持。内部で ensureCategory + createSessionChannel('general') を呼ぶ。
+     * Ensure a category and text channel exist for the given workspace path.
+     * Kept for backward compatibility. Internally calls ensureCategory + createSessionChannel('general').
      */
     public async ensureChannel(guild: Guild, workspacePath: string): Promise<EnsureChannelResult> {
         if (!workspacePath || workspacePath.trim() === '') {
-            throw new Error('ワークスペースパスが指定されていません');
+            throw new Error('Workspace path not specified');
         }
 
         const categoryResult = await this.ensureCategory(guild, workspacePath);
         const categoryId = categoryResult.categoryId;
 
-        // 既存のdefaultチャンネルを検索（カテゴリ配下）
+        // Search for existing default channel (under the category)
         const existingTextChannel = guild.channels.cache.find(
             (ch) =>
                 ch.type === ChannelType.GuildText &&
@@ -148,14 +148,14 @@ export class ChannelManager {
     }
 
     /**
-     * テキストをDiscordチャンネル名に適した形式にサニタイズする（公開ユーティリティ）。
+     * Sanitize text into a format suitable for Discord channel names (public utility).
      */
     public sanitizeChannelName(name: string): string {
         return this.sanitizeCategoryName(name);
     }
 
     /**
-     * ワークスペースパスをDiscordカテゴリ名として使用可能な形式にサニタイズする。
+     * Sanitize a workspace path into a format suitable for Discord category names.
      */
     public sanitizeCategoryName(name: string): string {
         let sanitized = name

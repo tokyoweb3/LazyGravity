@@ -14,8 +14,8 @@ describe('WorkspaceBindingRepository', () => {
         db.close();
     });
 
-    describe('テーブル初期化', () => {
-        it('初期化時にworkspace_bindingsテーブルが作成されること', () => {
+    describe('table initialization', () => {
+        it('creates the workspace_bindings table on initialization', () => {
             const tables = db.prepare(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='workspace_bindings'"
             ).all();
@@ -23,8 +23,8 @@ describe('WorkspaceBindingRepository', () => {
         });
     });
 
-    describe('create - バインディングの作成', () => {
-        it('チャンネルIDとワークスペースパスを保存し、IDを返すこと', () => {
+    describe('create - binding creation', () => {
+        it('saves channel ID and workspace path, and returns the ID', () => {
             const result = repo.create({
                 channelId: '123456',
                 workspacePath: 'my-project',
@@ -36,7 +36,7 @@ describe('WorkspaceBindingRepository', () => {
             expect(result.guildId).toBe('guild-1');
         });
 
-        it('同じチャンネルIDで重複作成はエラーになること', () => {
+        it('throws an error on duplicate creation with the same channel ID', () => {
             repo.create({ channelId: '123456', workspacePath: 'proj-a', guildId: 'guild-1' });
             expect(() => {
                 repo.create({ channelId: '123456', workspacePath: 'proj-b', guildId: 'guild-1' });
@@ -44,22 +44,22 @@ describe('WorkspaceBindingRepository', () => {
         });
     });
 
-    describe('findByChannelId - チャンネルIDで検索', () => {
-        it('存在するバインディングを取得できること', () => {
+    describe('findByChannelId - search by channel ID', () => {
+        it('retrieves an existing binding', () => {
             repo.create({ channelId: '123456', workspacePath: 'my-project', guildId: 'guild-1' });
             const found = repo.findByChannelId('123456');
             expect(found).toBeDefined();
             expect(found?.workspacePath).toBe('my-project');
         });
 
-        it('存在しないチャンネルIDの場合はundefinedを返すこと', () => {
+        it('returns undefined for a non-existent channel ID', () => {
             const found = repo.findByChannelId('nonexistent');
             expect(found).toBeUndefined();
         });
     });
 
-    describe('findByGuildId - ギルドIDで検索', () => {
-        it('同一ギルドのバインディングを全て取得できること', () => {
+    describe('findByGuildId - search by guild ID', () => {
+        it('retrieves all bindings for the same guild', () => {
             repo.create({ channelId: '111', workspacePath: 'proj-a', guildId: 'guild-1' });
             repo.create({ channelId: '222', workspacePath: 'proj-b', guildId: 'guild-1' });
             repo.create({ channelId: '333', workspacePath: 'proj-c', guildId: 'guild-2' });
@@ -70,41 +70,41 @@ describe('WorkspaceBindingRepository', () => {
             expect(results[1].workspacePath).toBe('proj-b');
         });
 
-        it('バインディングが無い場合は空配列を返すこと', () => {
+        it('returns an empty array when there are no bindings', () => {
             const results = repo.findByGuildId('nonexistent');
             expect(results).toEqual([]);
         });
     });
 
-    describe('findAll - 全バインディングの取得', () => {
-        it('全バインディングを取得できること', () => {
+    describe('findAll - retrieve all bindings', () => {
+        it('retrieves all bindings', () => {
             repo.create({ channelId: '111', workspacePath: 'proj-a', guildId: 'guild-1' });
             repo.create({ channelId: '222', workspacePath: 'proj-b', guildId: 'guild-2' });
             const all = repo.findAll();
             expect(all).toHaveLength(2);
         });
 
-        it('バインディングが無い場合は空配列を返すこと', () => {
+        it('returns an empty array when there are no bindings', () => {
             expect(repo.findAll()).toEqual([]);
         });
     });
 
-    describe('deleteByChannelId - バインディングの削除', () => {
-        it('指定チャンネルIDのバインディングを削除できること', () => {
+    describe('deleteByChannelId - delete binding', () => {
+        it('deletes the binding for the specified channel ID', () => {
             repo.create({ channelId: '123456', workspacePath: 'my-project', guildId: 'guild-1' });
             const deleted = repo.deleteByChannelId('123456');
             expect(deleted).toBe(true);
             expect(repo.findByChannelId('123456')).toBeUndefined();
         });
 
-        it('存在しないチャンネルIDの削除はfalseを返すこと', () => {
+        it('returns false when deleting a non-existent channel ID', () => {
             const deleted = repo.deleteByChannelId('nonexistent');
             expect(deleted).toBe(false);
         });
     });
 
-    describe('upsert - バインディングの作成または更新', () => {
-        it('新規の場合は作成されること', () => {
+    describe('upsert - create or update binding', () => {
+        it('creates a new binding when it does not exist', () => {
             const result = repo.upsert({
                 channelId: '123456',
                 workspacePath: 'proj-a',
@@ -114,7 +114,7 @@ describe('WorkspaceBindingRepository', () => {
             expect(result.workspacePath).toBe('proj-a');
         });
 
-        it('既存の場合はワークスペースパスが更新されること', () => {
+        it('updates the workspace path when the binding already exists', () => {
             repo.create({ channelId: '123456', workspacePath: 'proj-a', guildId: 'guild-1' });
             const result = repo.upsert({
                 channelId: '123456',

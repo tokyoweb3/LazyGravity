@@ -40,7 +40,7 @@ describe('QuotaService', () => {
         consoleSpy.mockRestore();
     });
 
-    it('language_serverプロセスが見つからない場合は空配列を返す', async () => {
+    it('returns an empty array when language_server process is not found', async () => {
         mockExec.mockImplementation((_cmd: string, cb: (err: Error, stdout: string, stderr: string) => void) => {
             cb(new Error('not found'), '', '');
             return {} as any;
@@ -53,7 +53,7 @@ describe('QuotaService', () => {
         expect(mockRequest).not.toHaveBeenCalled();
     });
 
-    it('quota情報を取得し、同一PID/Tokenではポート探索をキャッシュする', async () => {
+    it('fetches quota info and caches port discovery for the same PID/Token', async () => {
         mockExec.mockImplementation((cmd: string, cb: (err: Error | null, stdout: string, stderr: string) => void) => {
             if (cmd.startsWith('pgrep -fl language_server')) {
                 cb(null, '123 language_server --csrf_token abc-123\n', '');

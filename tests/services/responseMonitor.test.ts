@@ -1,38 +1,38 @@
 /**
- * Step 6: AIレスポンスの抽出とプログレス監視 TDDテスト
+ * Step 6: AI response extraction and progress monitoring TDD test
  *
- * テスト方針:
- *   - ResponseMonitor クラスを対象とする
- *   - CdpService をモック化して、DOM からのテキスト抽出と生成完了検知をテスト
- *   - Discordメッセージ更新（Edit）のコールバック機能を検証する
+ * Test strategy:
+ *   - ResponseMonitor class is the test target
+ *   - Mock CdpService to test DOM text extraction and generation completion detection
+ *   - Verify Discord message update (Edit) callback functionality
  *
- * poll()内の呼び出し順:
- *   1. ストップボタンチェック (STOP_BUTTON)
- *   2. クォータエラーチェック (QUOTA_ERROR)
- *   3. アクティビティ取得 (ACTIVITY_STATUS)
- *   4. テキスト取得 (RESPONSE_TEXT)
+ * Call order within poll():
+ *   1. Stop button check (STOP_BUTTON)
+ *   2. Quota error check (QUOTA_ERROR)
+ *   3. Activity status retrieval (ACTIVITY_STATUS)
+ *   4. Text retrieval (RESPONSE_TEXT)
  *
- * start()時の呼び出し:
- *   1. ベースラインテキスト取得 (RESPONSE_TEXT)
+ * Calls during start():
+ *   1. Baseline text retrieval (RESPONSE_TEXT)
  *
- * 完了検知の優先順位（3段構え）:
- *   1. Network.loadingFinished → テキスト安定待ち → 完了
- *   2. テキスト安定（textStabilityCompleteMs）→ 完了
- *   3. 更新停止（noUpdateTimeoutMs）→ 完了
- *   既存のストップボタン検出も併用
+ * Completion detection priority (3-tier approach):
+ *   1. Network.loadingFinished -> text stability wait -> complete
+ *   2. Text stability (textStabilityCompleteMs) -> complete
+ *   3. Update stop (noUpdateTimeoutMs) -> complete
+ *   Existing stop button detection is also used in parallel
  */
 
 import { ResponseMonitor, ResponseMonitorOptions, ResponsePhase } from '../../src/services/responseMonitor';
 import { CdpService } from '../../src/services/cdpService';
 
-// CdpService をモック化
+// Mock CdpService
 jest.mock('../../src/services/cdpService');
 const MockedCdpService = CdpService as jest.MockedClass<typeof CdpService>;
 
-describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Step 6)', () => {
+describe('ResponseMonitor - AI response extraction and progress monitoring (Step 6)', () => {
     let monitor: ResponseMonitor;
     let mockCdpService: jest.Mocked<CdpService>;
-    /** on() で登録されたリスナーをキャプチャ */
+    /** Capture listeners registered via on() */
     let eventListeners: Map<string, Function[]>;
 
     beforeEach(() => {
@@ -40,7 +40,7 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
         mockCdpService = new MockedCdpService() as jest.Mocked<CdpService>;
         eventListeners = new Map();
 
-        // EventEmitter の on / removeListener をモック
+        // Mock EventEmitter on / removeListener
         (mockCdpService as any).on = jest.fn((event: string, listener: Function) => {
             const listeners = eventListeners.get(event) || [];
             listeners.push(listener);
@@ -63,7 +63,7 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
         jest.useRealTimers();
     });
 
-    /** CDP イベントをシミュレーション発火する */
+    /** Simulate firing a CDP event */
     function emitCdpEvent(event: string, params: any): void {
         const listeners = eventListeners.get(event) || [];
         for (const listener of listeners) {
@@ -72,7 +72,7 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     }
 
     /**
-     * テスト用ヘルパー: poll で4回のCDP呼び出し（ストップボタン, クォータ, アクティビティ, テキスト）を一括設定
+     * Test helper: batch-set 4 CDP calls per poll (stop button, quota, activity, text)
      */
     function mockPollResult(
         mock: jest.Mocked<CdpService>,
@@ -82,14 +82,14 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
         quotaReached: boolean = false,
     ) {
         mock.call
-            .mockResolvedValueOnce({ result: { value: isGenerating } })    // ストップボタン
-            .mockResolvedValueOnce({ result: { value: quotaReached } })    // クォータチェック
-            .mockResolvedValueOnce({ result: { value: activities } })       // アクティビティ
-            .mockResolvedValueOnce({ result: { value: text } });           // テキスト
+            .mockResolvedValueOnce({ result: { value: isGenerating } })    // stop button
+            .mockResolvedValueOnce({ result: { value: quotaReached } })    // quota check
+            .mockResolvedValueOnce({ result: { value: activities } })       // activity
+            .mockResolvedValueOnce({ result: { value: text } });           // text
     }
 
     /**
-     * テスト用ヘルパー: poll結果をDOM構造payloadで返す
+     * Test helper: return poll result as DOM structure payload
      */
     function mockPollResultWithPayload(
         mock: jest.Mocked<CdpService>,
@@ -99,16 +99,16 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
         quotaReached: boolean = false,
     ) {
         mock.call
-            .mockResolvedValueOnce({ result: { value: isGenerating } })    // ストップボタン
-            .mockResolvedValueOnce({ result: { value: quotaReached } })    // クォータチェック
-            .mockResolvedValueOnce({ result: { value: activities } })       // アクティビティ
+            .mockResolvedValueOnce({ result: { value: isGenerating } })    // stop button
+            .mockResolvedValueOnce({ result: { value: quotaReached } })    // quota check
+            .mockResolvedValueOnce({ result: { value: activities } })       // activity
             .mockResolvedValueOnce({ result: { value: payload } });        // DOM payload
     }
 
     // ──────────────────────────────────────────────────────
-    // テスト 1: 生成中テキストの逐次抽出
+    // Test 1: Incremental extraction of in-progress text
     // ──────────────────────────────────────────────────────
-    it('生成中のテキストを逐次抽出し、onProgressコールバックを呼び出すこと', async () => {
+    it('incrementally extracts in-progress text and calls the onProgress callback', async () => {
         const onProgress = jest.fn();
 
         mockCdpService.call.mockResolvedValueOnce({ result: { value: null } });
@@ -131,9 +131,9 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 2: テキストが変化しない場合はコールバックを呼ばない
+    // Test 2: Do not call callback when text does not change
     // ──────────────────────────────────────────────────────
-    it('テキストが変化しない場合はonProgressを重複呼び出ししないこと', async () => {
+    it('does not redundantly call onProgress when text does not change', async () => {
         const onProgress = jest.fn();
 
         mockCdpService.call.mockResolvedValueOnce({ result: { value: null } });
@@ -156,9 +156,9 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 3: 生成完了の検知（ストップボタンの消失を連続確認）
+    // Test 3: Generation completion detection (consecutive stop button disappearance)
     // ──────────────────────────────────────────────────────
-    it('ストップボタン消失を連続3回確認して完了と判定すること', async () => {
+    it('determines completion after confirming stop button disappearance 3 consecutive times', async () => {
         const onComplete = jest.fn();
         const onProgress = jest.fn();
 
@@ -193,9 +193,9 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 3b: ストップボタンが再出現したらカウンターリセット
+    // Test 3b: Counter resets when stop button reappears
     // ──────────────────────────────────────────────────────
-    it('ストップボタン消失後に再出現したらカウンターがリセットされること', async () => {
+    it('resets the counter when stop button reappears after disappearing', async () => {
         const onComplete = jest.fn();
 
         mockCdpService.call.mockResolvedValueOnce({ result: { value: null } });
@@ -222,9 +222,9 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 4: stop()を呼ぶと監視が停止すること
+    // Test 4: Monitoring stops when stop() is called
     // ──────────────────────────────────────────────────────
-    it('stop()を呼ぶとポーリングが停止してそれ以上コールバックが呼ばれないこと', async () => {
+    it('stops polling and no further callbacks are called after stop()', async () => {
         const onProgress = jest.fn();
 
         mockCdpService.call.mockResolvedValueOnce({ result: { value: null } });
@@ -249,9 +249,9 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 5: タイムアウトで停止すること
+    // Test 5: Stops on timeout
     // ──────────────────────────────────────────────────────
-    it('maxDurationMsを超えたら自動停止してonTimeoutコールバックを呼ぶこと', async () => {
+    it('auto-stops and calls onTimeout callback when maxDurationMs is exceeded', async () => {
         const onTimeout = jest.fn();
         const onProgress = jest.fn();
 
@@ -282,9 +282,9 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 6: CDPエラー時にも監視が継続すること
+    // Test 6: Monitoring continues even on CDP error
     // ──────────────────────────────────────────────────────
-    it('CDPのcallがエラーを投げても監視が継続すること', async () => {
+    it('continues monitoring even when CDP call throws an error', async () => {
         const onProgress = jest.fn();
 
         mockCdpService.call.mockResolvedValueOnce({ result: { value: null } });
@@ -306,9 +306,9 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 7: フェーズ変更コールバック
+    // Test 7: Phase change callback
     // ──────────────────────────────────────────────────────
-    it('フェーズ変更時にonPhaseChangeコールバックが呼ばれること', async () => {
+    it('calls the onPhaseChange callback when the phase changes', async () => {
         const onPhaseChange = jest.fn();
         const onComplete = jest.fn();
 
@@ -340,9 +340,9 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 8: アクティビティコールバック
+    // Test 8: Activity callback
     // ──────────────────────────────────────────────────────
-    it('アクティビティ検出時にonActivityコールバックが呼ばれること', async () => {
+    it('calls the onActivity callback when activity is detected', async () => {
         const onActivity = jest.fn();
 
         mockCdpService.call.mockResolvedValueOnce({ result: { value: null } });
@@ -373,9 +373,9 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 8b: DOM payloadから本文/活動ログを分離して通知する
+    // Test 8b: Separate body/activity logs from DOM payload for notification
     // ──────────────────────────────────────────────────────
-    it('DOM payloadではonProgressに本文のみ、onActivityにthinking/toolのみ通知すること', async () => {
+    it('notifies onProgress with body only and onActivity with thinking/tool only from DOM payload', async () => {
         const onProgress = jest.fn();
         const onActivity = jest.fn();
 
@@ -410,9 +410,9 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 8c: DOM payloadの同一内容は重複通知しない
+    // Test 8c: Identical DOM payload does not trigger duplicate notifications
     // ──────────────────────────────────────────────────────
-    it('DOM payloadが同一なら本文/活動ログとも重複通知しないこと', async () => {
+    it('does not send duplicate notifications for body/activity logs when DOM payload is identical', async () => {
         const onProgress = jest.fn();
         const onActivity = jest.fn();
 
@@ -448,9 +448,9 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 9: テキスト変化でもストップボタン消失カウンターがリセットされること
+    // Test 9: Stop button disappearance counter resets on text change
     // ──────────────────────────────────────────────────────
-    it('テキスト変化時にストップボタン消失カウンターがリセットされること', async () => {
+    it('resets the stop button disappearance counter when text changes', async () => {
         const onComplete = jest.fn();
 
         mockCdpService.call.mockResolvedValueOnce({ result: { value: null } });
@@ -475,9 +475,9 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 10: 停止後に活動ログが残っていても完了判定を妨げないこと
+    // Test 10: Remaining activity logs after stop do not prevent completion
     // ──────────────────────────────────────────────────────
-    it('ストップボタン消失後は同一の進行中アクティビティが残っていてもcompleteに遷移できること', async () => {
+    it('can transition to complete even when identical in-progress activities remain after stop button disappearance', async () => {
         const onComplete = jest.fn();
 
         mockCdpService.call.mockResolvedValueOnce({ result: { value: null } });
@@ -510,9 +510,9 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 11: 「中」を含むだけの非進行テキストは完了遅延の原因にしないこと
+    // Test 11: Non-progress text should not delay completion
     // ──────────────────────────────────────────────────────
-    it('非進行の日本語テキストに「中」が含まれていても完了判定を妨げないこと', async () => {
+    it('does not prevent completion when non-progress Japanese text contains activity-like characters', async () => {
         const onComplete = jest.fn();
 
         mockCdpService.call.mockResolvedValueOnce({ result: { value: null } });
@@ -545,9 +545,9 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 12: Good/Badマーカーは完了シグナルとして扱わないこと
+    // Test 12: Good/Bad markers are not treated as completion signals
     // ──────────────────────────────────────────────────────
-    it('Good/BadマーカーがあってもStop消失+安定時間条件を満たすまでcompleteしないこと', async () => {
+    it('does not complete until stop disappearance + stability time conditions are met even with Good/Bad markers', async () => {
         const onComplete = jest.fn();
 
         mockCdpService.call.mockResolvedValueOnce({ result: { value: null } });
@@ -574,9 +574,9 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 13: ストップボタン誤検知が継続しても長時間更新がなければ完了扱いにする
+    // Test 13: Complete when no updates for extended period despite false stop button detection
     // ──────────────────────────────────────────────────────
-    it('生成中判定が継続していてもテキスト更新停止が一定時間続けばcompleteに遷移すること', async () => {
+    it('transitions to complete when text updates stop for a certain period even while generating is still detected', async () => {
         const onComplete = jest.fn();
 
         mockCdpService.call.mockResolvedValueOnce({ result: { value: null } });
@@ -604,16 +604,16 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 14: テキスト安定性ベースの独立完了パス
-    // ストップボタン検出に依存せず、テキストが一定時間変化しなければ完了
+    // Test 14: Independent completion path based on text stability
+    // Completes when text does not change for a certain period, independent of stop button detection
     // ──────────────────────────────────────────────────────
-    it('テキストが安定時間（textStabilityCompleteMs）変化しなければストップボタン非依存で完了すること', async () => {
+    it('completes independent of stop button when text does not change for textStabilityCompleteMs', async () => {
         const onComplete = jest.fn();
 
         mockCdpService.call.mockResolvedValueOnce({ result: { value: null } });
-        // poll1: ストップボタンあり + テキスト → 生成開始
+        // poll1: stop button present + text -> generation started
         mockPollResult(mockCdpService, true, '安定テキスト');
-        // poll2-5: ストップボタンありのまま（壊れている想定）、テキスト変化なし
+        // poll2-5: stop button still present (assumed broken), no text change
         mockPollResult(mockCdpService, true, '安定テキスト');
         mockPollResult(mockCdpService, true, '安定テキスト');
         mockPollResult(mockCdpService, true, '安定テキスト');
@@ -623,32 +623,32 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
             cdpService: mockCdpService,
             pollIntervalMs: 500,
             textStabilityCompleteMs: 1500,
-            noUpdateTimeoutMs: 60000, // フォールバックは遠く設定
+            noUpdateTimeoutMs: 60000, // Set fallback far away
             onComplete,
         });
         await monitor.start();
 
-        await jest.advanceTimersByTimeAsync(500);  // poll1: テキスト取得、lastTextChangeAt更新
+        await jest.advanceTimersByTimeAsync(500);  // poll1: text retrieved, lastTextChangeAt updated
         expect(onComplete).not.toHaveBeenCalled();
 
-        await jest.advanceTimersByTimeAsync(500);  // poll2: 1000ms経過、まだ1500ms未満
+        await jest.advanceTimersByTimeAsync(500);  // poll2: 1000ms elapsed, still under 1500ms
         expect(onComplete).not.toHaveBeenCalled();
 
-        await jest.advanceTimersByTimeAsync(500);  // poll3: 1500ms経過、まだ完了しない可能性
-        await jest.advanceTimersByTimeAsync(500);  // poll4: 2000ms経過 → テキスト安定で確実に完了
+        await jest.advanceTimersByTimeAsync(500);  // poll3: 1500ms elapsed, may not be complete yet
+        await jest.advanceTimersByTimeAsync(500);  // poll4: 2000ms elapsed -> definitely complete due to text stability
         expect(onComplete).toHaveBeenCalledWith('安定テキスト');
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 15: テキスト安定パスはテキスト更新でリセットされること
+    // Test 15: Text stability path resets on text update
     // ──────────────────────────────────────────────────────
-    it('テキストが更新されたらテキスト安定タイマーがリセットされること', async () => {
+    it('resets the text stability timer when text is updated', async () => {
         const onComplete = jest.fn();
 
         mockCdpService.call.mockResolvedValueOnce({ result: { value: null } });
         mockPollResult(mockCdpService, true, 'テキスト1');
         mockPollResult(mockCdpService, true, 'テキスト1');
-        // テキスト更新 → タイマーリセット
+        // Text update -> timer reset
         mockPollResult(mockCdpService, true, 'テキスト2');
         mockPollResult(mockCdpService, true, 'テキスト2');
 
@@ -661,40 +661,40 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
         });
         await monitor.start();
 
-        await jest.advanceTimersByTimeAsync(500);  // poll1: テキスト1取得
-        await jest.advanceTimersByTimeAsync(500);  // poll2: 1000ms、まだ安定時間未到達
+        await jest.advanceTimersByTimeAsync(500);  // poll1: text1 retrieved
+        await jest.advanceTimersByTimeAsync(500);  // poll2: 1000ms, stability time not yet reached
         expect(onComplete).not.toHaveBeenCalled();
 
-        await jest.advanceTimersByTimeAsync(500);  // poll3: テキスト2 → タイマーリセット
+        await jest.advanceTimersByTimeAsync(500);  // poll3: text2 -> timer reset
         expect(onComplete).not.toHaveBeenCalled();
 
-        await jest.advanceTimersByTimeAsync(500);  // poll4: テキスト2から500ms、まだ安定時間未到達
+        await jest.advanceTimersByTimeAsync(500);  // poll4: 500ms since text2, stability time not yet reached
         expect(onComplete).not.toHaveBeenCalled();
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 16: ネットワーク完了検知ベースの完了パス
+    // Test 16: Completion path based on network completion detection
     // ──────────────────────────────────────────────────────
-    it('Network.loadingFinished後にテキストが安定すれば最速で完了すること', async () => {
+    it('completes as fast as possible when text stabilizes after Network.loadingFinished', async () => {
         const onComplete = jest.fn();
 
         mockCdpService.call.mockResolvedValueOnce({ result: { value: null } });
-        // poll1: ストップボタンあり + テキスト
+        // poll1: stop button present + text
         mockPollResult(mockCdpService, true, 'ネットワーク完了テスト');
-        // poll2: ストップボタンあり（壊れている想定）、テキスト変化なし
+        // poll2: stop button present (assumed broken), no text change
         mockPollResult(mockCdpService, true, 'ネットワーク完了テスト');
 
         monitor = new ResponseMonitor({
             cdpService: mockCdpService,
             pollIntervalMs: 500,
             networkCompleteDelayMs: 800,
-            textStabilityCompleteMs: 0, // テキスト安定パス無効
+            textStabilityCompleteMs: 0, // text stability path disabled
             noUpdateTimeoutMs: 60000,
             onComplete,
         });
         await monitor.start();
 
-        // on() がNetwork.requestWillBeSent, Network.loadingFinished で呼ばれていること
+        // Verify on() was called with Network.requestWillBeSent and Network.loadingFinished
         expect((mockCdpService as any).on).toHaveBeenCalledWith(
             'Network.requestWillBeSent',
             expect.any(Function),
@@ -704,33 +704,33 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
             expect.any(Function),
         );
 
-        await jest.advanceTimersByTimeAsync(500); // poll1: テキスト取得
+        await jest.advanceTimersByTimeAsync(500); // poll1: text retrieved
 
-        // ネットワークリクエスト開始をシミュレーション
+        // Simulate network request start
         emitCdpEvent('Network.requestWillBeSent', {
             requestId: 'req-1',
             request: { url: 'https://api.example.com/api/chat/stream' },
         });
 
-        // ネットワーク完了をシミュレーション
+        // Simulate network completion
         emitCdpEvent('Network.loadingFinished', { requestId: 'req-1' });
 
-        // まだnetworkCompleteDelayMs経過していない
+        // networkCompleteDelayMs has not elapsed yet
         expect(onComplete).not.toHaveBeenCalled();
 
-        await jest.advanceTimersByTimeAsync(500); // poll2: 500ms経過、まだ800ms未満
+        await jest.advanceTimersByTimeAsync(500); // poll2: 500ms elapsed, still under 800ms
         expect(onComplete).not.toHaveBeenCalled();
 
-        // さらに待つ → 800ms超過 → 完了
+        // Wait more -> 800ms exceeded -> complete
         mockPollResult(mockCdpService, true, 'ネットワーク完了テスト');
-        await jest.advanceTimersByTimeAsync(500); // poll3: 1000ms経過 → 完了
+        await jest.advanceTimersByTimeAsync(500); // poll3: 1000ms elapsed -> complete
         expect(onComplete).toHaveBeenCalledWith('ネットワーク完了テスト');
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 17: 非ストリーミングURLはネットワーク追跡対象外
+    // Test 17: Non-streaming URLs are not tracked
     // ──────────────────────────────────────────────────────
-    it('ストリーミングURLパターンにマッチしないリクエストは追跡しないこと', async () => {
+    it('does not track requests that do not match the streaming URL pattern', async () => {
         const onComplete = jest.fn();
 
         mockCdpService.call.mockResolvedValueOnce({ result: { value: null } });
@@ -749,7 +749,7 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
 
         await jest.advanceTimersByTimeAsync(500);
 
-        // 非ストリーミングURL → 追跡対象外
+        // Non-streaming URL -> not tracked
         emitCdpEvent('Network.requestWillBeSent', {
             requestId: 'req-static',
             request: { url: 'https://cdn.example.com/styles.css' },
@@ -757,14 +757,14 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
         emitCdpEvent('Network.loadingFinished', { requestId: 'req-static' });
 
         await jest.advanceTimersByTimeAsync(500);
-        // ネットワーク完了シグナルは発火していないので、完了しない
+        // Network completion signal was not fired, so it should not complete
         expect(onComplete).not.toHaveBeenCalled();
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 18b: テキスト抽出不能でもアクティビティ検知で生成開始扱いになり完了できること
+    // Test 18b: Activity detection infers generation start even without text extraction
     // ──────────────────────────────────────────────────────
-    it('テキストが取得できなくてもアクティビティがあれば生成開始を推定し、stop未検出時は早期completeしないこと', async () => {
+    it('infers generation start from activity even without text and does not early-complete when stop is undetected', async () => {
         const onComplete = jest.fn();
 
         mockCdpService.call.mockResolvedValueOnce({ result: { value: null } }); // baseline
@@ -798,9 +798,9 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     });
 
     // ──────────────────────────────────────────────────────
-    // Task 5 失敗テスト: 最終本文抽出済み・アクティビティ静穏なら、stop未検出でも早期完了すること
+    // Task 5 failure test: Early complete when final body is extracted and activity is quiet, even without stop detection
     // ──────────────────────────────────────────────────────
-    it('Task 5: activity静穏状態でDOMに最終本文があれば、ストップボタン未検出時でも30秒待たずに完了すること', async () => {
+    it('Task 5: completes without waiting 30s when DOM has final body and activity is quiet, even without stop button detection', async () => {
         const onComplete = jest.fn();
 
         mockCdpService.call.mockResolvedValueOnce({ result: { value: null } });
@@ -834,17 +834,17 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
         await jest.advanceTimersByTimeAsync(500); // poll3
         await jest.advanceTimersByTimeAsync(500); // poll4
 
-        // さらに数秒待つ (30秒も15秒も待たず、2~3秒で完了してほしい)
+        // Wait a few more seconds (should complete in 2-3s, not 30s or 15s)
         await jest.advanceTimersByTimeAsync(2000);
 
-        // 期待値: stopButtonSeenOnce=false でも early finalize パスにより完了していること
+        // Expected: complete via early finalize path even when stopButtonSeenOnce=false
         expect(onComplete).toHaveBeenCalledWith('最終本文です。');
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 18c: 本文未取得時、アクティビティ更新が続いても stop 消失完了が過剰遅延しないこと
+    // Test 18c: Stop-gone completion should not be overly delayed when body is not extracted
     // ──────────────────────────────────────────────────────
-    it('本文未取得 + stop未検出ではstop-gone完了せず no-update-timeout 経路へ委譲すること', async () => {
+    it('does not complete via stop-gone path and delegates to no-update-timeout path when body is not extracted and stop is undetected', async () => {
         const onComplete = jest.fn();
 
         mockCdpService.call.mockResolvedValueOnce({ result: { value: null } }); // baseline
@@ -883,9 +883,9 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 18d: 本文未取得かつ活動が静穏化したら noTextCompletionDelay で完了すること
+    // Test 18d: Complete via noTextCompletionDelay when body is not extracted and activity becomes quiet
     // ──────────────────────────────────────────────────────
-    it('本文未取得 + activity消失後は noTextCompletionDelayMs で complete すること', async () => {
+    it('completes via noTextCompletionDelayMs when body is not extracted and activity disappears', async () => {
         const onComplete = jest.fn();
 
         mockCdpService.call.mockResolvedValueOnce({ result: { value: null } }); // baseline
@@ -922,9 +922,9 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 18e: 本文未取得で activity文言が残存しても更新停止なら noTextCompletionDelay で完了
+    // Test 18e: Complete via noTextCompletionDelay when body is not extracted and stale activity remains
     // ──────────────────────────────────────────────────────
-    it('本文未取得 + activity残存(更新なし)でも noTextCompletionDelayMs で complete すること', async () => {
+    it('completes via noTextCompletionDelayMs when body is not extracted and stale activity remains (no updates)', async () => {
         const onComplete = jest.fn();
 
         mockCdpService.call.mockResolvedValueOnce({ result: { value: null } }); // baseline
@@ -961,9 +961,9 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 18: stop()でネットワークリスナーが解除されること
+    // Test 18: Network listeners are removed on stop()
     // ──────────────────────────────────────────────────────
-    it('stop()呼び出し時にネットワークイベントリスナーが解除されること', async () => {
+    it('removes network event listeners when stop() is called', async () => {
         mockCdpService.call.mockResolvedValueOnce({ result: { value: null } });
 
         monitor = new ResponseMonitor({
@@ -988,9 +988,9 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 19: primary context がある場合、Runtime.evaluate に contextId を付与する
+    // Test 19: Attach contextId to Runtime.evaluate when primary context exists
     // ──────────────────────────────────────────────────────
-    it('primary context が存在する場合は Runtime.evaluate に contextId を付与すること', async () => {
+    it('attaches contextId to Runtime.evaluate when primary context exists', async () => {
         mockCdpService.call.mockResolvedValueOnce({ result: { value: null } });
         (mockCdpService as any).getPrimaryContextId = jest.fn(() => 42);
 
@@ -1015,9 +1015,9 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 19b: stop診断オブジェクトの空構造でも isGenerating=false を解釈できること
+    // Test 19b: Empty stop diagnostic object should still interpret isGenerating=false
     // ──────────────────────────────────────────────────────
-    it('stop診断オブジェクトが空でも誤って生成中扱いにしないこと', async () => {
+    it('does not incorrectly treat as generating when stop diagnostic object is empty', async () => {
         mockCdpService.call.mockResolvedValueOnce({ result: { value: null } }); // baseline
         mockCdpService.call
             .mockResolvedValueOnce({ result: { value: { isGenerating: false, diagnostics: {} } } }) // stop
@@ -1038,9 +1038,9 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 20: stopボタン未検出の環境では完了安定時間を短縮すること
+    // Test 20: Environments where stop button is never detected
     // ──────────────────────────────────────────────────────
-    it('stopボタンが一度も検出されない場合はstop消失経路でcompleteしないこと', async () => {
+    it('does not complete via stop-gone path when stop button is never detected', async () => {
         const onComplete = jest.fn();
 
         mockCdpService.call.mockResolvedValueOnce({ result: { value: null } }); // baseline
@@ -1056,7 +1056,7 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
             cdpService: mockCdpService,
             pollIntervalMs: 500,
             stopButtonGoneConfirmCount: 1,
-            completionStabilityMs: 10000, // 通常は10秒
+            completionStabilityMs: 10000, // normally 10 seconds
             textStabilityCompleteMs: 0,
             noUpdateTimeoutMs: 60000,
             onComplete,
@@ -1075,9 +1075,9 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 21: baselineと同一テキストを初期進捗として誤採用しないこと
+    // Test 21: Do not incorrectly adopt baseline-identical text as initial progress
     // ──────────────────────────────────────────────────────
-    it('baselineと同一テキストは一定時間抑制し、異なる本文が来た時点で進捗に採用すること', async () => {
+    it('suppresses baseline-identical text for a period and adopts progress only when different text arrives', async () => {
         const onProgress = jest.fn();
 
         // baseline
@@ -1118,7 +1118,7 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
         monitor = new ResponseMonitor({
             cdpService: mockCdpService,
             pollIntervalMs: 500,
-            stopButtonGoneConfirmCount: 99, // 完了判定が先に走らないようにする
+            stopButtonGoneConfirmCount: 99, // Prevent completion from triggering first
             completionStabilityMs: 0,
             textStabilityCompleteMs: 0,
             noUpdateTimeoutMs: 60000,
@@ -1134,9 +1134,9 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 22: stop未検出環境でactivity変化が続く間は早期completeしないこと
+    // Test 22: No early completion while activity keeps changing in stop-undetected environment
     // ──────────────────────────────────────────────────────
-    it('stop未検出 + activity更新継続中は短縮stability条件を満たしてもcompleteしないこと', async () => {
+    it('does not complete even when shortened stability conditions are met while activity updates continue with stop undetected', async () => {
         const onComplete = jest.fn();
 
         mockCdpService.call.mockResolvedValueOnce({ result: { value: null } }); // baseline
@@ -1164,9 +1164,9 @@ describe('ResponseMonitor - AIレスポンス抽出とプログレス監視 (Ste
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 23: stop誤陰性時に本文未取得ならstop-button-goneで完了しないこと
+    // Test 23: Do not complete via stop-button-gone when body is not extracted and stop is false-negative
     // ──────────────────────────────────────────────────────
-    it('stop=false誤判定 + activityあり + 本文未取得では早期completeしないこと', async () => {
+    it('does not early-complete when stop=false is a false negative, activity exists, and body is not extracted', async () => {
         const onComplete = jest.fn();
 
         mockCdpService.call.mockResolvedValueOnce({ result: { value: null } }); // baseline

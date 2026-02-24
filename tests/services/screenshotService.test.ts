@@ -1,24 +1,24 @@
 /**
- * Step 8: セルフ・スクリーンショット機能 (`/screenshot`) TDDテスト
+ * Step 8: Self-screenshot feature (`/screenshot`) TDD test
  *
- * テスト方針:
- *   - ScreenshotService クラスをテスト対象とする
- *   - CdpService をモック化してPage.captureScreenshotをシュミレート
- *   - base64エンコードされた画像データの取得とBuffer変換を検証
+ * Test strategy:
+ *   - ScreenshotService class is the test target
+ *   - Mock CdpService to simulate Page.captureScreenshot
+ *   - Verify base64-encoded image data retrieval and Buffer conversion
  */
 
 import { ScreenshotService } from '../../src/services/screenshotService';
 import { CdpService } from '../../src/services/cdpService';
 
-// CdpService をモック化
+// Mock CdpService
 jest.mock('../../src/services/cdpService');
 const MockedCdpService = CdpService as jest.MockedClass<typeof CdpService>;
 
-describe('ScreenshotService - スクリーンショット機能 (Step 8)', () => {
+describe('ScreenshotService - screenshot feature (Step 8)', () => {
     let screenshotService: ScreenshotService;
     let mockCdpService: jest.Mocked<CdpService>;
 
-    // テスト用のダミーBase64画像データ (小さな1x1ピクセルPNG)
+    // Dummy Base64 image data for testing (small 1x1 pixel PNG)
     const dummyBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
 
     beforeEach(() => {
@@ -27,10 +27,10 @@ describe('ScreenshotService - スクリーンショット機能 (Step 8)', () =>
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 1: スクリーンショットを取得してBufferを返す
+    // Test 1: Capture a screenshot and return a Buffer
     // ──────────────────────────────────────────────────────
-    it('screenshotを取得してBufferを返すこと', async () => {
-        // Page.captureScreenshot が base64 データを返すモック
+    it('captures a screenshot and returns a Buffer', async () => {
+        // Mock Page.captureScreenshot to return base64 data
         mockCdpService.call.mockResolvedValue({
             data: dummyBase64
         });
@@ -44,9 +44,9 @@ describe('ScreenshotService - スクリーンショット機能 (Step 8)', () =>
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 2: Page.captureScreenshot が正しいパラメータで呼ばれること
+    // Test 2: Page.captureScreenshot is called with correct parameters
     // ──────────────────────────────────────────────────────
-    it('captureScreenshotが正しいCDPコマンドとパラメータで呼ばれること', async () => {
+    it('calls captureScreenshot with the correct CDP command and parameters', async () => {
         mockCdpService.call.mockResolvedValue({ data: dummyBase64 });
 
         screenshotService = new ScreenshotService({ cdpService: mockCdpService });
@@ -61,9 +61,9 @@ describe('ScreenshotService - スクリーンショット機能 (Step 8)', () =>
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 3: JPEGフォーマットを指定できること
+    // Test 3: JPEG format can be specified
     // ──────────────────────────────────────────────────────
-    it('JPEGフォーマットを指定してキャプチャできること', async () => {
+    it('captures with JPEG format specified', async () => {
         mockCdpService.call.mockResolvedValue({ data: dummyBase64 });
 
         screenshotService = new ScreenshotService({ cdpService: mockCdpService });
@@ -79,9 +79,9 @@ describe('ScreenshotService - スクリーンショット機能 (Step 8)', () =>
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 4: CDPエラー時にエラー情報を返すこと
+    // Test 4: Returns error information on CDP error
     // ──────────────────────────────────────────────────────
-    it('CDPエラー時にsuccess:falseとエラーメッセージを返すこと', async () => {
+    it('returns success:false with error message on CDP error', async () => {
         mockCdpService.call.mockRejectedValue(new Error('CDP接続エラー'));
 
         screenshotService = new ScreenshotService({ cdpService: mockCdpService });
@@ -93,9 +93,9 @@ describe('ScreenshotService - スクリーンショット機能 (Step 8)', () =>
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 5: データが空の場合にエラー情報を返すこと
+    // Test 5: Returns error information when data is empty
     // ──────────────────────────────────────────────────────
-    it('CDPが空データを返した場合にsuccess:falseを返すこと', async () => {
+    it('returns success:false when CDP returns empty data', async () => {
         mockCdpService.call.mockResolvedValue({ data: '' });
 
         screenshotService = new ScreenshotService({ cdpService: mockCdpService });
@@ -106,9 +106,9 @@ describe('ScreenshotService - スクリーンショット機能 (Step 8)', () =>
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 6: getBase64()でBase64文字列を直接取得できること
+    // Test 6: getBase64() can directly retrieve Base64 string
     // ──────────────────────────────────────────────────────
-    it('getBase64()でBase64エンコードされた画像文字列を取得できること', async () => {
+    it('retrieves base64-encoded image string via getBase64()', async () => {
         mockCdpService.call.mockResolvedValue({ data: dummyBase64 });
 
         screenshotService = new ScreenshotService({ cdpService: mockCdpService });
@@ -118,9 +118,9 @@ describe('ScreenshotService - スクリーンショット機能 (Step 8)', () =>
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 7: クリップ領域を指定してキャプチャできること
+    // Test 7: Capture with a specified clip region
     // ──────────────────────────────────────────────────────
-    it('クリップ領域を指定してキャプチャできること', async () => {
+    it('captures with a specified clip region', async () => {
         mockCdpService.call.mockResolvedValue({ data: dummyBase64 });
 
         screenshotService = new ScreenshotService({ cdpService: mockCdpService });

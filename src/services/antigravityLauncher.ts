@@ -3,7 +3,7 @@ import { CDP_PORTS } from '../utils/cdpPorts';
 import * as http from 'http';
 
 /**
- * 指定ポートのCDPが応答するか確認する。
+ * Check if CDP responds on the specified port.
  */
 function checkPort(port: number): Promise<boolean> {
     return new Promise((resolve) => {
@@ -28,10 +28,10 @@ function checkPort(port: number): Promise<boolean> {
 }
 
 /**
- * Antigravityが CDPポート付きで起動済みか確認する。
- * 未起動の場合は警告ログを出力する（自動起動・再起動はしない）。
+ * Check if Antigravity is running with CDP ports.
+ * If not running, output a warning log (no auto-start or restart).
  *
- * Bot初期化時に呼び出す。
+ * Called during Bot initialization.
  */
 export async function ensureAntigravityRunning(): Promise<void> {
     logger.info('[AntigravityLauncher] Checking CDP ports...');

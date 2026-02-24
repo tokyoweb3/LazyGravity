@@ -6,19 +6,19 @@ import {
 } from '../../src/services/cdpBridgeManager';
 
 describe('cdpBridgeManager', () => {
-    it('initCdpBridge は初期状態を構築する', () => {
+    it('initCdpBridge builds the initial state', () => {
         const bridge = initCdpBridge(false);
         expect(bridge.lastActiveWorkspace).toBeNull();
         expect(bridge.lastActiveChannel).toBeNull();
         expect(bridge.autoAccept.isEnabled()).toBe(false);
     });
 
-    it('未接続状態では getCurrentCdp が null を返す', () => {
+    it('getCurrentCdp returns null when not connected', () => {
         const bridge = initCdpBridge(false);
         expect(getCurrentCdp(bridge)).toBeNull();
     });
 
-    it('承認アクションIDのbuild/parseが往復できる', () => {
+    it('round-trips build/parse of approval action ID', () => {
         const customId = buildApprovalCustomId('approve', 'my-workspace');
         const parsed = parseApprovalCustomId(customId);
         expect(parsed).toEqual({ action: 'approve', workspaceDirName: 'my-workspace' });

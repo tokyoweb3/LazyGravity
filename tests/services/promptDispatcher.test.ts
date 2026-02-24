@@ -1,7 +1,7 @@
 import { PromptDispatcher } from '../../src/services/promptDispatcher';
 
 describe('PromptDispatcher', () => {
-    it('sendで既存の送信実装を呼び出す', async () => {
+    it('invokes the existing send implementation via send()', async () => {
         const sendPromptImpl = jest.fn().mockResolvedValue(undefined);
         const dispatcher = new PromptDispatcher({
             bridge: {} as any,

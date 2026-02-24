@@ -3,16 +3,16 @@ import * as http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 
 /**
- * Step 5: メッセージ注入 (Message Injection) TDDテスト
+ * Step 5: Message Injection TDD Tests
  *
- * テスト方針:
- *   - CdpService の injectMessage() メソッドをテスト対象とする
- *   - モックWebSocketサーバーが Runtime.evaluate の呼び出しを受け取り、
- *     注入結果（成功/失敗）を返すことで、ロジックを検証する
- *   - 複数コンテキストが存在する場合に cascade-panel を優先するかを検証する
+ * Test strategy:
+ *   - Tests the injectMessage() method of CdpService
+ *   - Mock WebSocket server receives Runtime.evaluate calls and
+ *     returns injection results (success/failure) to verify logic
+ *   - Verifies that cascade-panel is prioritized when multiple contexts exist
  */
 
-describe('CdpService - メッセージ注入 (Step 5)', () => {
+describe('CdpService - Message Injection (Step 5)', () => {
     let service: CdpService;
     let mockHttpServer: http.Server;
     let mockWss: WebSocketServer;
@@ -20,15 +20,15 @@ describe('CdpService - メッセージ注入 (Step 5)', () => {
     const testPort = 19223;
     const fakeWsUrl = `ws://127.0.0.1:${testPort}/devtools/page/test-id`;
 
-    // 各テストで送受信したメッセージを格納
+    // Store sent/received messages per test
     let receivedMessages: any[] = [];
     let evaluateResponder: ((req: any) => { ok: boolean; method?: string; error?: string }) | null = null;
 
-    // モックコンテキスト設定
+    // Mock context configuration
     const mockContexts = [
-        { id: 1, name: 'top', url: 'file:///workbench/index.html' },           // 優先度低
-        { id: 2, name: 'cascade', url: 'file:///workbench/cascade-panel.html' }, // 優先度高
-        { id: 3, name: 'Extension', url: 'file:///workbench/extension.html' },  // 中間
+        { id: 1, name: 'top', url: 'file:///workbench/index.html' },           // Low priority
+        { id: 2, name: 'cascade', url: 'file:///workbench/cascade-panel.html' }, // High priority
+        { id: 3, name: 'Extension', url: 'file:///workbench/extension.html' },  // Medium priority
     ];
 
     beforeAll((done) => {
@@ -61,7 +61,7 @@ describe('CdpService - メッセージ注入 (Step 5)', () => {
                 receivedMessages.push(req);
 
                 if (req.method === 'Runtime.enable') {
-                    // コンテキスト情報を送信
+                    // Send context information
                     for (const ctx of mockContexts) {
                         ws.send(JSON.stringify({
                             method: 'Runtime.executionContextCreated',
@@ -110,12 +110,12 @@ describe('CdpService - メッセージ注入 (Step 5)', () => {
         await service.disconnect();
     });
 
-    // ─────────────────────────────────────────────────────
-    // テスト 1: 成功ケース (cascade-panel コンテキストで挿入成功)
-    // ─────────────────────────────────────────────────────
-    it('cascade-panel コンテキストでメッセージ注入に成功すること', async () => {
+    // ---------------------------------------------------------
+    // Test 1: Success case (insertion succeeds in cascade-panel context)
+    // ---------------------------------------------------------
+    it('successfully injects a message in the cascade-panel context', async () => {
         await service.connect();
-        await new Promise(r => setTimeout(r, 100)); // コンテキスト受信待機
+        await new Promise(r => setTimeout(r, 100)); // Wait for context reception
 
         evaluateResponder = (req) => {
             const contextId = req.params.contextId;
@@ -125,14 +125,14 @@ describe('CdpService - メッセージ注入 (Step 5)', () => {
 
         const result = await service.injectMessage('テストメッセージ');
         expect(result.ok).toBe(true);
-        expect(result.contextId).toBe(2); // cascade-panel が選ばれること
+        expect(result.contextId).toBe(2); // cascade-panel should be selected
         expect(result.method).toBe('enter');
     });
 
-    // ─────────────────────────────────────────────────────
-    // テスト 2: フォールバックケース (cascade-panel が失敗→他コンテキストで成功)
-    // ─────────────────────────────────────────────────────
-    it('cascade-panel が失敗した場合、他コンテキストにフォールバックして成功すること', async () => {
+    // ---------------------------------------------------------
+    // Test 2: Fallback case (cascade-panel fails, succeeds in another context)
+    // ---------------------------------------------------------
+    it('falls back to another context when cascade-panel fails', async () => {
         await service.connect();
         await new Promise(r => setTimeout(r, 100));
 
@@ -147,10 +147,10 @@ describe('CdpService - メッセージ注入 (Step 5)', () => {
         expect(result.contextId).toBe(3);
     });
 
-    // ─────────────────────────────────────────────────────
-    // テスト 3: 全コンテキスト失敗ケース
-    // ─────────────────────────────────────────────────────
-    it('全コンテキストで失敗した場合 ok:false を返すこと', async () => {
+    // ---------------------------------------------------------
+    // Test 3: All contexts fail case
+    // ---------------------------------------------------------
+    it('returns ok:false when all contexts fail', async () => {
         await service.connect();
         await new Promise(r => setTimeout(r, 100));
 
@@ -161,13 +161,13 @@ describe('CdpService - メッセージ注入 (Step 5)', () => {
         expect(result.error).toBeDefined();
     });
 
-    // ─────────────────────────────────────────────────────
-    // テスト 4: inject 時に送信されるスクリプトが正しい内容を含んでいること
-    // ─────────────────────────────────────────────────────
-    it('injectMessage が Runtime.evaluate を正しいパラメータで呼び出すこと', async () => {
+    // ---------------------------------------------------------
+    // Test 4: Verify the injected script contains correct content
+    // ---------------------------------------------------------
+    it('calls Runtime.evaluate with the correct parameters during injectMessage', async () => {
         await service.connect();
         await new Promise(r => setTimeout(r, 100));
-        receivedMessages = []; // リセット
+        receivedMessages = []; // Reset
 
         const targetText = '注入テキスト<script>alert("xss")</script>';
         evaluateResponder = (req) => {
@@ -178,32 +178,32 @@ describe('CdpService - メッセージ注入 (Step 5)', () => {
 
         await service.injectMessage(targetText);
 
-        // フォーカス用の Runtime.evaluate が呼ばれていること
+        // Verify that Runtime.evaluate for focus was called
         const evaluateCalls = receivedMessages.filter(m => m.method === 'Runtime.evaluate');
         expect(evaluateCalls.length).toBeGreaterThan(0);
 
-        // focusScript を実行していること
+        // Verify that the focusScript was executed
         const firstCall = evaluateCalls[0];
         expect(firstCall.params.expression).toContain('editor.focus()');
         expect(firstCall.params.returnByValue).toBe(true);
 
-        // テキストは Input.insertText で送信されること
+        // Verify that text is sent via Input.insertText
         const insertTextCalls = receivedMessages.filter(m => m.method === 'Input.insertText');
         expect(insertTextCalls).toHaveLength(1);
         expect(insertTextCalls[0].params.text).toBe(targetText);
 
-        // Enter キー送信（down/up）が呼ばれること
+        // Verify that Enter key events (down/up) are dispatched
         const keyCalls = receivedMessages.filter(m => m.method === 'Input.dispatchKeyEvent');
         expect(keyCalls).toHaveLength(2);
         expect(keyCalls[0].params.type).toBe('keyDown');
         expect(keyCalls[1].params.type).toBe('keyUp');
     });
 
-    // ─────────────────────────────────────────────────────
-    // テスト 5: 未接続時に呼び出すと例外を投げること
-    // ─────────────────────────────────────────────────────
-    it('未接続状態でinjectMessageを呼ぶとエラーをスローすること', async () => {
-        // 接続せずに呼ぶ
+    // ---------------------------------------------------------
+    // Test 5: Throws exception when called while not connected
+    // ---------------------------------------------------------
+    it('throws an error when injectMessage is called while not connected', async () => {
+        // Call without connecting
         await expect(service.injectMessage('test')).rejects.toThrow();
     });
 });

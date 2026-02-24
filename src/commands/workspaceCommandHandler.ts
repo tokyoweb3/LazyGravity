@@ -13,14 +13,14 @@ import { ChatSessionRepository } from '../database/chatSessionRepository';
 import { WorkspaceService } from '../services/workspaceService';
 import { ChannelManager } from '../services/channelManager';
 
-/** セレクトメニューのカスタムID */
+/** Select menu custom ID */
 export const PROJECT_SELECT_ID = 'project_select';
-/** 後方互換: 旧IDも受け付ける */
+/** Backward compatibility: also accept old ID */
 export const WORKSPACE_SELECT_ID = 'workspace_select';
 
 /**
- * /project スラッシュコマンドのハンドラー。
- * プロジェクト選択時にDiscordカテゴリ + session-1 チャンネルを自動作成してバインドする。
+ * Handler for the /project slash command.
+ * When a project is selected, auto-creates a Discord category + session-1 channel and binds them.
  */
 export class WorkspaceCommandHandler {
     private readonly bindingRepo: WorkspaceBindingRepository;
@@ -43,11 +43,11 @@ export class WorkspaceCommandHandler {
     }
 
     /**
-     * /project list — プロジェクト一覧をセレクトメニューで表示
+     * /project list -- Display project list via select menu
      */
     public async handleShow(interaction: ChatInputCommandInteraction): Promise<void> {
         const embed = new EmbedBuilder()
-            .setTitle('📁 プロジェクト')
+            .setTitle('📁 Projects')
             .setColor(0x5865F2)
             .setDescription(t('Select a project to auto-create a category and session channel'))
             .setTimestamp();
@@ -82,8 +82,8 @@ export class WorkspaceCommandHandler {
     }
 
     /**
-     * セレクトメニューでプロジェクトが選択された時の処理。
-     * カテゴリ + session-1 チャンネルを作成し、バインドする。
+     * Handler for when a project is selected from the select menu.
+     * Creates a category + session-1 channel and binds them.
      */
     public async handleSelectMenu(
         interaction: StringSelectMenuInteraction,
@@ -100,14 +100,14 @@ export class WorkspaceCommandHandler {
             return;
         }
 
-        // 同一プロジェクトが既にバインドされているか確認（重複防止）
+        // Check if the same project is already bound (prevent duplicates)
         const existingBindings = this.bindingRepo.findByWorkspacePathAndGuildId(workspacePath, guild.id);
         if (existingBindings.length > 0) {
             const channelLinks = existingBindings.map(b => `<#${b.channelId}>`).join(', ');
             const fullPath = this.workspaceService.getWorkspacePath(workspacePath);
 
             const embed = new EmbedBuilder()
-                .setTitle('📁 プロジェクト')
+                .setTitle('📁 Projects')
                 .setColor(0xFFA500)
                 .setDescription(
                     t(`⚠️ Project **${workspacePath}** already exists\n`) +
@@ -123,7 +123,7 @@ export class WorkspaceCommandHandler {
             return;
         }
 
-        // 処理中のプロジェクトをロック（連打防止）
+        // Lock project being processed (prevent rapid repeated clicks)
         if (this.processingWorkspaces.has(workspacePath)) {
             await interaction.update({
                 content: t(`⏳ **${workspacePath}** is being created. Please wait.`),
@@ -136,19 +136,19 @@ export class WorkspaceCommandHandler {
         this.processingWorkspaces.add(workspacePath);
 
         try {
-            // カテゴリを確保
+            // Ensure category exists
             const categoryResult = await this.channelManager.ensureCategory(guild, workspacePath);
             const categoryId = categoryResult.categoryId;
 
-            // セッション番号を取得（通常は 1）
+            // Get session number (usually 1)
             const sessionNumber = this.chatSessionRepo.getNextSessionNumber(categoryId);
             const channelName = `session-${sessionNumber}`;
 
-            // セッションチャンネルを作成
+            // Create session channel
             const sessionResult = await this.channelManager.createSessionChannel(guild, categoryId, channelName);
             const channelId = sessionResult.channelId;
 
-            // バインディングとセッションを登録
+            // Register binding and session
             this.bindingRepo.upsert({
                 channelId,
                 workspacePath,
@@ -166,7 +166,7 @@ export class WorkspaceCommandHandler {
             const fullPath = this.workspaceService.getWorkspacePath(workspacePath);
 
             const embed = new EmbedBuilder()
-                .setTitle('📁 プロジェクト')
+                .setTitle('📁 Projects')
                 .setColor(0x00AA00)
                 .setDescription(
                     t(`✅ Project **${workspacePath}** created\n`) +
@@ -186,8 +186,8 @@ export class WorkspaceCommandHandler {
     }
 
     /**
-     * /project create <name> — 新しいプロジェクトディレクトリを作成し、
-     * カテゴリ + session-1 チャンネルを自動作成してバインドする。
+     * /project create <name> -- Create a new project directory,
+     * auto-create a category + session-1 channel and bind them.
      */
     public async handleCreate(
         interaction: ChatInputCommandInteraction,
@@ -195,7 +195,7 @@ export class WorkspaceCommandHandler {
     ): Promise<void> {
         const name = interaction.options.getString('name', true);
 
-        // パストラバーサルチェック
+        // Path traversal check
         let fullPath: string;
         try {
             fullPath = this.workspaceService.validatePath(name);
@@ -206,7 +206,7 @@ export class WorkspaceCommandHandler {
             return;
         }
 
-        // 既存チェック
+        // Check for existing project
         if (this.workspaceService.exists(name)) {
             const existingBindings = this.bindingRepo.findByWorkspacePathAndGuildId(name, guild.id);
             if (existingBindings.length > 0) {
@@ -216,10 +216,10 @@ export class WorkspaceCommandHandler {
                 });
                 return;
             }
-            // ディレクトリは存在するがバインドされていない場合は続行
+            // Directory exists but not bound -- continue
         }
 
-        // 処理中のプロジェクトをロック
+        // Lock project being processed
         if (this.processingWorkspaces.has(name)) {
             await interaction.editReply({
                 content: t(`⏳ **${name}** is being created.`),
@@ -231,23 +231,23 @@ export class WorkspaceCommandHandler {
 
         try {
             if (!this.workspaceService.exists(name)) {
-                // ディレクトリを作成
+                // Create directory
                 fs.mkdirSync(fullPath, { recursive: true });
             }
 
-            // カテゴリを確保
+            // Ensure category exists
             const categoryResult = await this.channelManager.ensureCategory(guild, name);
             const categoryId = categoryResult.categoryId;
 
-            // セッション番号を取得（通常は 1）
+            // Get session number (usually 1)
             const sessionNumber = this.chatSessionRepo.getNextSessionNumber(categoryId);
             const channelName = `session-${sessionNumber}`;
 
-            // セッションチャンネルを作成
+            // Create session channel
             const sessionResult = await this.channelManager.createSessionChannel(guild, categoryId, channelName);
             const channelId = sessionResult.channelId;
 
-            // バインディングとセッションを登録
+            // Register binding and session
             this.bindingRepo.upsert({
                 channelId,
                 workspacePath: name,
@@ -279,7 +279,7 @@ export class WorkspaceCommandHandler {
     }
 
     /**
-     * チャンネルIDからバインドされたプロジェクトパスを取得する
+     * Get the bound project path from a channel ID
      */
     public getWorkspaceForChannel(channelId: string): string | undefined {
         const binding = this.bindingRepo.findByChannelId(channelId);

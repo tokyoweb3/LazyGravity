@@ -26,13 +26,13 @@ describe('ProgressSender', () => {
         sender.append('chunk 2\n');
         sender.append('chunk 3\n');
 
-        // 呼ばれていないことを確認
+        // Verify it has not been called yet
         expect(mockReply).not.toHaveBeenCalled();
 
-        // 3000ms 進める
+        // Advance by 3000ms
         jest.advanceTimersByTime(3000);
 
-        // 1度だけ呼ばれ、バッファされた内容が一気に送られることを確認
+        // Verify it was called once, and the buffered content was sent all at once
         expect(mockReply).toHaveBeenCalledTimes(1);
         expect(mockReply).toHaveBeenCalledWith(expect.objectContaining({
             content: expect.stringContaining('chunk 1\nchunk 2\nchunk 3\n')
@@ -54,7 +54,7 @@ describe('ProgressSender', () => {
     it('should fallback to reply or split if max length is exceeded', () => {
         const sender = new ProgressSender({ message: mockMessage, throttleMs: 3000, maxLength: 50 });
 
-        // 50文字以上の長文をバッファに追加
+        // Add a string longer than 50 characters to the buffer
         const longString = 'This is a very long string that will definitely exceed the fifty character limit for this test case.';
 
         sender.append(longString);

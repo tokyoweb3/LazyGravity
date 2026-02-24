@@ -17,20 +17,20 @@ describe('WorkspaceService', () => {
     });
 
     describe('ensureBaseDir', () => {
-        it('ベースディレクトリが存在しない場合に作成すること', () => {
+        it('creates the base directory when it does not exist', () => {
             const newDir = path.join(tmpDir, 'nested', 'dir');
             const svc = new WorkspaceService(newDir);
             svc.ensureBaseDir();
             expect(fs.existsSync(newDir)).toBe(true);
         });
 
-        it('既に存在する場合はエラーにならないこと', () => {
+        it('does not throw an error when the directory already exists', () => {
             expect(() => service.ensureBaseDir()).not.toThrow();
         });
     });
 
     describe('scanWorkspaces', () => {
-        it('サブディレクトリ一覧をソート順で返すこと', () => {
+        it('returns subdirectory list in sorted order', () => {
             fs.mkdirSync(path.join(tmpDir, 'project-b'));
             fs.mkdirSync(path.join(tmpDir, 'project-a'));
             fs.mkdirSync(path.join(tmpDir, 'project-c'));
@@ -39,7 +39,7 @@ describe('WorkspaceService', () => {
             expect(result).toEqual(['project-a', 'project-b', 'project-c']);
         });
 
-        it('ファイルは含まないこと', () => {
+        it('does not include files', () => {
             fs.mkdirSync(path.join(tmpDir, 'project-a'));
             fs.writeFileSync(path.join(tmpDir, 'readme.txt'), 'hello');
 
@@ -47,7 +47,7 @@ describe('WorkspaceService', () => {
             expect(result).toEqual(['project-a']);
         });
 
-        it('ドットファイル/ディレクトリは含まないこと', () => {
+        it('does not include dotfiles or dot directories', () => {
             fs.mkdirSync(path.join(tmpDir, '.hidden'));
             fs.mkdirSync(path.join(tmpDir, 'visible'));
 
@@ -55,54 +55,54 @@ describe('WorkspaceService', () => {
             expect(result).toEqual(['visible']);
         });
 
-        it('空ディレクトリの場合は空配列を返すこと', () => {
+        it('returns an empty array for an empty directory', () => {
             expect(service.scanWorkspaces()).toEqual([]);
         });
     });
 
     describe('validatePath', () => {
-        it('正常な相対パスを絶対パスに解決すること', () => {
+        it('resolves a valid relative path to an absolute path', () => {
             const result = service.validatePath('my-project');
             expect(result).toBe(path.join(tmpDir, 'my-project'));
         });
 
-        it('パストラバーサルを拒否すること', () => {
+        it('rejects path traversal', () => {
             expect(() => service.validatePath('../etc/passwd')).toThrow('Path traversal detected');
         });
 
-        it('ネストしたパストラバーサルを拒否すること', () => {
+        it('rejects nested path traversal', () => {
             expect(() => service.validatePath('a/../../etc')).toThrow('Path traversal detected');
         });
     });
 
     describe('exists', () => {
-        it('存在するディレクトリの場合はtrueを返すこと', () => {
+        it('returns true for an existing directory', () => {
             fs.mkdirSync(path.join(tmpDir, 'my-project'));
             expect(service.exists('my-project')).toBe(true);
         });
 
-        it('存在しないディレクトリの場合はfalseを返すこと', () => {
+        it('returns false for a non-existent directory', () => {
             expect(service.exists('nonexistent')).toBe(false);
         });
 
-        it('ファイルの場合はfalseを返すこと', () => {
+        it('returns false for a file', () => {
             fs.writeFileSync(path.join(tmpDir, 'file.txt'), 'data');
             expect(service.exists('file.txt')).toBe(false);
         });
     });
 
     describe('getBaseDir', () => {
-        it('ベースディレクトリを返すこと', () => {
+        it('returns the base directory', () => {
             expect(service.getBaseDir()).toBe(tmpDir);
         });
     });
 
     describe('getWorkspacePath', () => {
-        it('ワークスペースの絶対パスを返すこと', () => {
+        it('returns the absolute path of the workspace', () => {
             expect(service.getWorkspacePath('proj')).toBe(path.join(tmpDir, 'proj'));
         });
 
-        it('パストラバーサルを拒否すること', () => {
+        it('rejects path traversal', () => {
             expect(() => service.getWorkspacePath('../outside')).toThrow('Path traversal detected');
         });
     });

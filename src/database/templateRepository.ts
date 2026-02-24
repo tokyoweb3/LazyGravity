@@ -1,21 +1,21 @@
 import Database from 'better-sqlite3';
 
 /**
- * テンプレートレコードの型定義
+ * Template record type definition
  */
 export interface TemplateRecord {
-    /** 一意のID（自動採番） */
+    /** Unique ID (auto-increment) */
     id: number;
-    /** テンプレート名（一意） */
+    /** Template name (unique) */
     name: string;
-    /** 実行するプロンプト */
+    /** Prompt to execute */
     prompt: string;
-    /** 作成日時（ISO文字列） */
+    /** Creation timestamp (ISO string) */
     createdAt?: string;
 }
 
 /**
- * テンプレート作成時の入力型
+ * Input type for template creation
  */
 export interface CreateTemplateInput {
     name: string;
@@ -23,15 +23,15 @@ export interface CreateTemplateInput {
 }
 
 /**
- * テンプレート更新時の入力型（部分更新）
+ * Input type for template update (partial update)
  */
 export interface UpdateTemplateInput {
     prompt?: string;
 }
 
 /**
- * よく使うプロンプトテンプレートのSQLite永続化を担うリポジトリクラス。
- * テンプレートの保存・取得・更新・削除を行う。
+ * Repository class for SQLite persistence of frequently used prompt templates.
+ * Handles template creation, retrieval, updating, and deletion.
  */
 export class TemplateRepository {
     private db: Database.Database;
@@ -42,7 +42,7 @@ export class TemplateRepository {
     }
 
     /**
-     * テーブルを初期化する（存在しなければ作成）
+     * Initialize table (create if not exists)
      */
     private initialize(): void {
         this.db.exec(`
@@ -56,7 +56,7 @@ export class TemplateRepository {
     }
 
     /**
-     * 新しいテンプレートを作成する
+     * Create a new template
      */
     public create(input: CreateTemplateInput): TemplateRecord {
         const stmt = this.db.prepare(`
@@ -74,7 +74,7 @@ export class TemplateRepository {
     }
 
     /**
-     * すべてのテンプレートを取得する
+     * Get all templates
      */
     public findAll(): TemplateRecord[] {
         const rows = this.db.prepare('SELECT * FROM templates ORDER BY id ASC').all() as any[];
@@ -82,7 +82,7 @@ export class TemplateRepository {
     }
 
     /**
-     * IDで検索する
+     * Find by ID
      */
     public findById(id: number): TemplateRecord | undefined {
         const row = this.db.prepare('SELECT * FROM templates WHERE id = ?').get(id) as any;
@@ -91,7 +91,7 @@ export class TemplateRepository {
     }
 
     /**
-     * テンプレート名で検索する
+     * Find by template name
      */
     public findByName(name: string): TemplateRecord | undefined {
         const row = this.db.prepare('SELECT * FROM templates WHERE name = ?').get(name) as any;
@@ -100,7 +100,7 @@ export class TemplateRepository {
     }
 
     /**
-     * テンプレート名で削除する
+     * Delete by template name
      */
     public deleteByName(name: string): boolean {
         const result = this.db.prepare('DELETE FROM templates WHERE name = ?').run(name);
@@ -108,7 +108,7 @@ export class TemplateRepository {
     }
 
     /**
-     * テンプレート名で部分更新する
+     * Partially update by template name
      */
     public updateByName(name: string, input: UpdateTemplateInput): boolean {
         const sets: string[] = [];
@@ -128,7 +128,7 @@ export class TemplateRepository {
     }
 
     /**
-     * DBの行をTemplateRecordにマッピングする
+     * Map a DB row to TemplateRecord
      */
     private mapRow(row: any): TemplateRecord {
         return {

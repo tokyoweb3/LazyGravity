@@ -8,7 +8,7 @@ import {
 } from '../services/modeService';
 
 /**
- * /mode コマンドのインタラクティブなUIを組み立てて送信する（Dropdown方式）
+ * Build and send the interactive UI for the /mode command (dropdown style)
  */
 export async function sendModeUI(
     target: { editReply: (opts: any) => Promise<any> },
@@ -17,23 +17,23 @@ export async function sendModeUI(
     const currentMode = modeService.getCurrentMode();
 
     const embed = new EmbedBuilder()
-        .setTitle('モード管理')
+        .setTitle('Mode Management')
         .setColor(0x57F287)
         .setDescription(
-            `**現在のモード:** ${MODE_DISPLAY_NAMES[currentMode] || currentMode}\n` +
+            `**Current Mode:** ${MODE_DISPLAY_NAMES[currentMode] || currentMode}\n` +
             `${MODE_DESCRIPTIONS[currentMode] || ''}\n\n` +
-            `**利用可能なモード (${AVAILABLE_MODES.length}件)**\n` +
+            `**Available Modes (${AVAILABLE_MODES.length})**\n` +
             AVAILABLE_MODES.map(m => {
                 const icon = m === currentMode ? '[x]' : '[ ]';
                 return `${icon} **${MODE_DISPLAY_NAMES[m] || m}** — ${MODE_DESCRIPTIONS[m] || ''}`;
             }).join('\n'),
         )
-        .setFooter({ text: '下のドロップダウンからモードを選択してください' })
+        .setFooter({ text: 'Select a mode from the dropdown below' })
         .setTimestamp();
 
     const selectMenu = new StringSelectMenuBuilder()
         .setCustomId('mode_select')
-        .setPlaceholder('モードを選択...')
+        .setPlaceholder('Select a mode...')
         .addOptions(
             AVAILABLE_MODES.map(m => ({
                 label: MODE_DISPLAY_NAMES[m] || m,

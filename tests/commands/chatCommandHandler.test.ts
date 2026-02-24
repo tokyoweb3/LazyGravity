@@ -52,7 +52,7 @@ describe('ChatCommandHandler', () => {
     });
 
     describe('handleNew()', () => {
-        it('サーバー外で実行した場合エラーを返すこと', async () => {
+        it('returns an error when executed outside a server', async () => {
             const interaction = {
                 guild: null,
                 editReply: jest.fn().mockResolvedValue(undefined),
@@ -67,7 +67,7 @@ describe('ChatCommandHandler', () => {
             );
         });
 
-        it('カテゴリ配下でないチャンネルで実行した場合エラーを返すこと', async () => {
+        it('returns an error when executed in a channel that is not under a category', async () => {
             const interaction = {
                 guild: { id: 'guild-1' },
                 channel: { type: 0, parentId: null },
@@ -84,7 +84,7 @@ describe('ChatCommandHandler', () => {
             );
         });
 
-        it('バインドされていないチャンネルで実行した場合エラーを返すこと', async () => {
+        it('returns an error when executed in an unbound channel', async () => {
             const interaction = {
                 guild: { id: 'guild-1' },
                 channel: { type: 0, parentId: 'cat-1' },
@@ -101,7 +101,7 @@ describe('ChatCommandHandler', () => {
             );
         });
 
-        it('新規チャット開始に成功した場合、セッションチャンネルを作成すること', async () => {
+        it('creates a session channel when a new chat is started successfully', async () => {
             chatSessionRepo.create({
                 channelId: 'ch-1', categoryId: 'cat-1', workspacePath: 'my-proj',
                 sessionNumber: 1, guildId: 'guild-1',
@@ -151,7 +151,7 @@ describe('ChatCommandHandler', () => {
             );
         });
 
-        it('Antigravityでの新規チャット開始に失敗した場合エラーメッセージを返すこと', async () => {
+        it('returns an error message when starting a new chat in Antigravity fails', async () => {
             chatSessionRepo.create({
                 channelId: 'ch-1', categoryId: 'cat-1', workspacePath: 'proj',
                 sessionNumber: 1, guildId: 'guild-1',
@@ -182,11 +182,11 @@ describe('ChatCommandHandler', () => {
 
             await handler.handleNew(interaction as any);
 
-            // startNewChat失敗でもセッションチャンネルは作成される
+            // Session channel is still created even if startNewChat fails
             expect(mockGuild.channels.create).toHaveBeenCalled();
         });
 
-        it('プール未設定の場合エラーを返すこと', async () => {
+        it('returns an error when the pool is not initialized', async () => {
             const handlerNoPool = new ChatCommandHandler(mockService, chatSessionRepo, bindingRepo, channelManager, mockWorkspaceService);
 
             chatSessionRepo.create({
@@ -211,8 +211,8 @@ describe('ChatCommandHandler', () => {
         });
     });
 
-    describe('handleChat() — status + list 統合', () => {
-        it('セッション管理外のチャンネルではCDP未接続メッセージを表示すること', async () => {
+    describe('handleChat() — status + list integration', () => {
+        it('displays a CDP not connected message for channels outside session management', async () => {
             const interaction = {
                 channelId: 'unmanaged-ch',
                 editReply: jest.fn().mockResolvedValue(undefined),
@@ -234,7 +234,7 @@ describe('ChatCommandHandler', () => {
             );
         });
 
-        it('管理されたセッションの場合、詳細情報とセッション一覧を表示すること', async () => {
+        it('displays detailed info and session list for a managed session', async () => {
             chatSessionRepo.create({
                 channelId: 'ch-1', categoryId: 'cat-1', workspacePath: 'my-proj',
                 sessionNumber: 1, guildId: 'guild-1',
@@ -257,7 +257,7 @@ describe('ChatCommandHandler', () => {
                         expect.objectContaining({
                             data: expect.objectContaining({
                                 title: expect.stringContaining('Chat Session Info'),
-                                // descriptionにセッション一覧が含まれること
+                                // description should contain the session list
                                 description: expect.stringContaining('Sessions:'),
                             }),
                         }),

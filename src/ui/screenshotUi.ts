@@ -4,14 +4,14 @@ import { CdpService } from '../services/cdpService';
 import { ScreenshotService } from '../services/screenshotService';
 
 /**
- * スクリーンショットを撮ってDiscordに送信する
+ * Capture a screenshot and send it to Discord
  */
 export async function handleScreenshot(
     target: Message | ChatInputCommandInteraction,
     cdp: CdpService | null,
 ): Promise<void> {
     if (!cdp) {
-        const content = 'Antigravityに接続されていません。';
+        const content = 'Not connected to Antigravity.';
         if (target instanceof Message) {
             await target.reply(content);
         } else {
@@ -31,7 +31,7 @@ export async function handleScreenshot(
                 await target.editReply({ files: [attachment] });
             }
         } else {
-            const content = `スクリーンショット失敗: ${result.error}`;
+            const content = `Screenshot failed: ${result.error}`;
             if (target instanceof Message) {
                 await target.reply(content);
             } else {
@@ -39,7 +39,7 @@ export async function handleScreenshot(
             }
         }
     } catch (e: any) {
-        const content = `スクリーンショットエラー: ${e.message}`;
+        const content = `Screenshot error: ${e.message}`;
         if (target instanceof Message) {
             await target.reply(content);
         } else {

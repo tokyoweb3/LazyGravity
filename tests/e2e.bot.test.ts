@@ -170,7 +170,7 @@ describe('Bot E2E Flow', () => {
         await interactionHandler(interaction);
 
         expect(mockReply).toHaveBeenCalledWith({
-            content: expect.stringMatching(/権限がありません/),
+            content: expect.stringMatching(/do not have permission/),
             flags: 64,
         });
     });
@@ -340,7 +340,7 @@ describe('Bot E2E Flow', () => {
             embeds: expect.arrayContaining([
                 expect.objectContaining({
                     data: expect.objectContaining({
-                        title: expect.stringMatching(/Bot ステータス/)
+                        title: expect.stringMatching(/Bot Status/)
                     })
                 })
             ])
@@ -360,7 +360,7 @@ describe('Bot E2E Flow', () => {
             embeds: expect.arrayContaining([
                 expect.objectContaining({
                     data: expect.objectContaining({
-                        title: expect.stringMatching(/停止できませんでした|中しました/)
+                        title: expect.stringMatching(/Could Not Stop|Stopped/)
                     })
                 })
             ])
@@ -453,7 +453,7 @@ describe('Bot E2E Flow', () => {
             embeds: expect.arrayContaining([
                 expect.objectContaining({
                     data: expect.objectContaining({
-                        title: expect.stringMatching(/モデル管理/)
+                        title: expect.stringMatching(/Model Management/)
                     })
                 })
             ])
@@ -469,7 +469,7 @@ describe('Bot E2E Flow', () => {
         await interactionHandler(modelInteractionSet);
 
         expect(mockEditReply).toHaveBeenCalledWith(expect.objectContaining({
-            content: expect.stringMatching(/変更しました/)
+            content: expect.stringMatching(/Model changed to/)
         }));
     });
 

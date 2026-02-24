@@ -1,7 +1,7 @@
 import { ProcessManager, TaskOptions } from '../../src/services/processManager';
 import { spawn } from 'child_process';
 
-// child_process の spawn をモック
+// Mock child_process spawn
 jest.mock('child_process', () => {
     return {
         spawn: jest.fn()
@@ -14,7 +14,7 @@ describe('ProcessManager', () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
-        processManager = new ProcessManager(1); // 同時実行数 1 で初期化
+        processManager = new ProcessManager(1); // Initialize with max concurrency of 1
         mockSpawn = spawn as jest.Mock;
     });
 
@@ -23,7 +23,7 @@ describe('ProcessManager', () => {
         const mockStdoutOn = jest.fn();
         const mockStderrOn = jest.fn();
 
-        // spawnが返すモックプロセスオブジェクト
+        // Mock process object returned by spawn
         mockSpawn.mockReturnValue({
             pid: 12345,
             stdout: { on: mockStdoutOn },
@@ -39,11 +39,11 @@ describe('ProcessManager', () => {
             cwd: '/fake/dir',
         };
 
-        // submitTask は非同期でプロセス起動を完了する想定
+        // submitTask is expected to complete the process launch asynchronously
         processManager.submitTask(options);
 
-        // 同期的に呼ばれる（キューが空なので即実行される）のを期待
-        // 非同期になる場合は setImmediate などで待つ
+        // Expected to be called synchronously (executed immediately since queue is empty)
+        // If asynchronous, wait with setImmediate etc.
         await new Promise(process.nextTick);
 
         expect(mockSpawn).toHaveBeenCalledWith('antigravity', ['--prompt', 'test'], { cwd: '/fake/dir' });
@@ -85,7 +85,7 @@ describe('ProcessManager', () => {
 
         await new Promise(process.nextTick);
 
-        // コールバックを呼び出して確認
+        // Invoke callbacks and verify
         if (stdoutCallback) { stdoutCallback(Buffer.from('hello output')); }
         if (stderrCallback) { stderrCallback(Buffer.from('error output')); }
 
@@ -94,7 +94,7 @@ describe('ProcessManager', () => {
     });
 
     it('should limit concurrent executions and queue tasks', async () => {
-        // 擬似的にプロセスが終了しない状態にする
+        // Simulate a state where the process does not terminate
         let closeFirstTask: any;
         mockSpawn.mockImplementation(() => {
             return {
@@ -115,14 +115,14 @@ describe('ProcessManager', () => {
 
         await new Promise(process.nextTick);
 
-        // 最大同時実行数が1なので、spawn は 1回しか呼ばれない
+        // Since max concurrency is 1, spawn should only be called once
         expect(mockSpawn).toHaveBeenCalledTimes(1);
         expect(mockSpawn).toHaveBeenCalledWith('cmd1', [], { cwd: '/' });
 
-        // 1つ目のタスクを終了させる
+        // Terminate the first task
         closeFirstTask(0);
 
-        // キューから2つ目が実行されるのを待つ
+        // Wait for the second task to be executed from the queue
         await new Promise(process.nextTick);
 
         expect(mockSpawn).toHaveBeenCalledTimes(2);

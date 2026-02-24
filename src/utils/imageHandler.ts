@@ -37,14 +37,14 @@ export function sanitizeFileName(fileName: string): string {
 }
 
 export function buildPromptWithAttachmentUrls(prompt: string, attachments: InboundImageAttachment[]): string {
-    const base = prompt.trim() || '添付画像を確認して対応してください。';
+    const base = prompt.trim() || 'Please review the attached images and respond accordingly.';
     if (attachments.length === 0) return base;
 
     const lines = attachments.map((image, index) =>
         `${index + 1}. ${image.name}\nURL: ${image.url}`,
     );
 
-    return `${base}\n\n[Discord添付画像]\n${lines.join('\n\n')}\n\n上記の添付画像を参照して回答してください。`;
+    return `${base}\n\n[Discord Attached Images]\n${lines.join('\n\n')}\n\nPlease refer to the attached images above in your response.`;
 }
 
 export async function downloadInboundImageAttachments(message: Message): Promise<InboundImageAttachment[]> {
@@ -63,7 +63,7 @@ export async function downloadInboundImageAttachments(message: Message): Promise
         try {
             const response = await fetch(attachment.url);
             if (!response.ok) {
-                logger.warn(`[ImageBridge] 添付画像ダウンロード失敗 (id=${attachment.id || 'unknown'}, status=${response.status})`);
+                logger.warn(`[ImageBridge] Attachment image download failed (id=${attachment.id || 'unknown'}, status=${response.status})`);
                 continue;
             }
 
@@ -89,7 +89,7 @@ export async function downloadInboundImageAttachments(message: Message): Promise
             });
             index += 1;
         } catch (error: any) {
-            logger.warn(`[ImageBridge] 添付画像処理失敗 (id=${attachment.id || 'unknown'})`, error?.message || error);
+            logger.warn(`[ImageBridge] Attachment image processing failed (id=${attachment.id || 'unknown'})`, error?.message || error);
         }
     }
 

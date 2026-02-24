@@ -16,7 +16,7 @@ describe('templateUi', () => {
             expect(payload.components).toEqual([]);
 
             const embedJson = payload.embeds[0].toJSON();
-            expect(embedJson.description).toContain('登録されているテンプレートはありません');
+            expect(embedJson.description).toContain('No templates registered');
             expect(embedJson.description).toContain('/template add');
         });
 
@@ -34,11 +34,11 @@ describe('templateUi', () => {
             expect(payload.components.length).toBeGreaterThan(0);
 
             const embedJson = payload.embeds[0].toJSON();
-            expect(embedJson.title).toBe('テンプレート管理');
+            expect(embedJson.title).toBe('Template Management');
             expect(embedJson.color).toBe(0x57F287);
             expect(embedJson.description).toContain('daily-report');
             expect(embedJson.description).toContain('code-review');
-            expect(embedJson.description).toContain('2件');
+            expect(embedJson.description).toContain('(2)');
 
             // Verify buttons use ID-based customIds
             const row = payload.components[0];
@@ -77,7 +77,7 @@ describe('templateUi', () => {
             expect(allButtons).toHaveLength(25);
 
             const embedJson = payload.embeds[0].toJSON();
-            expect(embedJson.footer.text).toContain('5件のテンプレートが非表示');
+            expect(embedJson.footer.text).toContain('5 templates are hidden');
         });
 
         it('creates correct number of rows (5 buttons per row)', async () => {

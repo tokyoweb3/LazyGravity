@@ -1,17 +1,17 @@
 import { sendModelsUI } from '../../src/ui/modelsUi';
 
 describe('modelsUi', () => {
-    it('未接続時は接続エラーメッセージを返す', async () => {
+    it('returns a connection error message when not connected', async () => {
         const target = { editReply: jest.fn().mockResolvedValue(undefined) };
         await sendModelsUI(target, {
             getCurrentCdp: () => null,
             fetchQuota: async () => [],
         });
 
-        expect(target.editReply).toHaveBeenCalledWith({ content: 'CDPに未接続です。' });
+        expect(target.editReply).toHaveBeenCalledWith({ content: 'Not connected to CDP.' });
     });
 
-    it('モデル一覧がある場合はEmbedを返す', async () => {
+    it('returns an Embed when models are available', async () => {
         const target = { editReply: jest.fn().mockResolvedValue(undefined) };
         const cdp = {
             getUiModels: jest.fn().mockResolvedValue(['Model A', 'Model B']),

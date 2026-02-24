@@ -3,11 +3,11 @@ import { CdpService, CdpServiceOptions } from './cdpService';
 import { ApprovalDetector } from './approvalDetector';
 
 /**
- * ワークスペースごとに独立した CdpService インスタンスを管理するプール。
+ * Pool that manages independent CdpService instances per workspace.
  *
- * 各ワークスペースが独自の WebSocket / contexts / pendingCalls を持つため、
- * ワークスペースA の ResponseMonitor がポーリング中にワークスペースB へ切替えても
- * A の WebSocket が破壊されない。
+ * Each workspace owns its own WebSocket / contexts / pendingCalls, so
+ * switching to workspace B while workspace A's ResponseMonitor is polling
+ * does not destroy A's WebSocket.
  */
 export class CdpConnectionPool {
     private readonly connections = new Map<string, CdpService>();
@@ -20,29 +20,29 @@ export class CdpConnectionPool {
     }
 
     /**
-     * ワークスペースパスから CdpService を取得する。
-     * 未接続の場合は新規接続を行い、キャッシュする。
-     * 同時接続を Promise ロックで防止する。
+     * Get a CdpService for the given workspace path.
+     * Creates a new connection and caches it if not already connected.
+     * Prevents concurrent connections via Promise locking.
      *
-     * @param workspacePath ワークスペースのフルパス
-     * @returns 接続済みの CdpService
+     * @param workspacePath Full path of the workspace
+     * @returns Connected CdpService
      */
     async getOrConnect(workspacePath: string): Promise<CdpService> {
         const dirName = this.extractDirName(workspacePath);
 
-        // 既存接続がある場合はそのまま返す
+        // Return existing connection if available
         const existing = this.connections.get(dirName);
         if (existing && existing.isConnected()) {
             return existing;
         }
 
-        // 既に接続中のPromiseがある場合はそれを待つ（同時接続防止）
+        // Wait for the pending connection promise if one exists (prevents concurrent connections)
         const pending = this.connectingPromises.get(dirName);
         if (pending) {
             return pending;
         }
 
-        // 新規接続を開始
+        // Start a new connection
         const connectPromise = this.createAndConnect(workspacePath, dirName);
         this.connectingPromises.set(dirName, connectPromise);
 
@@ -55,8 +55,8 @@ export class CdpConnectionPool {
     }
 
     /**
-     * 接続済みの CdpService を取得する（読み取り専用）。
-     * 未接続の場合は null を返す。
+     * Get a connected CdpService (read-only).
+     * Returns null if not connected.
      */
     getConnected(workspaceDirName: string): CdpService | null {
         const cdp = this.connections.get(workspaceDirName);
@@ -67,13 +67,13 @@ export class CdpConnectionPool {
     }
 
     /**
-     * 指定ワークスペースの接続を切断する。
+     * Disconnect the specified workspace.
      */
     disconnectWorkspace(workspaceDirName: string): void {
         const cdp = this.connections.get(workspaceDirName);
         if (cdp) {
             cdp.disconnect().catch((err) => {
-                logger.error(`[CdpConnectionPool] ${workspaceDirName} の切断中にエラー:`, err);
+                logger.error(`[CdpConnectionPool] Error while disconnecting ${workspaceDirName}:`, err);
             });
             this.connections.delete(workspaceDirName);
         }
@@ -86,7 +86,7 @@ export class CdpConnectionPool {
     }
 
     /**
-     * 全てのワークスペース接続を切断する。
+     * Disconnect all workspace connections.
      */
     disconnectAll(): void {
         for (const dirName of [...this.connections.keys()]) {
@@ -95,10 +95,10 @@ export class CdpConnectionPool {
     }
 
     /**
-     * ワークスペースに承認検出器を登録する。
+     * Register an approval detector for a workspace.
      */
     registerApprovalDetector(workspaceDirName: string, detector: ApprovalDetector): void {
-        // 既存の検出器を停止
+        // Stop existing detector
         const existing = this.approvalDetectors.get(workspaceDirName);
         if (existing && existing.isActive()) {
             existing.stop();
@@ -107,14 +107,14 @@ export class CdpConnectionPool {
     }
 
     /**
-     * ワークスペースの承認検出器を取得する。
+     * Get the approval detector for a workspace.
      */
     getApprovalDetector(workspaceDirName: string): ApprovalDetector | undefined {
         return this.approvalDetectors.get(workspaceDirName);
     }
 
     /**
-     * アクティブな接続のワークスペース名一覧を返す。
+     * Return a list of workspace names with active connections.
      */
     getActiveWorkspaceNames(): string[] {
         const active: string[] = [];
@@ -127,17 +127,17 @@ export class CdpConnectionPool {
     }
 
     /**
-     * ワークスペースパスからディレクトリ名を抽出する。
+     * Extract the directory name from a workspace path.
      */
     extractDirName(workspacePath: string): string {
         return workspacePath.split('/').filter(Boolean).pop() || workspacePath;
     }
 
     /**
-     * 新しい CdpService を作成し、ワークスペースに接続する。
+     * Create a new CdpService and connect to the workspace.
      */
     private async createAndConnect(workspacePath: string, dirName: string): Promise<CdpService> {
-        // 古い接続があれば切断
+        // Disconnect old connection if exists
         const old = this.connections.get(dirName);
         if (old) {
             await old.disconnect().catch(() => {});
@@ -146,15 +146,15 @@ export class CdpConnectionPool {
 
         const cdp = new CdpService(this.cdpOptions);
 
-        // 切断時に自動クリーンアップ
+        // Auto-cleanup on disconnect
         cdp.on('disconnected', () => {
-            logger.error(`[CdpConnectionPool] ワークスペース "${dirName}" が切断されました`);
-            // 再接続が失敗した場合にのみ Map から削除する
-            // （CdpService 内部で再接続を試みるため、ここでは削除しない）
+            logger.error(`[CdpConnectionPool] Workspace "${dirName}" disconnected`);
+            // Only remove from Map when reconnection fails
+            // (CdpService attempts reconnection internally, so we don't remove here)
         });
 
         cdp.on('reconnectFailed', () => {
-            logger.error(`[CdpConnectionPool] ワークスペース "${dirName}" の再接続が失敗しました。プールから削除します`);
+            logger.error(`[CdpConnectionPool] Reconnection failed for workspace "${dirName}". Removing from pool`);
             this.connections.delete(dirName);
             const detector = this.approvalDetectors.get(dirName);
             if (detector) {
@@ -163,7 +163,7 @@ export class CdpConnectionPool {
             }
         });
 
-        // ワークスペースに接続
+        // Connect to the workspace
         await cdp.discoverAndConnectForWorkspace(workspacePath);
         this.connections.set(dirName, cdp);
 

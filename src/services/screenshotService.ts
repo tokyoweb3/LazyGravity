@@ -1,13 +1,13 @@
 import { logger } from '../utils/logger';
 import { CdpService } from './cdpService';
 
-/** スクリーンショットのキャプチャオプション */
+/** Screenshot capture options */
 export interface CaptureOptions {
-    /** 画像フォーマット（デフォルト: 'png'） */
+    /** Image format (default: 'png') */
     format?: 'png' | 'jpeg' | 'webp';
-    /** JPEG品質 (0-100、JPEGのみ有効) */
+    /** JPEG quality (0-100, JPEG only) */
     quality?: number;
-    /** キャプチャするクリップ領域 */
+    /** Clip region to capture */
     clip?: {
         x: number;
         y: number;
@@ -15,30 +15,30 @@ export interface CaptureOptions {
         height: number;
         scale: number;
     };
-    /** フル幅キャプチャ（スクロール含む） */
+    /** Full width capture (including scroll) */
     captureBeyondViewport?: boolean;
 }
 
-/** スクリーンショットの結果 */
+/** Screenshot result */
 export interface CaptureResult {
-    /** 成功したかどうか */
+    /** Whether the capture succeeded */
     success: boolean;
-    /** 画像データのBuffer（成功時） */
+    /** Image data buffer (on success) */
     buffer?: Buffer;
-    /** エラーメッセージ（失敗時） */
+    /** Error message (on failure) */
     error?: string;
 }
 
 export interface ScreenshotServiceOptions {
-    /** CDPサービスインスタンス */
+    /** CDP service instance */
     cdpService: CdpService;
 }
 
 /**
- * AntigravityのUIスクリーンショットを取得するサービス
+ * Service for capturing Antigravity UI screenshots
  *
- * Chrome DevTools Protocol の Page.captureScreenshot コマンドを使用して
- * 現在のブラウザ画面をキャプチャし、Discordに送信可能なBufferとして返す。
+ * Uses the Chrome DevTools Protocol Page.captureScreenshot command
+ * to capture the current browser screen and return it as a Buffer sendable to Discord.
  */
 export class ScreenshotService {
     private cdpService: CdpService;
@@ -48,10 +48,10 @@ export class ScreenshotService {
     }
 
     /**
-     * 現在の画面をキャプチャする。
+     * Capture the current screen.
      *
-     * @param options キャプチャオプション
-     * @returns キャプチャ結果（成功時はBuffer、失敗時はエラーメッセージ）
+     * @param options Capture options
+     * @returns Capture result (Buffer on success, error message on failure)
      */
     async capture(options: CaptureOptions = {}): Promise<CaptureResult> {
         try {
@@ -78,7 +78,7 @@ export class ScreenshotService {
             if (!base64Data) {
                 return {
                     success: false,
-                    error: 'スクリーンショットデータが空でした。',
+                    error: 'Screenshot data was empty.',
                 };
             }
 
@@ -90,7 +90,7 @@ export class ScreenshotService {
             };
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            logger.error('[ScreenshotService] キャプチャ中にエラーが発生しました:', error);
+            logger.error('[ScreenshotService] Error during capture:', error);
             return {
                 success: false,
                 error: message,
@@ -99,10 +99,10 @@ export class ScreenshotService {
     }
 
     /**
-     * Base64エンコードされた画像文字列を返す（Discordのembedに使用）。
+     * Return a Base64-encoded image string (for use in Discord embeds).
      *
-     * @param options キャプチャオプション
-     * @returns Base64エンコードされた画像文字列（失敗時はnull）
+     * @param options Capture options
+     * @returns Base64-encoded image string (null on failure)
      */
     async getBase64(options: CaptureOptions = {}): Promise<string | null> {
         try {
@@ -121,7 +121,7 @@ export class ScreenshotService {
             const result = await this.cdpService.call('Page.captureScreenshot', params);
             return result?.data ?? null;
         } catch (error) {
-            logger.error('[ScreenshotService] Base64取得中にエラーが発生しました:', error);
+            logger.error('[ScreenshotService] Error while getting Base64:', error);
             return null;
         }
     }

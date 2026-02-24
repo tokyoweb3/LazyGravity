@@ -1,41 +1,41 @@
 import { parseMessageContent } from '../../src/commands/messageParser';
 
 describe('Message Parser', () => {
-    it('プレーンな指示（ただのテキスト）を正しく判別できるか', () => {
+    it('correctly identifies plain instructions (just text)', () => {
         const result = parseMessageContent('こんにちは、システムを再起動してください。');
         expect(result.isCommand).toBe(false);
         expect(result.text).toBe('こんにちは、システムを再起動してください。');
     });
 
-    it('/から始まるコマンドとその引数を正しく判別できるか', () => {
+    it('correctly identifies a command starting with / and its arguments', () => {
         const result = parseMessageContent('/mode gpt-4');
         expect(result.isCommand).toBe(true);
         expect(result.commandName).toBe('mode');
         expect(result.args).toEqual(['gpt-4']);
     });
 
-    it('複数引数を持つコマンドのダブルクォートが除去されること', () => {
+    it('removes double quotes from command arguments with multiple parameters', () => {
         const result = parseMessageContent('/schedule add "毎朝9時" "おはよう"');
         expect(result.isCommand).toBe(true);
         expect(result.commandName).toBe('schedule');
         expect(result.args).toEqual(['add', '毎朝9時', 'おはよう']);
     });
 
-    it('ダブルクォートなしの引数も正しくパースされること', () => {
+    it('correctly parses arguments without double quotes', () => {
         const result = parseMessageContent('/templates PR作成');
         expect(result.isCommand).toBe(true);
         expect(result.commandName).toBe('templates');
         expect(result.args).toEqual(['PR作成']);
     });
 
-    it('前後の空白を無視して正しく判別できるか', () => {
+    it('correctly identifies commands while ignoring surrounding whitespace', () => {
         const result = parseMessageContent('  /stop  ');
         expect(result.isCommand).toBe(true);
         expect(result.commandName).toBe('stop');
         expect(result.args).toEqual([]);
     });
 
-    it('/だけの場合はプレーンテキストとして扱うか', () => {
+    it('treats a lone / as plain text', () => {
         const result = parseMessageContent('/');
         expect(result.isCommand).toBe(false);
         expect(result.text).toBe('/');

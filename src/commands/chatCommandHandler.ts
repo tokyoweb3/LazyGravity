@@ -12,11 +12,11 @@ import { CdpConnectionPool } from '../services/cdpConnectionPool';
 import { WorkspaceService } from '../services/workspaceService';
 
 /**
- * チャットセッション関連コマンドのハンドラー
+ * Handler for chat session related commands
  *
- * コマンド:
- *   - /new: カテゴリ配下に新セッションチャンネル作成 + Antigravityで新規チャット開始
- *   - /chat: 現在のセッション情報 + 同プロジェクトの全セッション一覧を表示（統合）
+ * Commands:
+ *   - /new: Create a new session channel under the category + start a new chat in Antigravity
+ *   - /chat: Display current session info + list all sessions in the same project (unified)
  */
 export class ChatCommandHandler {
     private readonly chatSessionService: ChatSessionService;
@@ -43,7 +43,7 @@ export class ChatCommandHandler {
     }
 
     /**
-     * /new — カテゴリ配下に新セッションチャンネルを作成し、Antigravityで新規チャット開始
+     * /new -- Create a new session channel under the category and start a new chat in Antigravity
      */
     async handleNew(interaction: ChatInputCommandInteraction): Promise<void> {
         const guild = interaction.guild;
@@ -58,7 +58,7 @@ export class ChatCommandHandler {
             return;
         }
 
-        // 現在のチャンネルがプロジェクトカテゴリ配下かを確認
+        // Check if the current channel is under a project category
         const parentId = 'parentId' in channel ? channel.parentId : null;
         if (!parentId) {
             await interaction.editReply({
@@ -67,7 +67,7 @@ export class ChatCommandHandler {
             return;
         }
 
-        // プロジェクトパスを特定
+        // Determine the project path
         const currentSession = this.chatSessionRepo.findByChannelId(interaction.channelId);
         const binding = this.bindingRepo.findByChannelId(interaction.channelId);
 
@@ -79,10 +79,10 @@ export class ChatCommandHandler {
             return;
         }
 
-        // ワークスペース名をフルパスに変換
+        // Convert workspace name to full path
         const workspacePath = this.workspaceService.getWorkspacePath(workspaceName);
 
-        // プロジェクト切替（正しいworkbenchページに接続）
+        // Switch project (connect to the correct workbench page)
         let workspaceCdp;
         if (this.pool) {
             try {
@@ -102,13 +102,13 @@ export class ChatCommandHandler {
             return;
         }
 
-        // 新しいセッションチャンネルを作成
+        // Create a new session channel
         const sessionNumber = this.chatSessionRepo.getNextSessionNumber(parentId);
         const channelName = `session-${sessionNumber}`;
         const sessionResult = await this.channelManager.createSessionChannel(guild, parentId, channelName);
         const newChannelId = sessionResult.channelId;
 
-        // バインディングとセッションを登録
+        // Register binding and session
         this.bindingRepo.upsert({
             channelId: newChannelId,
             workspacePath: workspaceName,
@@ -137,13 +137,13 @@ export class ChatCommandHandler {
     }
 
     /**
-     * /chat — 現在のセッション情報 + 同プロジェクトの全セッション一覧を統合表示
+     * /chat -- Display current session info + list all sessions in the same project (unified view)
      */
     async handleChat(interaction: ChatInputCommandInteraction): Promise<void> {
         const session = this.chatSessionRepo.findByChannelId(interaction.channelId);
 
         if (!session) {
-            // セッション管理外のチャンネル — Antigravityから直接情報を取得
+            // Channel not managed by session -- get info directly from Antigravity
             const activeNames = this.pool?.getActiveWorkspaceNames() ?? [];
             const anyCdp = activeNames.length > 0 ? this.pool?.getConnected(activeNames[0]) : null;
             const info = anyCdp
@@ -164,10 +164,10 @@ export class ChatCommandHandler {
             return;
         }
 
-        // 同カテゴリの全セッションを取得
+        // Get all sessions in the same category
         const allSessions = this.chatSessionRepo.findByCategoryId(session.categoryId);
 
-        // セッション一覧を構築
+        // Build session list
         const sessionList = allSessions.map((s) => {
             const name = s.displayName ? `${s.displayName}` : `session-${s.sessionNumber}`;
             const current = s.channelId === interaction.channelId ? t(' ← **Current**') : '';

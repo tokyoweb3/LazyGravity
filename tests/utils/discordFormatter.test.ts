@@ -7,7 +7,7 @@ import {
 
 describe('discordFormatter', () => {
     describe('formatForDiscord', () => {
-        it('テーブル行をコードブロックで囲む', () => {
+        it('wraps table rows in code blocks', () => {
             const input = ['通常行', '| a | b |', '|---|---|', '終端'].join('\n');
             const output = formatForDiscord(input);
 
@@ -16,7 +16,7 @@ describe('discordFormatter', () => {
             expect(output).toContain('終端');
         });
 
-        it('Task 3: ファイル参照（例: src/bot/index.ts:54）をそのままにせずバッククォートで保護する', () => {
+        it('Task 3: wraps file references (e.g. src/bot/index.ts:54) in backticks', () => {
             const input = '対象ファイルは src/bot/index.ts:54 です。';
             const output = formatForDiscord(input);
             expect(output).toContain('`src/bot/index.ts:54`');
@@ -26,7 +26,7 @@ describe('discordFormatter', () => {
     });
 
     describe('splitOutputAndLogs', () => {
-        it('処理ログ行を本文から分離する', () => {
+        it('separates processing log lines from the main body', () => {
             const input = ['最終回答です', 'Analyzing current workspace', 'もう一行の本文'].join('\n');
             const separated = splitOutputAndLogs(input);
 
@@ -35,7 +35,7 @@ describe('discordFormatter', () => {
             expect(separated.logs).toContain('Analyzing current workspace');
         });
 
-        it('コードブロック内はログ扱いしない', () => {
+        it('does not treat lines inside code blocks as logs', () => {
             const input = ['```txt', 'Analyzing inside code block', '```'].join('\n');
             const separated = splitOutputAndLogs(input);
 
@@ -43,7 +43,7 @@ describe('discordFormatter', () => {
             expect(separated.logs).toBe('');
         });
 
-        it('MCPツールログと思考文を最終アウトプットから除去する', () => {
+        it('removes MCP tool logs and thinking text from the final output', () => {
             const input = [
                 '今日の日本円ドル円レートは？',
                 'jina-mcp-server / search_web',
@@ -88,7 +88,7 @@ describe('discordFormatter', () => {
     });
 
     describe('sanitizeActivityLines', () => {
-        it('tool traceを除去する', () => {
+        it('removes tool traces', () => {
             const input = ['tool call: mcp.search', 'Running tests', 'show details'].join('\n');
             const output = sanitizeActivityLines(input);
 
@@ -99,7 +99,7 @@ describe('discordFormatter', () => {
     });
 
     describe('separateOutputForDelivery', () => {
-        it('DOM構造抽出が成功した場合はDOM結果を優先し、raw文字列を使わない', () => {
+        it('prioritizes DOM results over raw string when DOM extraction succeeds', () => {
             const raw = [
                 'jina-mcp-server / search_web',
                 'Full output written to output.txt',
@@ -119,7 +119,7 @@ describe('discordFormatter', () => {
             expect(separated.logs).toBe('jina-mcp-server / search_web');
         });
 
-        it('DOM抽出に失敗した場合のみlegacy文字列分離へフォールバックする', () => {
+        it('falls back to legacy string separation only when DOM extraction fails', () => {
             const raw = [
                 'jina-mcp-server / search_web',
                 'Full output written to',

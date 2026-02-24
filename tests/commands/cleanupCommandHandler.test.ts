@@ -21,7 +21,7 @@ describe('CleanupCommandHandler', () => {
     });
 
     describe('handleCleanup()', () => {
-        it('サーバー外で実行した場合エラーを返すこと', async () => {
+        it('returns an error when executed outside a server', async () => {
             const interaction = {
                 guild: null,
                 options: { getInteger: jest.fn().mockReturnValue(7) },
@@ -37,7 +37,7 @@ describe('CleanupCommandHandler', () => {
             );
         });
 
-        it('日数が範囲外の場合エラーを返すこと (0以下)', async () => {
+        it('returns an error when days is out of range (0 or less)', async () => {
             const interaction = {
                 guild: { id: 'guild-1' },
                 options: { getInteger: jest.fn().mockReturnValue(0) },
@@ -53,7 +53,7 @@ describe('CleanupCommandHandler', () => {
             );
         });
 
-        it('日数が範囲外の場合エラーを返すこと (366以上)', async () => {
+        it('returns an error when days is out of range (366 or more)', async () => {
             const interaction = {
                 guild: { id: 'guild-1' },
                 options: { getInteger: jest.fn().mockReturnValue(400) },
@@ -69,8 +69,8 @@ describe('CleanupCommandHandler', () => {
             );
         });
 
-        it('非活性チャンネルがない場合、完了メッセージを表示すること', async () => {
-            // 全チャンネルがアクティブ（最近メッセージあり）なギルドをモック
+        it('displays a completion message when there are no inactive channels', async () => {
+            // Mock a guild where all channels are active (recent messages)
             const mockGuild = createMockGuild([]);
 
             const interaction = {
@@ -94,7 +94,7 @@ describe('CleanupCommandHandler', () => {
             );
         });
 
-        it('非活性チャンネルが見つかった場合、確認ボタン付きEmbedを表示すること', async () => {
+        it('displays a confirmation Embed with buttons when inactive channels are found', async () => {
             const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
             const mockGuild = createMockGuild([
@@ -149,11 +149,11 @@ describe('CleanupCommandHandler', () => {
                 })
             );
 
-            // スキャン結果がハンドラーに保持されていること
+            // Scan results should be retained in the handler
             expect(handler.getLastScanResult()).not.toBeNull();
         });
 
-        it('カテゴリ内に1つでもアクティブなセッションがある場合、カテゴリは非活性にならないこと', async () => {
+        it('does not mark a category as inactive if at least one session within it is active', async () => {
             const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
             const justNow = new Date();
 
@@ -177,12 +177,12 @@ describe('CleanupCommandHandler', () => {
             await handler.handleCleanup(interaction as any);
 
             const result = handler.getLastScanResult();
-            // セッション単位では1件見つかるが、カテゴリ全体としては非活性ではない
+            // One inactive session is found, but the category as a whole is not inactive
             expect(result?.inactiveSessions.length).toBe(1);
             expect(result?.inactiveCategories.length).toBe(0);
         });
 
-        it('デフォルト日数が7日であること', async () => {
+        it('defaults the number of days to 7', async () => {
             const mockGuild = createMockGuild([]);
 
             const interaction = {
@@ -194,15 +194,15 @@ describe('CleanupCommandHandler', () => {
             await handler.handleCleanup(interaction as any);
 
             const result = handler.getLastScanResult();
-            // 非活性がない場合 lastScanResult は null にはならない（スキャンは実行される）
-            // ただし結果がない場合はembedを直接返すので lastScanResult は null のままの場合がある
+            // When no inactive channels, lastScanResult may remain null (embed is returned directly)
+            // But the scan is executed regardless
             expect(interaction.editReply).toHaveBeenCalled();
         });
     });
 
     describe('handleCancel()', () => {
-        it('キャンセル時にスキャン結果をクリアすること', async () => {
-            // まずスキャンを実行してlastScanResultを設定
+        it('clears the scan results on cancel', async () => {
+            // First run a scan to set lastScanResult
             const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
             const mockGuild = createMockGuild([
                 {
@@ -222,7 +222,7 @@ describe('CleanupCommandHandler', () => {
             await handler.handleCleanup(scanInteraction as any);
             expect(handler.getLastScanResult()).not.toBeNull();
 
-            // キャンセル
+            // Cancel
             const cancelInteraction = {
                 update: jest.fn().mockResolvedValue(undefined),
             };
@@ -245,7 +245,7 @@ describe('CleanupCommandHandler', () => {
     });
 
     describe('handleArchive()', () => {
-        it('スキャン結果がない場合エラーを表示すること', async () => {
+        it('displays an error when there are no scan results', async () => {
             const interaction = {
                 guild: { id: 'guild-1' },
                 update: jest.fn().mockResolvedValue(undefined),
@@ -262,7 +262,7 @@ describe('CleanupCommandHandler', () => {
     });
 
     describe('handleDelete()', () => {
-        it('スキャン結果がない場合エラーを表示すること', async () => {
+        it('displays an error when there are no scan results', async () => {
             const interaction = {
                 guild: { id: 'guild-1' },
                 update: jest.fn().mockResolvedValue(undefined),
@@ -278,8 +278,8 @@ describe('CleanupCommandHandler', () => {
         });
     });
 
-    describe('ボタンID定数', () => {
-        it('正しいカスタムID値であること', () => {
+    describe('Button ID constants', () => {
+        it('has the correct custom ID values', () => {
             expect(CLEANUP_ARCHIVE_BTN).toBe('cleanup_archive');
             expect(CLEANUP_DELETE_BTN).toBe('cleanup_delete');
             expect(CLEANUP_CANCEL_BTN).toBe('cleanup_cancel');
@@ -288,25 +288,25 @@ describe('CleanupCommandHandler', () => {
 });
 
 /**
- * テスト用のギルドモックを作成するヘルパー
+ * Helper to create a mock guild for tests
  */
 function createMockGuild(categories: {
     categoryName: string;
     categoryId: string;
     channels: { id: string; name: string; lastMessageDate: Date }[];
 }[]) {
-    // 全チャンネルを平坦化
+    // Flatten all channels
     const allChannels = new Map<string, any>();
 
     for (const cat of categories) {
-        // カテゴリ
+        // Category
         allChannels.set(cat.categoryId, {
             id: cat.categoryId,
             name: cat.categoryName,
             type: 4, // GuildCategory
         });
 
-        // チャンネル
+        // Channels
         for (const ch of cat.channels) {
             const mockMessages = new Map();
             const mockMessage = {
@@ -345,7 +345,7 @@ function createMockGuild(categories: {
         },
     };
 
-    // fetch() は Collection を返す
+    // fetch() returns a Collection
     const fetchResult = new Map(allChannels);
     (fetchResult as any).find = (fn: (ch: any) => boolean) => {
         for (const ch of fetchResult.values()) {

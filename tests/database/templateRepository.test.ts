@@ -6,7 +6,7 @@ describe('TemplateRepository', () => {
     let repo: TemplateRepository;
 
     beforeEach(() => {
-        // インメモリDBでテスト実行
+        // Run tests with in-memory DB
         db = new Database(':memory:');
         repo = new TemplateRepository(db);
     });
@@ -15,8 +15,8 @@ describe('TemplateRepository', () => {
         db.close();
     });
 
-    describe('テーブル初期化', () => {
-        it('初期化時にtemplatesテーブルが作成されること', () => {
+    describe('table initialization', () => {
+        it('creates the templates table on initialization', () => {
             const tables = db.prepare(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name='templates'"
             ).all();
@@ -24,8 +24,8 @@ describe('TemplateRepository', () => {
         });
     });
 
-    describe('create - テンプレートの保存', () => {
-        it('テンプレート名とプロンプトを保存し、IDを返すこと', () => {
+    describe('create - save template', () => {
+        it('saves the template name and prompt, and returns the ID', () => {
             const result = repo.create({
                 name: 'PR作成',
                 prompt: 'PRを作成してください。変更点をまとめてください。',
@@ -35,14 +35,14 @@ describe('TemplateRepository', () => {
             expect(result.prompt).toBe('PRを作成してください。変更点をまとめてください。');
         });
 
-        it('複数のテンプレートを保存できること', () => {
+        it('can save multiple templates', () => {
             repo.create({ name: 'PR作成', prompt: 'PRを作成して' });
             repo.create({ name: 'エラー調査', prompt: 'エラーを調査して' });
             const all = repo.findAll();
             expect(all).toHaveLength(2);
         });
 
-        it('同名のテンプレートは重複して保存できないこと', () => {
+        it('cannot save duplicate templates with the same name', () => {
             repo.create({ name: 'PR作成', prompt: 'PRを作成して' });
             expect(() => {
                 repo.create({ name: 'PR作成', prompt: '別のプロンプト' });
@@ -50,8 +50,8 @@ describe('TemplateRepository', () => {
         });
     });
 
-    describe('findAll - 全テンプレートの取得', () => {
-        it('保存された全テンプレートを取得できること', () => {
+    describe('findAll - retrieve all templates', () => {
+        it('retrieves all saved templates', () => {
             repo.create({ name: 'PR作成', prompt: 'PRを作成して' });
             repo.create({ name: 'エラー調査', prompt: 'エラーを調査して' });
             const all = repo.findAll();
@@ -60,42 +60,42 @@ describe('TemplateRepository', () => {
             expect(all[1].name).toBe('エラー調査');
         });
 
-        it('テンプレートが無い場合は空配列を返すこと', () => {
+        it('returns an empty array when there are no templates', () => {
             const all = repo.findAll();
             expect(all).toEqual([]);
         });
     });
 
-    describe('findByName - 名前によるテンプレート取得', () => {
-        it('指定した名前のテンプレートを取得できること', () => {
+    describe('findByName - retrieve template by name', () => {
+        it('retrieves the template with the specified name', () => {
             repo.create({ name: 'PR作成', prompt: 'PRを作成して' });
             const found = repo.findByName('PR作成');
             expect(found).toBeDefined();
             expect(found?.name).toBe('PR作成');
         });
 
-        it('存在しない名前の場合はundefinedを返すこと', () => {
+        it('returns undefined for a non-existent name', () => {
             const found = repo.findByName('存在しないテンプレート');
             expect(found).toBeUndefined();
         });
     });
 
-    describe('delete - テンプレートの削除', () => {
-        it('指定した名前のテンプレートを削除できること', () => {
+    describe('delete - delete template', () => {
+        it('deletes the template with the specified name', () => {
             repo.create({ name: 'PR作成', prompt: 'PRを作成して' });
             const deleted = repo.deleteByName('PR作成');
             expect(deleted).toBe(true);
             expect(repo.findByName('PR作成')).toBeUndefined();
         });
 
-        it('存在しない名前の削除はfalseを返すこと', () => {
+        it('returns false when deleting a non-existent name', () => {
             const deleted = repo.deleteByName('存在しない');
             expect(deleted).toBe(false);
         });
     });
 
-    describe('update - テンプレートの更新', () => {
-        it('プロンプトの更新ができること', () => {
+    describe('update - update template', () => {
+        it('can update the prompt', () => {
             repo.create({ name: 'PR作成', prompt: 'PRを作成して' });
             const updated = repo.updateByName('PR作成', { prompt: '新しいPR作成プロンプト' });
             expect(updated).toBe(true);
@@ -103,7 +103,7 @@ describe('TemplateRepository', () => {
             expect(found?.prompt).toBe('新しいPR作成プロンプト');
         });
 
-        it('存在しない名前の更新はfalseを返すこと', () => {
+        it('returns false when updating a non-existent name', () => {
             const updated = repo.updateByName('存在しない', { prompt: '新しいプロンプト' });
             expect(updated).toBe(false);
         });

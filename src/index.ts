@@ -5,7 +5,7 @@ import { LOGO } from './utils/logo';
 
 console.log(LOGO);
 
-// 二重起動防止: 既にBotが起動中なら即終了
+// Prevent duplicate launch: exit immediately if bot is already running
 acquireLock();
 
 startBot().catch(logger.error);

@@ -79,7 +79,7 @@ describe('CdpService - Target Detection & Connection', () => {
 
     beforeEach(() => {
         // Provide the test port array to restrict search to our test server
-        // maxReconnectAttempts: 0 でテスト後の自動再接続タイマーリークを防ぐ
+        // maxReconnectAttempts: 0 prevents auto-reconnect timer leaks after tests
         service = new CdpService({ portsToScan: [testPort], maxReconnectAttempts: 0 });
     });
 
@@ -87,16 +87,16 @@ describe('CdpService - Target Detection & Connection', () => {
         await service.disconnect();
     });
 
-    it('ポートをスキャンし、正しいターゲット(workbench)を検出してWebSocket URLを取得する', async () => {
+    it('scans ports and discovers the correct target (workbench) to obtain the WebSocket URL', async () => {
         const targetUrl = await service.discoverTarget();
         expect(targetUrl).toBe(fakeWsUrl);
     });
 
-    it('WebSocket接続を確立し、コンテキスト(cascade-panel)を認識する', async () => {
+    it('establishes a WebSocket connection and recognizes the context (cascade-panel)', async () => {
         await service.connect();
         expect(service.isConnected()).toBe(true);
 
-        // Context 取得の完了を少し待つ (モックサーバーのレスポンスを受信するため)
+        // Wait briefly for context retrieval to complete (to receive mock server responses)
         await new Promise(r => setTimeout(r, 100));
 
         const contexts = service.getContexts();
@@ -106,7 +106,7 @@ describe('CdpService - Target Detection & Connection', () => {
         expect(targetContextId).toBe(2); // cascade-panel.html is id 2
     });
 
-    it('切断された際に、自動再接続のリスナーが動作すること', async () => {
+    it('triggers the auto-reconnect listener when disconnected', async () => {
         await service.connect();
         expect(service.isConnected()).toBe(true);
 
@@ -114,7 +114,7 @@ describe('CdpService - Target Detection & Connection', () => {
             service.on('disconnected', resolve);
         });
 
-        // モックサーバーから切断を強制
+        // Force disconnect from the mock server
         for (const client of mockWss.clients) {
             client.terminate();
         }

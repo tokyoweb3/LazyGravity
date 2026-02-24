@@ -93,7 +93,7 @@ export const RESPONSE_SELECTORS = {
             if (el) return { isGenerating: true };
         }
 
-        const STOP_WORDS = ['stop', '停止'];
+        const STOP_WORDS = ['stop'];
         for (const scope of scopes) {
             const buttons = scope.querySelectorAll('button, [role="button"]');
             for (let i = 0; i < buttons.length; i++) {
@@ -124,7 +124,7 @@ export const RESPONSE_SELECTORS = {
             }
         }
 
-        const STOP_WORDS = ['stop', '停止'];
+        const STOP_WORDS = ['stop'];
         for (const scope of scopes) {
             const buttons = scope.querySelectorAll('button, [role="button"]');
             for (let i = 0; i < buttons.length; i++) {

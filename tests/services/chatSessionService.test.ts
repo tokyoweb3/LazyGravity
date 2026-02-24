@@ -18,20 +18,20 @@ describe('ChatSessionService', () => {
     });
 
     describe('startNewChat()', () => {
-        it('ボタンが有効な場合、座標クリックで新チャットを開くこと', async () => {
-            // 1回目: ボタン有効(cursor:pointer)、2回目: ボタン無効(cursor:not-allowed)
+        it('opens a new chat via coordinate click when the button is enabled', async () => {
+            // 1st call: button enabled (cursor:pointer), 2nd call: button disabled (cursor:not-allowed)
             let callCount = 0;
             mockCdpService.call.mockImplementation(async (method: string) => {
                 if (method === 'Runtime.evaluate') {
                     callCount++;
                     if (callCount === 1) {
-                        // ボタン状態取得: 有効
+                        // Get button state: enabled
                         return { result: { value: { found: true, enabled: true, x: 100, y: 50 } } };
                     }
-                    // クリック後の確認: 無効に変化
+                    // Verification after click: changed to disabled
                     return { result: { value: { found: true, enabled: false, x: 100, y: 50 } } };
                 }
-                // Input.dispatchMouseEvent は成功
+                // Input.dispatchMouseEvent succeeds
                 return {};
             });
 
@@ -44,7 +44,7 @@ describe('ChatSessionService', () => {
             );
         });
 
-        it('ボタンが無効の場合（既に空チャット）、何もせず成功を返すこと', async () => {
+        it('returns success without action when the button is disabled (already empty chat)', async () => {
             mockCdpService.call.mockResolvedValue({
                 result: { value: { found: true, enabled: false, cursor: 'not-allowed', x: 100, y: 50 } }
             });
@@ -52,14 +52,14 @@ describe('ChatSessionService', () => {
             const result = await service.startNewChat(mockCdpService);
 
             expect(result.ok).toBe(true);
-            // Input.dispatchMouseEvent が呼ばれないことを確認
+            // Verify Input.dispatchMouseEvent was not called
             expect(mockCdpService.call).not.toHaveBeenCalledWith(
                 'Input.dispatchMouseEvent',
                 expect.anything()
             );
         });
 
-        it('ボタンが見つからない場合 ok: false を返すこと', async () => {
+        it('returns ok: false when the button is not found', async () => {
             mockCdpService.call.mockResolvedValue({
                 result: { value: { found: false } }
             });
@@ -67,20 +67,20 @@ describe('ChatSessionService', () => {
             const result = await service.startNewChat(mockCdpService);
 
             expect(result.ok).toBe(false);
-            expect(result.error).toContain('見つかりませんでした');
+            expect(result.error).toContain('not found');
         }, 15000);
 
-        it('コンテキストが空の場合 ok: false を返すこと', async () => {
+        it('returns ok: false when contexts are empty', async () => {
             mockCdpService.getContexts = jest.fn().mockReturnValue([]);
             mockCdpService.waitForCascadePanelReady = jest.fn().mockResolvedValue(false);
 
             const result = await service.startNewChat(mockCdpService);
 
             expect(result.ok).toBe(false);
-            expect(result.error).toContain('コンテキストがありません');
+            expect(result.error).toContain('No contexts available');
         });
 
-        it('CDP呼び出しが例外を投げた場合 ok: false を返すこと', async () => {
+        it('returns ok: false when a CDP call throws an exception', async () => {
             mockCdpService.call.mockRejectedValue(new Error('WebSocket切断'));
 
             const result = await service.startNewChat(mockCdpService);
@@ -89,8 +89,8 @@ describe('ChatSessionService', () => {
             expect(result.error).toBeDefined();
         }, 15000);
 
-        it('クリック後にボタン状態が変化しない場合 ok: false を返すこと', async () => {
-            // ボタンはずっと enabled のまま
+        it('returns ok: false when button state does not change after click', async () => {
+            // Button remains enabled throughout
             mockCdpService.call.mockImplementation(async (method: string) => {
                 if (method === 'Runtime.evaluate') {
                     return { result: { value: { found: true, enabled: true, x: 100, y: 50 } } };
@@ -101,12 +101,12 @@ describe('ChatSessionService', () => {
             const result = await service.startNewChat(mockCdpService);
 
             expect(result.ok).toBe(false);
-            expect(result.error).toContain('状態が変化しませんでした');
+            expect(result.error).toContain('state did not change');
         });
     });
 
     describe('getCurrentSessionInfo()', () => {
-        it('Cascade panelヘッダーからチャットタイトルを取得できること', async () => {
+        it('retrieves the chat title from the Cascade panel header', async () => {
             mockCdpService.call.mockResolvedValue({
                 result: { value: { title: 'テストチャット', hasActiveChat: true } }
             });
@@ -117,7 +117,7 @@ describe('ChatSessionService', () => {
             expect(info.hasActiveChat).toBe(true);
         });
 
-        it('タイトルが "Agent"（デフォルト）の場合 hasActiveChat: false を返すこと', async () => {
+        it('returns hasActiveChat: false when the title is "Agent" (default)', async () => {
             mockCdpService.call.mockResolvedValue({
                 result: { value: { title: 'Agent', hasActiveChat: false } }
             });
@@ -128,23 +128,23 @@ describe('ChatSessionService', () => {
             expect(info.hasActiveChat).toBe(false);
         });
 
-        it('CDP呼び出しが例外を投げた場合はフォールバック値を返すこと', async () => {
+        it('returns fallback values when a CDP call throws an exception', async () => {
             mockCdpService.call.mockRejectedValue(new Error('CDPエラー'));
 
             const info = await service.getCurrentSessionInfo(mockCdpService);
 
-            expect(info.title).toBe('(取得失敗)');
+            expect(info.title).toBe('(Failed to retrieve)');
             expect(info.hasActiveChat).toBe(false);
         });
 
-        it('結果がnullの場合はフォールバック値を返すこと', async () => {
+        it('returns fallback values when the result is null', async () => {
             mockCdpService.call.mockResolvedValue({
                 result: { value: null }
             });
 
             const info = await service.getCurrentSessionInfo(mockCdpService);
 
-            expect(info.title).toBe('(取得失敗)');
+            expect(info.title).toBe('(Failed to retrieve)');
             expect(info.hasActiveChat).toBe(false);
         });
     });

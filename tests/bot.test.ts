@@ -23,7 +23,7 @@ jest.mock('discord.js', () => {
             MessageCreate: 'messageCreate',
             InteractionCreate: 'interactionCreate',
         },
-        // スラッシュコマンド用のモック
+        // Mock for slash commands
         SlashCommandBuilder: jest.fn().mockImplementation(() => {
             const builder: any = {};
             builder.setName = jest.fn().mockReturnValue(builder);
@@ -74,7 +74,7 @@ jest.mock('discord.js', () => {
             applicationCommands: jest.fn().mockReturnValue('/commands'),
             applicationGuildCommands: jest.fn().mockReturnValue('/guild-commands'),
         },
-        // 結線で使う追加のモック
+        // Additional mocks used in wiring
         AttachmentBuilder: jest.fn(),
         ButtonBuilder: jest.fn().mockImplementation(() => ({
             setCustomId: jest.fn().mockReturnThis(),
@@ -117,16 +117,16 @@ jest.mock('better-sqlite3', () => {
     });
 });
 
-// CDPサービスのモック（実際のネットワーク接続を防ぐ）
+// Mock CDP service (prevents actual network connections)
 jest.mock('../src/services/cdpService', () => {
     const EventEmitter = require('events');
     return {
         CdpService: jest.fn().mockImplementation(() => {
             const emitter = new EventEmitter();
             return Object.assign(emitter, {
-                connect: jest.fn().mockRejectedValue(new Error('テスト環境: CDP未接続')),
+                connect: jest.fn().mockRejectedValue(new Error('Test environment: CDP not connected')),
                 disconnect: jest.fn().mockResolvedValue(undefined),
-                discoverTarget: jest.fn().mockRejectedValue(new Error('テスト環境')),
+                discoverTarget: jest.fn().mockRejectedValue(new Error('Test environment')),
                 injectMessage: jest.fn().mockResolvedValue({ ok: false, error: 'mock' }),
                 getContexts: jest.fn().mockReturnValue([]),
                 call: jest.fn().mockResolvedValue({}),
@@ -177,7 +177,7 @@ describe('Bot Startup', () => {
         expect(clientInstance.login).toHaveBeenCalledWith('test_token');
     });
 
-    it('final-only設定があってもレスポンス配信モードはstream固定であること', () => {
+    it('forces response delivery mode to stream even when final-only is configured', () => {
         process.env.LAZYGRAVITY_RESPONSE_DELIVERY = 'final-only';
         expect(getResponseDeliveryModeForTest()).toBe('stream');
     });

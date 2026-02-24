@@ -2,7 +2,7 @@ import { CdpService } from '../../src/services/cdpService';
 import * as http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 
-describe('CdpService - 画像転送', () => {
+describe('CdpService - Image Transfer', () => {
     let service: CdpService;
     let mockHttpServer: http.Server;
     let mockWss: WebSocketServer;
@@ -148,7 +148,7 @@ describe('CdpService - 画像転送', () => {
         await service.disconnect();
     });
 
-    it('画像ファイルを添付してメッセージ送信できること', async () => {
+    it('sends a message with attached image files', async () => {
         await service.connect();
         await new Promise(r => setTimeout(r, 100));
 
@@ -165,7 +165,7 @@ describe('CdpService - 画像転送', () => {
         expect(domSetFilesCall.params.files).toEqual(['/tmp/agclaw-a.png', '/tmp/agclaw-b.jpg']);
     });
 
-    it('最新応答の画像データを取得できること', async () => {
+    it('extracts image data from the latest response', async () => {
         await service.connect();
         await new Promise(r => setTimeout(r, 100));
         evaluateCalls = 3;

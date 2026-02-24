@@ -8,9 +8,9 @@ import WebSocket from 'ws';
 export interface CdpServiceOptions {
     portsToScan?: number[];
     cdpCallTimeout?: number;
-    /** 切断時の自動再接続試行回数。0は再接続しない。デフォルト: 3 */
+    /** Number of auto-reconnect attempts on disconnect. 0 = no reconnect. Default: 3 */
     maxReconnectAttempts?: number;
-    /** 再接続試行間のディレイ（ミリ秒）。デフォルト: 2000 */
+    /** Delay between reconnect attempts (ms). Default: 2000 */
     reconnectDelayMs?: number;
 }
 
@@ -34,25 +34,25 @@ export interface ExtractedResponseImage {
     url?: string;
 }
 
-/** UI同期操作結果の型定義 (Step 9) */
+/** UI sync operation result type (Step 9) */
 export interface UiSyncResult {
     ok: boolean;
-    /** 設定されたモード名（setUiMode成功時） */
+    /** Mode name set (on setUiMode success) */
     mode?: string;
-    /** 設定されたモデル名（setUiModel成功時） */
+    /** Model name set (on setUiModel success) */
     model?: string;
     error?: string;
 }
 
-/** Antigravity UIのDOMセレクター定数 */
+/** Antigravity UI DOM selector constants */
 const SELECTORS = {
-    /** チャット入力ボックス: xterm を除いた textbox */
+    /** Chat input box: textbox excluding xterm */
     CHAT_INPUT: 'div[role="textbox"]:not(.xterm-helper-textarea)',
-    /** 送信ボタン検索対象タグ */
+    /** Submit button search target tag */
     SUBMIT_BUTTON_CONTAINER: 'button',
-    /** 送信アイコンのSVGクラス候補 */
+    /** Submit icon SVG class candidates */
     SUBMIT_BUTTON_SVG_CLASSES: ['lucide-arrow-right', 'lucide-arrow-up', 'lucide-send'],
-    /** メッセージ注入対象コンテキストを識別するキーワード */
+    /** Keyword to identify message injection target context */
     CONTEXT_URL_KEYWORD: 'cascade-panel',
 };
 
@@ -65,17 +65,17 @@ export class CdpService extends EventEmitter {
     private idCounter = 1;
     private cdpCallTimeout = 30000;
     private targetUrl: string | null = null;
-    /** 切断時の自動再接続試行回数 */
+    /** Number of auto-reconnect attempts on disconnect */
     private maxReconnectAttempts: number;
-    /** 再接続試行間のディレイ（ミリ秒） */
+    /** Delay between reconnect attempts (ms) */
     private reconnectDelayMs: number;
-    /** 現在の再接続試行回数 */
+    /** Current reconnect attempt count */
     private reconnectAttemptCount: number = 0;
-    /** 再接続中フラグ（二重接続防止） */
+    /** Reconnecting flag (prevents double connections) */
     private isReconnecting: boolean = false;
-    /** 現在接続中のワークスペース名 */
+    /** Currently connected workspace name */
     private currentWorkspaceName: string | null = null;
-    /** ワークスペース切替中フラグ（disconnectedイベント抑制用） */
+    /** Workspace switching flag (suppresses disconnected event) */
     private isSwitchingWorkspace: boolean = false;
 
     constructor(options: CdpServiceOptions = {}) {
@@ -134,7 +134,7 @@ export class CdpService extends EventEmitter {
 
         if (target && target.webSocketDebuggerUrl) {
             this.targetUrl = target.webSocketDebuggerUrl;
-            // タイトルからワークスペース名を抽出（例: "ProjectName — Antigravity"）
+            // Extract workspace name from title (e.g., "ProjectName — Antigravity")
             if (target.title && !this.currentWorkspaceName) {
                 const titleParts = target.title.split(/\\s[—–-]\\s/);
                 if (titleParts.length > 0) {
@@ -183,7 +183,7 @@ export class CdpService extends EventEmitter {
                     if (idx !== -1) this.contexts.splice(idx, 1);
                 }
 
-                // CDP イベントを EventEmitter で転送（Network.*, Runtime.* 等）
+                // Forward CDP events via EventEmitter (Network.*, Runtime.*, etc.)
                 if (data.method) {
                     this.emit(data.method, data.params);
                 }
@@ -192,14 +192,14 @@ export class CdpService extends EventEmitter {
 
         this.ws.on('close', () => {
             this.isConnectedFlag = false;
-            // 切断時に未解決のpendingCallsを全てrejectしてメモリリークを防ぐ
-            this.clearPendingCalls(new Error('WebSocket切断'));
+            // Reject all unresolved pending calls to prevent memory leaks
+            this.clearPendingCalls(new Error('WebSocket disconnected'));
             this.ws = null;
             this.targetUrl = null;
-            // ワークスペース切替中はdisconnectedイベントと自動再接続を抑制
+            // Suppress disconnected event and auto-reconnect during workspace switching
             if (this.isSwitchingWorkspace) return;
             this.emit('disconnected');
-            // 自動再接続を試みる（maxReconnectAttempts > 0の場合）
+            // Attempt auto-reconnect (when maxReconnectAttempts > 0)
             if (this.maxReconnectAttempts > 0 && !this.isReconnecting) {
                 this.tryReconnect();
             }
@@ -237,7 +237,7 @@ export class CdpService extends EventEmitter {
     }
 
     async disconnect(): Promise<void> {
-        // 再接続を停止させる
+        // Stop reconnection attempts
         this.maxReconnectAttempts = 0;
         if (this.ws) {
             this.ws.close();
@@ -245,27 +245,27 @@ export class CdpService extends EventEmitter {
         }
         this.isConnectedFlag = false;
         this.contexts = [];
-        this.clearPendingCalls(new Error('disconnect()が呼ばれました'));
+        this.clearPendingCalls(new Error('disconnect() was called'));
     }
 
     /**
-     * 現在接続中のワークスペース名を返す
+     * Return the currently connected workspace name.
      */
     getCurrentWorkspaceName(): string | null {
         return this.currentWorkspaceName;
     }
 
     /**
-     * 指定ワークスペースのworkbenchページを発見し、そのページに接続する。
-     * 既に正しいページに接続中の場合は何もしない。
+     * Discover and connect to the workbench page for the specified workspace.
+     * Does nothing if already connected to the correct page.
      *
-     * @param workspacePath ワークスペースのフルパス（例: /home/user/Code/MyProject）
-     * @returns 接続成功時 true
+     * @param workspacePath Full workspace path (e.g., /home/user/Code/MyProject)
+     * @returns true on successful connection
      */
     async discoverAndConnectForWorkspace(workspacePath: string): Promise<boolean> {
         const workspaceDirName = workspacePath.split('/').filter(Boolean).pop() || '';
 
-        // 既に正しいワークスペースに接続中なら何もしない
+        // Do nothing if already connected to the correct workspace
         if (this.isConnectedFlag && this.currentWorkspaceName === workspaceDirName) {
             return true;
         }
@@ -282,7 +282,7 @@ export class CdpService extends EventEmitter {
         workspacePath: string,
         workspaceDirName: string,
     ): Promise<boolean> {
-        // 全ポートをスキャンしてworkbenchページを収集
+        // Scan all ports to collect workbench pages
         let pages: any[] = [];
         let respondingPort: number | null = null;
 
@@ -290,27 +290,27 @@ export class CdpService extends EventEmitter {
             try {
                 const list = await this.getJson(`http://127.0.0.1:${port}/json/list`);
                 pages.push(...list);
-                // workbench を含むページがあるポートを優先的に記録
+                // Prioritize recording ports that contain workbench pages
                 const hasWorkbench = list.some((t: any) => t.url?.includes('workbench'));
                 if (hasWorkbench && respondingPort === null) {
                     respondingPort = port;
                 }
             } catch {
-                // このポートは応答なし、次へ
+                // No response from this port, next
             }
         }
 
         if (respondingPort === null && pages.length > 0) {
-            // workbenchは見つからなかったが応答はあった場合
+            // No workbench found but ports responded
             respondingPort = this.ports[0]; // logging purposes
         }
 
         if (respondingPort === null) {
-            // どのポートにも接続できない場合、Antigravityを起動
+            // Launch Antigravity if no port responds
             return this.launchAndConnectWorkspace(workspacePath, workspaceDirName);
         }
 
-        // workbenchページのみをフィルタ（Launchpad, Manager, iframe, worker除外）
+        // Filter workbench pages only (exclude Launchpad, Manager, iframe, worker)
         const workbenchPages = pages.filter(
             (t: any) =>
                 t.type === 'page' &&
@@ -320,33 +320,33 @@ export class CdpService extends EventEmitter {
                 t.url?.includes('workbench'),
         );
 
-        logger.info(`[CdpService] ワークスペース "${workspaceDirName}" を検索中 (port=${respondingPort})... workbenchページ ${workbenchPages.length} 件:`);
+        logger.info(`[CdpService] Searching for workspace "${workspaceDirName}" (port=${respondingPort})... ${workbenchPages.length} workbench pages:`);
         for (const p of workbenchPages) {
             logger.info(`  - title="${p.title}" url=${p.url}`);
         }
 
-        // 1. タイトルマッチ（高速パス）
+        // 1. Title match (fast path)
         const titleMatch = workbenchPages.find((t: any) => t.title?.includes(workspaceDirName));
         if (titleMatch) {
             return this.connectToPage(titleMatch, workspaceDirName);
         }
 
-        // 2. タイトルマッチ失敗 → CDPプローブ（各ページに接続してdocument.titleを確認）
-        logger.info(`[CdpService] タイトルマッチ失敗。CDPプローブで検索します...`);
+        // 2. Title match failed -> CDP probe (connect to each page and check document.title)
+        logger.info(`[CdpService] Title match failed. Searching via CDP probe...`);
         const probeResult = await this.probeWorkbenchPages(workbenchPages, workspaceDirName, workspacePath);
         if (probeResult) {
             return true;
         }
 
-        // 3. プローブでも見つからない場合、新規ウィンドウを起動
+        // 3. If not found by probe either, launch a new window
         return this.launchAndConnectWorkspace(workspacePath, workspaceDirName);
     }
 
     /**
-     * 指定ページに接続する（既に接続中の場合はスキップ）
+     * Connect to the specified page (skip if already connected).
      */
     private async connectToPage(page: any, workspaceDirName: string): Promise<boolean> {
-        // 既に同じURLに接続中なら再接続不要
+        // No reconnection needed if already connected to the same URL
         if (this.isConnectedFlag && this.targetUrl === page.webSocketDebuggerUrl) {
             this.currentWorkspaceName = workspaceDirName;
             return true;
@@ -356,21 +356,20 @@ export class CdpService extends EventEmitter {
         this.targetUrl = page.webSocketDebuggerUrl;
         await this.connect();
         this.currentWorkspaceName = workspaceDirName;
-        logger.info(`[CdpService] ワークスペース "${workspaceDirName}" に接続しました`);
+        logger.info(`[CdpService] Connected to workspace "${workspaceDirName}"`);
 
         return true;
     }
 
     /**
-     * 各workbenchページにCDP接続してdocument.titleを取得し、ワークスペース名を検出する。
-     * /json/list のタイトルが古い・不完全な場合のフォールバック。
+     * Connect to each workbench page via CDP to get document.title and detect workspace name.
+     * Fallback when /json/list titles are stale or incomplete.
      *
-     * タイトルが "Untitled (Workspace)" の場合は、ワークスペースのフォルダパスを
-     * CDP経由で確認し、ワークスペースを特定する。
+     * If the title is "Untitled (Workspace)", verify workspace folder path via CDP.
      *
-     * @param workbenchPages workbenchページの一覧
-     * @param workspaceDirName ワークスペースのディレクトリ名
-     * @param workspacePath ワークスペースのフルパス（フォルダパスマッチング用）
+     * @param workbenchPages List of workbench pages
+     * @param workspaceDirName Workspace directory name
+     * @param workspacePath Full workspace path (for folder path matching)
      */
     private async probeWorkbenchPages(
         workbenchPages: any[],
@@ -379,7 +378,7 @@ export class CdpService extends EventEmitter {
     ): Promise<boolean> {
         for (const page of workbenchPages) {
             try {
-                // 一時的に接続してdocument.titleを取得
+                // Temporarily connect to retrieve document.title
                 this.disconnectQuietly();
                 this.targetUrl = page.webSocketDebuggerUrl;
                 await this.connect();
@@ -389,15 +388,15 @@ export class CdpService extends EventEmitter {
                     returnByValue: true,
                 });
                 const liveTitle = result?.result?.value || '';
-                logger.debug(`[CdpService] プローブ: page.id=${page.id} liveTitle="${liveTitle}"`);
+                logger.debug(`[CdpService] Probe: page.id=${page.id} liveTitle="${liveTitle}"`);
 
                 if (liveTitle.includes(workspaceDirName)) {
                     this.currentWorkspaceName = workspaceDirName;
-                    logger.info(`[CdpService] プローブ成功: "${workspaceDirName}" を検出しました`);
+                    logger.info(`[CdpService] Probe success: detected "${workspaceDirName}"`);
                     return true;
                 }
 
-                // タイトルが "Untitled (Workspace)" の場合、フォルダパスで確認
+                // If title is "Untitled (Workspace)", verify by folder path
                 if (liveTitle.includes('Untitled') && workspacePath) {
                     const folderMatch = await this.probeWorkspaceFolderPath(workspaceDirName, workspacePath);
                     if (folderMatch) {
@@ -405,51 +404,50 @@ export class CdpService extends EventEmitter {
                     }
                 }
             } catch (e) {
-                logger.warn(`[CdpService] プローブ失敗 (page.id=${page.id}):`, e);
+                logger.warn(`[CdpService] Probe failed (page.id=${page.id}):`, e);
             }
         }
 
-        // プローブ完了、見つからなかった → 切断状態に戻す
+        // Probe complete, not found -> return to disconnected state
         this.disconnectQuietly();
         return false;
     }
 
     /**
-     * 現在接続中のページが指定ワークスペースのフォルダを開いているか確認する。
-     * Antigravity (VS Code系) では document.querySelector('.explorer-folders-view') や
-     * ウィンドウタイトル設定API等から情報を取得できる場合がある。
-     * 
-     * 複数の手法でフォルダパスを検出:
-     * 1. VS Code APIの vscode.workspace.workspaceFolders を確認
-     * 2. DOM内のフォルダパス表示を確認
-     * 3. window.location.hash 等からワークスペース情報を取得
+     * Check if the currently connected page has the specified workspace folder open.
+     * In Antigravity (VS Code-based), info may be available from explorer views or APIs.
+     *
+     * Detects folder path via multiple approaches:
+     * 1. Check vscode.workspace.workspaceFolders via VS Code API
+     * 2. Check folder path display in DOM
+     * 3. Get workspace info from window.location.hash, etc.
      */
     private async probeWorkspaceFolderPath(
         workspaceDirName: string,
         workspacePath: string,
     ): Promise<boolean> {
         try {
-            // DOMやdocument.titleの代わりに、ページURL内のfolder parameterや
-            // エクスプローラービューのフォルダ名を確認する
+            // Instead of DOM/document.title, check folder parameter in page URL or
+            // folder name in explorer view
             const expression = `(() => {
-                // 方法1: ウィンドウタイトルのdata属性を確認
+                // Method 1: Check window title data attribute
                 const titleEl = document.querySelector('title');
                 if (titleEl && titleEl.textContent) {
                     const t = titleEl.textContent;
                     if (t !== document.title) return { found: true, source: 'title-element', value: t };
                 }
                 
-                // 方法2: エクスプローラービューのフォルダ名を確認
+                // Method 2: Check folder name in explorer view
                 const explorerItems = document.querySelectorAll('.explorer-item-label, .monaco-icon-label .label-name');
                 const folderNames = Array.from(explorerItems).map(e => (e.textContent || '').trim()).filter(Boolean);
                 if (folderNames.length > 0) return { found: true, source: 'explorer', value: folderNames.join(',') };
                 
-                // 方法3: タブタイトルやブレッドクラムからパスを取得
+                // Method 3: Get path from tab titles or breadcrumbs
                 const breadcrumbs = document.querySelectorAll('.breadcrumbs-view .folder-icon, .tabs-breadcrumbs .label-name');
                 const crumbs = Array.from(breadcrumbs).map(e => (e.textContent || '').trim()).filter(Boolean);
                 if (crumbs.length > 0) return { found: true, source: 'breadcrumbs', value: crumbs.join(',') };
                 
-                // 方法4: body の data-uri 属性等を確認
+                // Method 4: Check body data-uri attribute, etc.
                 const bodyUri = document.body?.getAttribute('data-uri') || '';
                 if (bodyUri) return { found: true, source: 'data-uri', value: bodyUri };
                 
@@ -464,19 +462,19 @@ export class CdpService extends EventEmitter {
             const value = res?.result?.value;
             if (value?.found && value?.value) {
                 const detectedValue = value.value as string;
-                logger.debug(`[CdpService] フォルダパスプローブ (${value.source}): "${detectedValue}"`);
+                logger.debug(`[CdpService] Folder path probe (${value.source}): "${detectedValue}"`);
 
                 if (
                     detectedValue.includes(workspaceDirName) ||
                     detectedValue.includes(workspacePath)
                 ) {
                     this.currentWorkspaceName = workspaceDirName;
-                    logger.info(`[CdpService] フォルダパスマッチ成功: "${workspaceDirName}"`);
+                    logger.info(`[CdpService] Folder path match success: "${workspaceDirName}"`);
                     return true;
                 }
             }
 
-            // 追加フォールバック: URL paramsを確認（VS Code系ではfolderパラメータがある場合がある）
+            // Additional fallback: check URL params (VS Code-based editors may have folder parameter)
             const urlResult = await this.call('Runtime.evaluate', {
                 expression: 'window.location.href',
                 returnByValue: true,
@@ -484,43 +482,42 @@ export class CdpService extends EventEmitter {
             const pageUrl = urlResult?.result?.value || '';
             if (pageUrl.includes(encodeURIComponent(workspacePath)) || pageUrl.includes(workspaceDirName)) {
                 this.currentWorkspaceName = workspaceDirName;
-                logger.info(`[CdpService] URLパラメータマッチ成功: "${workspaceDirName}"`);
+                logger.info(`[CdpService] URL parameter match success: "${workspaceDirName}"`);
                 return true;
             }
 
         } catch (e) {
-            logger.warn(`[CdpService] フォルダパスプローブ失敗:`, e);
+            logger.warn(`[CdpService] Folder path probe failed:`, e);
         }
 
         return false;
     }
 
     /**
-     * Antigravityを起動し、新しいworkbenchページが出現するまで待機して接続する。
+     * Launch Antigravity and wait for a new workbench page to appear, then connect.
      */
     private async launchAndConnectWorkspace(
         workspacePath: string,
         workspaceDirName: string,
     ): Promise<boolean> {
-        // Antigravity CLI を使用してフォルダとして開く（ワークスペースモードではなく）。
-        // `open -a Antigravity` だとワークスペースとして開かれ、タイトルが
-        // "Untitled (Workspace)" になることがある。
-        // CLI の --new-window でフォルダとして開けば、タイトルに即座にディレクトリ名が反映される。
+        // Open as folder using Antigravity CLI (not as workspace mode).
+        // `open -a Antigravity` may open as workspace, resulting in title "Untitled (Workspace)".
+        // CLI --new-window opens as folder, immediately reflecting directory name in title.
         const antigravityCli = '/Applications/Antigravity.app/Contents/Resources/app/bin/antigravity';
-        logger.info(`[CdpService] Antigravity起動: ${antigravityCli} --new-window ${workspacePath}`);
+        logger.info(`[CdpService] Launching Antigravity: ${antigravityCli} --new-window ${workspacePath}`);
         try {
             await this.runCommand(antigravityCli, ['--new-window', workspacePath]);
         } catch (error: any) {
-            // CLIが見つからない場合は open -a にフォールバック
-            logger.warn(`[CdpService] CLI起動失敗、open -a にフォールバック: ${error?.message || String(error)}`);
+            // Fall back to open -a if CLI not found
+            logger.warn(`[CdpService] CLI launch failed, falling back to open -a: ${error?.message || String(error)}`);
             await this.runCommand('open', ['-a', 'Antigravity', workspacePath]);
         }
 
-        // ポーリングで新しいworkbenchページが出現するまで待機（最大30秒）
+        // Poll until a new workbench page appears (max 30 seconds)
         const maxWaitMs = 30000;
         const pollIntervalMs = 1000;
         const startTime = Date.now();
-        /** 起動前のworkbenchページID一覧（新規ページ検出用） */
+        /** Pre-launch workbench page IDs (for detecting new pages) */
         let knownPageIds: Set<string> = new Set();
         for (const port of this.ports) {
             try {
@@ -529,7 +526,7 @@ export class CdpService extends EventEmitter {
                     if (p.id) knownPageIds.add(p.id);
                 });
             } catch {
-                // このポートは応答なし
+                // No response from this port
             }
         }
 
@@ -542,7 +539,7 @@ export class CdpService extends EventEmitter {
                     const list = await this.getJson(`http://127.0.0.1:${port}/json/list`);
                     pages.push(...list);
                 } catch {
-                    // 次のポートへ
+                    // Next port
                 }
             }
 
@@ -557,20 +554,20 @@ export class CdpService extends EventEmitter {
                     t.url?.includes('workbench'),
             );
 
-            // タイトルマッチ
+            // Title match
             const titleMatch = workbenchPages.find((t: any) => t.title?.includes(workspaceDirName));
             if (titleMatch) {
                 return this.connectToPage(titleMatch, workspaceDirName);
             }
 
-            // CDPプローブ（タイトルが更新されていない場合、フォルダパスも確認）
+            // CDP probe (also check folder path if title is not updated)
             const probeResult = await this.probeWorkbenchPages(workbenchPages, workspaceDirName, workspacePath);
             if (probeResult) {
                 return true;
             }
 
-            // フォールバック: 起動後に新しく出現した "Untitled (Workspace)" ページに接続
-            // タイトル更新もフォルダパスも取れない場合、新規ページであれば対象と見なす
+            // Fallback: connect to newly appeared "Untitled (Workspace)" page after launch
+            // If title update and folder path both fail, treat new page as target
             if (Date.now() - startTime > 10000) {
                 const newUntitledPages = workbenchPages.filter(
                     (t: any) =>
@@ -578,14 +575,14 @@ export class CdpService extends EventEmitter {
                         (t.title?.includes('Untitled') || t.title === ''),
                 );
                 if (newUntitledPages.length === 1) {
-                    logger.info(`[CdpService] 新規Untitledページを検出。"${workspaceDirName}" として接続します (page.id=${newUntitledPages[0].id})`);
+                    logger.info(`[CdpService] New Untitled page detected. Connecting as "${workspaceDirName}" (page.id=${newUntitledPages[0].id})`);
                     return this.connectToPage(newUntitledPages[0], workspaceDirName);
                 }
             }
         }
 
         throw new Error(
-            `ワークスペース "${workspaceDirName}" のworkbenchページが${maxWaitMs / 1000}秒以内に見つかりませんでした`,
+            `Workbench page for workspace "${workspaceDirName}" not found within ${maxWaitMs / 1000} seconds`,
         );
     }
 
@@ -608,30 +605,30 @@ export class CdpService extends EventEmitter {
     }
 
     /**
-     * 既存接続を静かに切断する（再接続を試みない）。
-     * ワークスペース切替時に使用。
+     * Quietly disconnect the existing connection (no reconnect attempts).
+     * Used during workspace switching.
      *
-     * 重要: ws.close() の close イベントは非同期で発火するため、
-     * リスナーを事前に全削除しないと targetUrl のリセットや
-     * tryReconnect() が走り、別のworkbenchに再接続してしまう。
+     * Important: ws.close() fires close event asynchronously, so all listeners
+     * must be removed first to prevent targetUrl reset and tryReconnect()
+     * from reconnecting to a different workbench.
      */
     private disconnectQuietly(): void {
         if (this.ws) {
-            // close イベントハンドラを含む全リスナーを除去し、副作用を防ぐ
+            // Remove all listeners including close event handlers to prevent side effects
             this.ws.removeAllListeners();
             this.ws.close();
             this.ws = null;
             this.isConnectedFlag = false;
             this.contexts = [];
-            this.clearPendingCalls(new Error('ワークスペース切替のため切断'));
+            this.clearPendingCalls(new Error('Disconnected for workspace switch'));
             this.targetUrl = null;
         }
     }
 
     /**
-     * 未解決のpendingCallsを全てrejectし、メモリリークを防ぐ。
-     * (Step 12: エラーハンドリング)
-     * @param error rejectに渡すエラー
+     * Reject all unresolved pending calls to prevent memory leaks.
+     * (Step 12: Error handling)
+     * @param error Error to pass to reject
      */
     private clearPendingCalls(error: Error): void {
         for (const [, { reject, timeoutId }] of this.pendingCalls.entries()) {
@@ -642,9 +639,9 @@ export class CdpService extends EventEmitter {
     }
 
     /**
-     * CDP切断後に自動再接続を試みる。
-     * maxReconnectAttempts回失敗したら 'reconnectFailed' イベントを発火する。
-     * (Step 12: エラーハンドリングとタイムアウト処理)
+     * Attempt auto-reconnect after CDP disconnection.
+     * Fires 'reconnectFailed' event after maxReconnectAttempts failures.
+     * (Step 12: Error handling and timeout management)
      */
     private async tryReconnect(): Promise<void> {
         if (this.isReconnecting) return;
@@ -654,29 +651,29 @@ export class CdpService extends EventEmitter {
         while (this.reconnectAttemptCount < this.maxReconnectAttempts) {
             this.reconnectAttemptCount++;
             logger.error(
-                `[CdpService] 再接続試行 ${this.reconnectAttemptCount}/${this.maxReconnectAttempts}...`
+                `[CdpService] Reconnect attempt ${this.reconnectAttemptCount}/${this.maxReconnectAttempts}...`
             );
 
-            // ディレイを挟む
+            // Add delay between attempts
             await new Promise(r => setTimeout(r, this.reconnectDelayMs));
 
             try {
                 this.contexts = [];
                 await this.discoverTarget();
                 await this.connect();
-                logger.error('[CdpService] 再接続成功。');
+                logger.error('[CdpService] Reconnect succeeded.');
                 this.reconnectAttemptCount = 0;
                 this.isReconnecting = false;
                 this.emit('reconnected');
                 return;
             } catch (err) {
-                logger.error('[CdpService] 再接続失敗:', err);
+                logger.error('[CdpService] Reconnect failed:', err);
             }
         }
 
         this.isReconnecting = false;
         const finalError = new Error(
-            `CDPへの再接続が${this.maxReconnectAttempts}回失敗しました。手動での再起動が必要です。`
+            `CDP reconnection failed ${this.maxReconnectAttempts} times. Manual restart required.`
         );
         logger.error('[CdpService]', finalError.message);
         this.emit('reconnectFailed', finalError);
@@ -691,13 +688,13 @@ export class CdpService extends EventEmitter {
     }
 
     /**
-     * cascade-panel コンテキストが利用可能になるまでポーリングで待機する。
-     * Antigravity起動直後は Runtime.enable 後もコンテキストが非同期で作成されるため、
-     * DOM操作を行う前にこのメソッドで準備完了を確認する。
+     * Wait by polling until cascade-panel context becomes available.
+     * Right after Antigravity launch, contexts are created asynchronously even after Runtime.enable,
+     * so use this method to confirm readiness before DOM operations.
      *
-     * @param timeoutMs 最大待機時間（ミリ秒）。デフォルト: 10000
-     * @param pollIntervalMs ポーリング間隔（ミリ秒）。デフォルト: 500
-     * @returns cascade-panel コンテキストが見つかった場合 true
+     * @param timeoutMs Maximum wait time (ms). Default: 10000
+     * @param pollIntervalMs Polling interval (ms). Default: 500
+     * @returns true if cascade-panel context was found
      */
     async waitForCascadePanelReady(timeoutMs = 10000, pollIntervalMs = 500): Promise<boolean> {
         const start = Date.now();
@@ -726,7 +723,7 @@ export class CdpService extends EventEmitter {
     }
 
     /**
-     * チャット入力欄にフォーカスする。
+     * Focus the chat input field.
      */
     private async focusChatInput(): Promise<{ ok: boolean; contextId?: number; error?: string }> {
         const focusScript = `(() => {
@@ -749,15 +746,15 @@ export class CdpService extends EventEmitter {
                     return { ok: true, contextId: ctx.id };
                 }
             } catch {
-                // 次のコンテキストへ
+                // Try next context
             }
         }
 
-        return { ok: false, error: 'チャット入力欄が見つかりませんでした' };
+        return { ok: false, error: 'Chat input field not found' };
     }
 
     /**
-     * Enterキーを送信してメッセージを送る。
+     * Send Enter key to submit the message.
      */
     private async pressEnterToSend(): Promise<void> {
         await this.call('Input.dispatchKeyEvent', {
@@ -777,7 +774,7 @@ export class CdpService extends EventEmitter {
     }
 
     /**
-     * UI上の file input を検出し、指定ファイルを添付する。
+     * Detect file input in the UI and attach the specified files.
      */
     private async attachImageFiles(filePaths: string[], contextId?: number): Promise<{ ok: boolean; error?: string }> {
         if (filePaths.length === 0) return { ok: true };
@@ -809,7 +806,7 @@ export class CdpService extends EventEmitter {
 
             let input = findInput();
             if (!input) {
-                const triggerKeywords = ['attach', 'upload', 'image', 'file', '画像', '添付', 'paperclip', 'plus'];
+                const triggerKeywords = ['attach', 'upload', 'image', 'file', 'paperclip', 'plus'];
                 const triggers = Array.from(document.querySelectorAll('button, [role="button"]'))
                     .filter(visible)
                     .filter((el) => {
@@ -833,7 +830,7 @@ export class CdpService extends EventEmitter {
             }
 
             if (!input) {
-                return { ok: false, error: '画像アップロード入力が見つかりませんでした' };
+                return { ok: false, error: 'Image upload input not found' };
             }
 
             const token = 'agclaw-upload-' + Math.random().toString(36).slice(2, 10);
@@ -853,14 +850,14 @@ export class CdpService extends EventEmitter {
         const locateResult = await this.call('Runtime.evaluate', callParams);
         const locateValue = locateResult?.result?.value;
         if (!locateValue?.ok || !locateValue?.token) {
-            return { ok: false, error: locateValue?.error || 'file input の特定に失敗しました' };
+            return { ok: false, error: locateValue?.error || 'Failed to locate file input' };
         }
 
         const token = String(locateValue.token);
         const documentResult = await this.call('DOM.getDocument', { depth: 1, pierce: true });
         const rootNodeId = documentResult?.root?.nodeId;
         if (!rootNodeId) {
-            return { ok: false, error: 'DOMルートの取得に失敗しました' };
+            return { ok: false, error: 'Failed to get DOM root' };
         }
 
         const selector = `input[data-agclaw-upload-token="${token}"]`;
@@ -870,7 +867,7 @@ export class CdpService extends EventEmitter {
         });
         const nodeId = nodeResult?.nodeId;
         if (!nodeId) {
-            return { ok: false, error: 'アップロード入力ノードの取得に失敗しました' };
+            return { ok: false, error: 'Failed to get upload input node' };
         }
 
         await this.call('DOM.setFileInputFiles', {
@@ -880,7 +877,7 @@ export class CdpService extends EventEmitter {
 
         const notifyScript = `(() => {
             const input = document.querySelector('${selector}');
-            if (!input) return { ok: false, error: '画像入力が見つかりませんでした' };
+            if (!input) return { ok: false, error: 'Image input not found' };
             input.dispatchEvent(new Event('input', { bubbles: true }));
             input.dispatchEvent(new Event('change', { bubbles: true }));
             input.removeAttribute('data-agclaw-upload-token');
@@ -899,52 +896,52 @@ export class CdpService extends EventEmitter {
     }
 
     /**
-     * 指定テキストをAntigravityのチャット入力欄に注入し送信する。
+     * Inject and send the specified text into Antigravity's chat input field.
      *
-     * 戦略:
-     *   1. Runtime.evaluate でエディタにフォーカス
-     *   2. CDP Input.insertText でテキストを入力
-     *   3. CDP Input.dispatchKeyEvent(Enter) で送信
+     * Strategy:
+     *   1. Focus editor via Runtime.evaluate
+     *   2. Input text via CDP Input.insertText
+     *   3. Send via CDP Input.dispatchKeyEvent(Enter)
      *
-     * DOM操作ではなく CDP Input API を使用することで、
-     * Cascade panel の React/フレームワークイベントハンドラに確実に到達する。
+     * Using CDP Input API instead of DOM manipulation ensures reliable
+     * delivery to Cascade panel's React/framework event handlers.
      */
     async injectMessage(text: string): Promise<InjectResult> {
         if (!this.isConnectedFlag || !this.ws) {
-            throw new Error('CDPに接続されていません。connect()を先に呼んでください。');
+            throw new Error('Not connected to CDP. Call connect() first.');
         }
 
         const focusResult = await this.focusChatInput();
         if (!focusResult.ok) {
-            return { ok: false, error: focusResult.error || 'チャット入力欄が見つかりませんでした' };
+            return { ok: false, error: focusResult.error || 'Chat input field not found' };
         }
 
-        // 1. CDP Input.insertText でテキスト入力
+        // 1. Input text via CDP Input.insertText
         await this.call('Input.insertText', { text });
         await new Promise(r => setTimeout(r, 200));
 
-        // 2. Enter キーで送信
+        // 2. Send via Enter key
         await this.pressEnterToSend();
 
         return { ok: true, method: 'enter', contextId: focusResult.contextId };
     }
 
     /**
-     * 画像ファイルをUIへ添付した上で、指定テキストを送信する。
+     * Attach image files to the UI and send the specified text.
      */
     async injectMessageWithImageFiles(text: string, imageFilePaths: string[]): Promise<InjectResult> {
         if (!this.isConnectedFlag || !this.ws) {
-            throw new Error('CDPに接続されていません。connect()を先に呼んでください。');
+            throw new Error('Not connected to CDP. Call connect() first.');
         }
 
         const focusResult = await this.focusChatInput();
         if (!focusResult.ok) {
-            return { ok: false, error: focusResult.error || 'チャット入力欄が見つかりませんでした' };
+            return { ok: false, error: focusResult.error || 'Chat input field not found' };
         }
 
         const attachResult = await this.attachImageFiles(imageFilePaths, focusResult.contextId);
         if (!attachResult.ok) {
-            return { ok: false, error: attachResult.error || '画像の添付に失敗しました' };
+            return { ok: false, error: attachResult.error || 'Failed to attach images' };
         }
 
         await this.call('Input.insertText', { text });
@@ -955,7 +952,7 @@ export class CdpService extends EventEmitter {
     }
 
     /**
-     * 最新AI応答の画像を抽出する。
+     * Extract images from the latest AI response.
      */
     async extractLatestResponseImages(maxImages: number = 4): Promise<ExtractedResponseImage[]> {
         if (!this.isConnectedFlag || !this.ws) {
@@ -991,7 +988,7 @@ export class CdpService extends EventEmitter {
                 }
             }
 
-            // 応答ノードが見つからない場合は画像抽出しない（UIアイコン誤検出防止）
+            // Skip image extraction when no response nodes found (prevent UI icon false positives)
             if (responseNodes.length === 0) return [];
 
             const normalize = (value) => (value || '').toLowerCase();
@@ -1141,24 +1138,24 @@ export class CdpService extends EventEmitter {
     }
 
     /**
-     * AntigravityのUI上のモードドロップダウンを操作し、指定モードに切り替える。
-     * 2段階アプローチ:
-     *   Step 1: モードトグルボタン（"Fast"/"Plan" + chevronアイコン）をクリック → ドロップダウンを開く
-     *   Step 2: ドロップダウン内から目的のモードオプションを選択する
+     * Operate Antigravity UI mode dropdown to switch to the specified mode.
+     * Two-step approach:
+     *   Step 1: Click mode toggle button ("Fast"/"Plan" + chevron icon) to open dropdown
+     *   Step 2: Select the target mode option from dropdown
      *
-     * @param modeName 設定するモード名（例: 'fast', 'plan'）
+     * @param modeName Mode name to set (e.g., 'fast', 'plan')
      */
     async setUiMode(modeName: string): Promise<UiSyncResult> {
         if (!this.isConnectedFlag || !this.ws) {
-            throw new Error('CDPに接続されていません。connect()を先に呼んでください。');
+            throw new Error('Not connected to CDP. Call connect() first.');
         }
 
         const safeMode = JSON.stringify(modeName);
 
-        // 内部モード名 → AntigravityのUI表示名マッピング
+        // Internal mode name -> Antigravity UI display name mapping
         const uiNameMap = JSON.stringify({ fast: 'Fast', plan: 'Planning' });
 
-        // テンプレートリテラル内にバッククォートが含まれないよう、DOM操作スクリプトを構築
+        // Build DOM manipulation script avoiding backticks in template literals
         const expression = '(async () => {'
             + ' const targetMode = ' + safeMode + ';'
             + ' const targetModeLower = targetMode.toLowerCase();'
@@ -1167,7 +1164,7 @@ export class CdpService extends EventEmitter {
             + ' const targetUiNameLower = targetUiName.toLowerCase();'
             + ' const allBtns = Array.from(document.querySelectorAll("button"));'
             + ' const visibleBtns = allBtns.filter(b => b.offsetParent !== null);'
-            // Step 1: モードトグルボタンを検索（"Fast"/"Planning" + chevronアイコン）
+            // Step 1: Search for mode toggle button ("Fast"/"Planning" + chevron icon)
             + ' const knownModes = Object.values(uiNameMap).map(n => n.toLowerCase());'
             + ' const modeToggleBtn = visibleBtns.find(b => {'
             + '   const text = (b.textContent || "").trim().toLowerCase();'
@@ -1178,14 +1175,14 @@ export class CdpService extends EventEmitter {
             + '   return { ok: false, error: "Mode toggle button not found" };'
             + ' }'
             + ' const currentModeText = (modeToggleBtn.textContent || "").trim().toLowerCase();'
-            // 既に目的のモードなら何もしない
+            // Do nothing if already on the target mode
             + ' if (currentModeText === targetUiNameLower) {'
             + '   return { ok: true, mode: targetUiName, alreadySelected: true };'
             + ' }'
-            // ドロップダウンを開く
+            // Open dropdown
             + ' modeToggleBtn.click();'
             + ' await new Promise(r => setTimeout(r, 500));'
-            // Step 2: role="dialog" 内の .font-medium テキストでオプションを検索
+            // Step 2: Search for option by .font-medium text inside role="dialog"
             + ' const dialogs = Array.from(document.querySelectorAll("[role=\\"dialog\\"]"));'
             + ' const visibleDialog = dialogs.find(d => {'
             + '   const style = window.getComputedStyle(d);'
@@ -1199,11 +1196,11 @@ export class CdpService extends EventEmitter {
             + '     return text === targetUiNameLower;'
             + '   });'
             + '   if (matchEl) {'
-            // .font-medium の親要素（cursor-pointer を持つ div）をクリック対象とする
+            // Target the parent element of .font-medium (div with cursor-pointer) for clicking
             + '     modeOption = matchEl.closest("div.cursor-pointer") || matchEl.parentElement;'
             + '   }'
             + ' }'
-            // ダイアログが見つからない場合のフォールバック: 従来のセレクター
+            // Fallback when dialog not found: legacy selectors
             + ' if (!modeOption) {'
             + '   const fallbackEls = Array.from(document.querySelectorAll('
             + '     "div[class*=\\"cursor-pointer\\"]"'
@@ -1221,14 +1218,14 @@ export class CdpService extends EventEmitter {
             + ' if (modeOption) {'
             + '   modeOption.click();'
             + '   await new Promise(r => setTimeout(r, 500));'
-            // 確認: モードボタンのテキストが変わったか
+            // Verify: check if mode button text has changed
             + '   const updBtn = Array.from(document.querySelectorAll("button"))'
             + '     .filter(b => b.offsetParent !== null)'
             + '     .find(b => b.querySelector("svg[class*=\\"chevron\\"]") && knownModes.some(m => (b.textContent || "").trim().toLowerCase() === m));'
             + '   const newMode = updBtn ? (updBtn.textContent || "").trim() : "unknown";'
             + '   return { ok: true, mode: newMode };'
             + ' }'
-            // 失敗 → ドロップダウンを閉じる
+            // Failed -> close dropdown
             + ' document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));'
             + ' await new Promise(r => setTimeout(r, 200));'
             + ' return { ok: false, error: "Mode option " + targetUiName + " not found in dropdown" };'
@@ -1248,18 +1245,18 @@ export class CdpService extends EventEmitter {
             if (value?.ok) {
                 return { ok: true, mode: value.mode };
             }
-            return { ok: false, error: value?.error || 'UI操作に失敗しました（setUiMode）' };
+            return { ok: false, error: value?.error || 'UI operation failed (setUiMode)' };
         } catch (error: any) {
             return { ok: false, error: error?.message || String(error) };
         }
     }
 
     /**
-     * AntigravityのUIから利用可能なモデル一覧を動的に取得する
+     * Dynamically retrieve the list of available models from the Antigravity UI.
      */
     async getUiModels(): Promise<string[]> {
         if (!this.isConnectedFlag || !this.ws) {
-            throw new Error('CDPに接続されていません。');
+            throw new Error('Not connected to CDP.');
         }
 
         const expression = `(async () => {
@@ -1292,7 +1289,7 @@ export class CdpService extends EventEmitter {
     }
 
     /**
-     * AntigravityのUIから現在選択されているモデルを取得する
+     * Get the currently selected model from the Antigravity UI.
      */
     async getCurrentModel(): Promise<string | null> {
         if (!this.isConnectedFlag || !this.ws) {
@@ -1316,33 +1313,33 @@ export class CdpService extends EventEmitter {
     }
 
     /**
-     * AntigravityのUI上のモデルドロップダウンを操作し、指定モデルに切り替える。
-     * (Step 9: モデル・モード切替のUI同期)
+     * Operate Antigravity UI model dropdown to switch to the specified model.
+     * (Step 9: Model/mode switching UI sync)
      *
-     * @param modelName 設定するモデル名（例: 'gpt-4o', 'claude-3-opus'）
+     * @param modelName Model name to set (e.g., 'gpt-4o', 'claude-3-opus')
      */
     async setUiModel(modelName: string): Promise<UiSyncResult> {
         if (!this.isConnectedFlag || !this.ws) {
-            throw new Error('CDPに接続されていません。connect()を先に呼んでください。');
+            throw new Error('Not connected to CDP. Call connect() first.');
         }
 
-        // DOM操作スクリプト: 実際のAntigravity UIのDOM構造に基づく
-        // モデル一覧は div.cursor-pointer 要素で class に 'px-2 py-1 flex items-center justify-between' を含む
-        // 現在選択中は 'bg-gray-500/20' を持ち、それ以外は 'hover:bg-gray-500/10' を持つ
-        // textContent末尾に "New" が付く場合がある
+        // DOM manipulation script: based on actual Antigravity UI DOM structure
+        // Model list uses div.cursor-pointer elements with class 'px-2 py-1 flex items-center justify-between'
+        // Currently selected has 'bg-gray-500/20', others have 'hover:bg-gray-500/10'
+        // textContent may have "New" suffix
         const safeModel = JSON.stringify(modelName);
         const expression = `(async () => {
             const targetModel = ${safeModel};
             
-            // モデルリスト内の全アイテムを取得
+            // Get all items in the model list
             const modelItems = Array.from(document.querySelectorAll('div.cursor-pointer'))
                 .filter(e => e.className.includes('px-2 py-1 flex items-center justify-between'));
             
             if (modelItems.length === 0) {
-                return { ok: false, error: 'モデルリストが見つかりませんでした。ドロップダウンが開いていない可能性があります。' };
+                return { ok: false, error: 'Model list not found. The dropdown may not be open.' };
             }
             
-            // ターゲットモデルを名前でマッチング (New suffix を除去して比較)
+            // Match target model by name (compare after removing New suffix)
             const targetItem = modelItems.find(el => {
                 const text = (el.textContent || '').trim().replace(/New$/, '').trim();
                 return text === targetModel || text.toLowerCase() === targetModel.toLowerCase();
@@ -1350,19 +1347,19 @@ export class CdpService extends EventEmitter {
             
             if (!targetItem) {
                 const available = modelItems.map(el => (el.textContent || '').trim().replace(/New$/, '').trim()).join(', ');
-                return { ok: false, error: 'モデル「' + targetModel + '」が見つかりません。利用可能: ' + available };
+                return { ok: false, error: 'Model "' + targetModel + '" not found. Available: ' + available };
             }
             
-            // 既に選択済みか確認
+            // Check if already selected
             if (targetItem.className.includes('bg-gray-500/20') && !targetItem.className.includes('hover:bg-gray-500/20')) {
                 return { ok: true, model: targetModel, alreadySelected: true };
             }
             
-            // クリックしてモデルを選択
+            // Click to select model
             targetItem.click();
             await new Promise(r => setTimeout(r, 500));
             
-            // 選択が反映されたか確認
+            // Verify selection was applied
             const updatedItems = Array.from(document.querySelectorAll('div.cursor-pointer'))
                 .filter(e => e.className.includes('px-2 py-1 flex items-center justify-between'));
             const selectedItem = updatedItems.find(el => {
@@ -1374,7 +1371,7 @@ export class CdpService extends EventEmitter {
                 return { ok: true, model: targetModel, verified: true };
             }
             
-            // クリックは成功したが確認はできなかった
+            // Click succeeded but verification failed
             return { ok: true, model: targetModel, verified: false };
         })()`;
 
@@ -1392,7 +1389,7 @@ export class CdpService extends EventEmitter {
             if (value?.ok) {
                 return { ok: true, model: value.model };
             }
-            return { ok: false, error: value?.error || 'UI操作に失敗しました（setUiModel）' };
+            return { ok: false, error: value?.error || 'UI operation failed (setUiModel)' };
         } catch (error: any) {
             return { ok: false, error: error?.message || String(error) };
         }

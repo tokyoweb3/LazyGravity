@@ -8,7 +8,7 @@ export interface ModelsUiDeps {
 }
 
 /**
- * /models コマンドのインタラクティブなUIを組み立てて送信する
+ * Build and send the interactive UI for the /models command
  */
 export async function sendModelsUI(
     target: { editReply: (opts: any) => Promise<any> },
@@ -16,7 +16,7 @@ export async function sendModelsUI(
 ): Promise<void> {
     const cdp = deps.getCurrentCdp();
     if (!cdp) {
-        await target.editReply({ content: 'CDPに未接続です。' });
+        await target.editReply({ content: 'Not connected to CDP.' });
         return;
     }
     const models = await cdp.getUiModels();
@@ -24,12 +24,12 @@ export async function sendModelsUI(
     const quotaData = await deps.fetchQuota();
 
     if (models.length === 0) {
-        await target.editReply({ content: 'Antigravityのモデル一覧の取得に失敗しました。' });
+        await target.editReply({ content: 'Failed to retrieve model list from Antigravity.' });
         return;
     }
 
     function formatQuota(mName: string, current: boolean) {
-        if (!mName) return `${current ? '[x]' : '[ ]'} 不明`;
+        if (!mName) return `${current ? '[x]' : '[ ]'} Unknown`;
 
         const normalize = (s: string) => s.toLowerCase().replace(/[\s\-_]/g, '');
         const nName = normalize(mName);
@@ -63,16 +63,16 @@ export async function sendModelsUI(
         return `${current ? '[x]' : '[ ]'} ${mName} (⏱️ ${timeStr})`;
     }
 
-    const currentModelFormatted = currentModel ? formatQuota(currentModel, true) : '不明';
+    const currentModelFormatted = currentModel ? formatQuota(currentModel, true) : 'Unknown';
 
     const embed = new EmbedBuilder()
-        .setTitle('モデル管理')
+        .setTitle('Model Management')
         .setColor(0x5865F2)
-        .setDescription(`**現在のモデル:**\n${currentModelFormatted}\n\n` +
-            `**利用可能なモデル (${models.length}件)**\n` +
+        .setDescription(`**Current Model:**\n${currentModelFormatted}\n\n` +
+            `**Available Models (${models.length})**\n` +
             models.map(m => formatQuota(m, m === currentModel)).join('\n'),
         )
-        .setFooter({ text: '最新のQuota情報を取得しました' })
+        .setFooter({ text: 'Latest quota information retrieved' })
         .setTimestamp();
 
     const rows: ActionRowBuilder<ButtonBuilder>[] = [];
@@ -94,7 +94,7 @@ export async function sendModelsUI(
     if (currentRow.components.length < 5) {
         currentRow.addComponents(new ButtonBuilder()
             .setCustomId('model_refresh_btn')
-            .setLabel('更新')
+            .setLabel('Refresh')
             .setStyle(ButtonStyle.Primary),
         );
         rows.push(currentRow);
@@ -104,7 +104,7 @@ export async function sendModelsUI(
             const refreshRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
                 new ButtonBuilder()
                     .setCustomId('model_refresh_btn')
-                    .setLabel('更新')
+                    .setLabel('Refresh')
                     .setStyle(ButtonStyle.Primary),
             );
             rows.push(refreshRow);

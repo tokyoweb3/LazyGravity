@@ -1,7 +1,7 @@
 import { createMessageCreateHandler } from '../../src/events/messageCreateHandler';
 
 describe('messageCreateHandler', () => {
-    it('bot自身の投稿は無視する', async () => {
+    it('ignores messages from the bot itself', async () => {
         const sendPromptToAntigravity = jest.fn();
         const handler = createMessageCreateHandler({
             config: { allowedUserIds: ['u1'] },

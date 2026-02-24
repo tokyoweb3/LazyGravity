@@ -15,14 +15,14 @@ import { CdpConnectionPool } from './cdpConnectionPool';
 import { CdpService } from './cdpService';
 import { QuotaService } from './quotaService';
 
-/** CDP接続の状態管理 */
+/** CDP connection state management */
 export interface CdpBridge {
     pool: CdpConnectionPool;
     quota: QuotaService;
     autoAccept: AutoAcceptService;
-    /** 最後にメッセージを送信したワークスペースのディレクトリ名 */
+    /** Directory name of the workspace that last sent a message */
     lastActiveWorkspace: string | null;
-    /** 最後にメッセージを送信したチャンネル（承認通知の送信先） */
+    /** Channel that last sent a message (destination for approval notifications) */
     lastActiveChannel: Message['channel'] | null;
 }
 
@@ -61,7 +61,7 @@ export function parseApprovalCustomId(customId: string): { action: 'approve' | '
     return null;
 }
 
-/** CDPブリッジを初期化する（遅延接続: プール作成のみ） */
+/** Initialize the CDP bridge (lazy connection: pool creation only) */
 export function initCdpBridge(autoApproveDefault: boolean): CdpBridge {
     const pool = new CdpConnectionPool({
         cdpCallTimeout: 15000,
@@ -82,8 +82,9 @@ export function initCdpBridge(autoApproveDefault: boolean): CdpBridge {
 }
 
 /**
- * lastActiveWorkspace から現在アクティブな CdpService を取得するヘルパー。
- * ボタン操作やモデル/モード切替など、ワークスペースパスが明示されない場面で使用。
+ * Helper to get the currently active CdpService from lastActiveWorkspace.
+ * Used in contexts where the workspace path is not explicitly provided,
+ * such as button interactions and model/mode switching.
  */
 export function getCurrentCdp(bridge: CdpBridge): CdpService | null {
     if (!bridge.lastActiveWorkspace) return null;
@@ -91,8 +92,8 @@ export function getCurrentCdp(bridge: CdpBridge): CdpService | null {
 }
 
 /**
- * ワークスペースごとに承認検出器を起動するヘルパー。
- * 既に同名ワークスペースの検出器が動いていれば何もしない。
+ * Helper to start an approval detector for each workspace.
+ * Does nothing if a detector for the same workspace is already running.
  */
 export function ensureApprovalDetector(
     bridge: CdpBridge,
@@ -107,7 +108,7 @@ export function ensureApprovalDetector(
         cdpService: cdp,
         pollIntervalMs: 2000,
         onApprovalRequired: async (info: ApprovalInfo) => {
-            logger.info(`[ApprovalDetector:${workspaceDirName}] 承認ボタン検出 (allow="${info.approveText}", deny="${info.denyText}")`);
+            logger.info(`[ApprovalDetector:${workspaceDirName}] Approval button detected (allow="${info.approveText}", deny="${info.denyText}")`);
 
             if (bridge.autoAccept.isEnabled()) {
                 const accepted = await detector.alwaysAllowButton() || await detector.approveButton();
@@ -168,12 +169,12 @@ export function ensureApprovalDetector(
                     components: [row],
                 }).catch(logger.error);
             } else {
-                logger.warn(`[ApprovalDetector:${workspaceDirName}] 送信先チャンネル未確定のため承認通知をスキップしました`);
+                logger.warn(`[ApprovalDetector:${workspaceDirName}] Skipped approval notification because target channel is not determined`);
             }
         },
     });
 
     detector.start();
     bridge.pool.registerApprovalDetector(workspaceDirName, detector);
-    logger.info(`[ApprovalDetector:${workspaceDirName}] 承認ボタン検出を開始しました`);
+    logger.info(`[ApprovalDetector:${workspaceDirName}] Started approval button detection`);
 }

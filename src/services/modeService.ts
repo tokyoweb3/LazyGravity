@@ -1,42 +1,42 @@
 import { t } from "../utils/i18n";
 
 /**
- * 利用可能な実行モード一覧
- * fast: 高速応答モード（シンプルなタスク向け）
- * plan: 計画モード（複雑なタスクを段階的に実行）
+ * Available execution modes
+ * fast: Fast response mode (for simple tasks)
+ * plan: Planning mode (execute complex tasks step by step)
  */
 export const AVAILABLE_MODES = ['fast', 'plan'] as const;
 
-/** モードの表示名マッピング */
+/** Mode display name mapping */
 export const MODE_DISPLAY_NAMES: Record<string, string> = {
     fast: '⚡ Fast',
     plan: '📋 Plan',
 };
 
-/** モードの説明文マッピング */
+/** Mode description mapping */
 export const MODE_DESCRIPTIONS: Record<string, string> = {
     fast: t('Fast Mode — for simple tasks'),
     plan: t('Plan Mode — for complex step-by-step tasks'),
 };
 
-/** Antigravity UIでの表示名マッピング（内部名 → UI表示名） */
+/** Antigravity UI display name mapping (internal name -> UI display name) */
 export const MODE_UI_NAMES: Record<string, string> = {
     fast: 'Fast',
     plan: 'Planning',
 };
 
-/** UI表示名 → 内部名の逆引きマッピング */
+/** Reverse mapping from UI display name -> internal name */
 export const MODE_UI_NAME_REVERSE: Record<string, string> = Object.fromEntries(
     Object.entries(MODE_UI_NAMES).map(([k, v]) => [v.toLowerCase(), k])
 );
 
-/** デフォルトの実行モード */
+/** Default execution mode */
 export const DEFAULT_MODE: Mode = 'fast';
 
-/** モードの型定義 */
+/** Mode type definition */
 export type Mode = typeof AVAILABLE_MODES[number];
 
-/** モード設定結果の型定義 */
+/** Mode set result type definition */
 export interface ModeSetResult {
     success: boolean;
     mode?: Mode;
@@ -44,22 +44,22 @@ export interface ModeSetResult {
 }
 
 /**
- * 実行モードを管理するサービスクラス。
- * /mode コマンドによるモード切り替えを担う。
+ * Service class for managing execution modes.
+ * Handles mode switching via the /mode command.
  */
 export class ModeService {
     private currentMode: Mode = DEFAULT_MODE;
 
     /**
-     * 現在の実行モードを取得する
+     * Get the current execution mode
      */
     public getCurrentMode(): Mode {
         return this.currentMode;
     }
 
     /**
-     * 実行モードを切り替える
-     * @param modeName 設定するモード名（大文字小文字は区別しない）
+     * Switch execution mode
+     * @param modeName Mode name to set (case-insensitive)
      */
     public setMode(modeName: string): ModeSetResult {
         if (!modeName || modeName.trim() === '') {
@@ -86,7 +86,7 @@ export class ModeService {
     }
 
     /**
-     * 利用可能なモード一覧を取得する
+     * Get the list of available modes
      */
     public getAvailableModes(): readonly string[] {
         return AVAILABLE_MODES;

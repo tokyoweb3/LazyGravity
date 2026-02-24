@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 
 /**
- * チャットセッションのレコード型定義
+ * Chat session record type definition
  */
 export interface ChatSessionRecord {
     id: number;
@@ -16,7 +16,7 @@ export interface ChatSessionRecord {
 }
 
 /**
- * セッション作成時の入力型
+ * Input type for session creation
  */
 export interface CreateChatSessionInput {
     channelId: string;
@@ -27,8 +27,8 @@ export interface CreateChatSessionInput {
 }
 
 /**
- * Discordチャンネルとチャットセッションの対応をSQLiteで永続化するリポジトリ。
- * 1チャンネルにつき1セッション（UNIQUE制約）。
+ * Repository for persisting Discord channel to chat session mapping in SQLite.
+ * One session per channel (UNIQUE constraint).
  */
 export class ChatSessionRepository {
     private readonly db: Database.Database;
@@ -96,7 +96,7 @@ export class ChatSessionRepository {
     }
 
     /**
-     * カテゴリ内の次のセッション番号を取得する（MAX + 1、なければ 1）
+     * Get the next session number within a category (MAX + 1, or 1 if none)
      */
     public getNextSessionNumber(categoryId: string): number {
         const row = this.db.prepare(
@@ -107,7 +107,7 @@ export class ChatSessionRepository {
     }
 
     /**
-     * セッションの表示名を更新し、is_renamed を true にする
+     * Update session display name and set is_renamed to true
      */
     public updateDisplayName(channelId: string, displayName: string): boolean {
         const result = this.db.prepare(

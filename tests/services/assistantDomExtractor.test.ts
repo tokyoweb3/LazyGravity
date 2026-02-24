@@ -16,7 +16,7 @@ describe('assistantDomExtractor', () => {
         segments,
     });
 
-    it('DOM構造に基づいて本文/アクティビティ/フィードバックを分離する', () => {
+    it('separates body, activity, and feedback based on DOM structure', () => {
         const payload = buildPayload([
             {
                 kind: 'assistant-body',
@@ -76,7 +76,7 @@ describe('assistantDomExtractor', () => {
         expect(result.diagnostics.segmentCounts.feedback).toBe(2);
     });
 
-    it('本文が複数セグメントに分かれていても結合できる', () => {
+    it('concatenates body text when split across multiple segments', () => {
         const payload = buildPayload([
             {
                 kind: 'assistant-body',
@@ -108,7 +108,7 @@ describe('assistantDomExtractor', () => {
         expect(result.feedback).toEqual([]);
     });
 
-    it('不正payloadはlegacy-fallback判定になる', () => {
+    it('treats invalid payload as legacy-fallback', () => {
         const result = classifyAssistantSegments(null);
 
         expect(result.finalOutputText).toBe('');
@@ -118,7 +118,7 @@ describe('assistantDomExtractor', () => {
         expect(result.diagnostics.fallbackReason).toBe('invalid-payload');
     });
 
-    it('抽出スクリプトがDOM構造抽出関数として返る', () => {
+    it('returns the extraction script as a DOM structure extraction function', () => {
         const script = extractAssistantSegmentsPayloadScript();
 
         expect(typeof script).toBe('string');
@@ -128,21 +128,21 @@ describe('assistantDomExtractor', () => {
         expect(script).toContain('feedback');
     });
 
-    describe('Task 1 & Task 2 & Task 3: DOM抽出とMarkdown構造/ファイル参照復元', () => {
+    describe('Task 1 & Task 2 & Task 3: DOM extraction and Markdown structure/file reference restoration', () => {
         beforeEach(() => {
-            // JSDOMがない場合でも動くように最低限のモックか、JSDOMならそのままDOMを使う
+            // Minimal mock for environments without JSDOM; use JSDOM DOM if available
             document.body.innerHTML = '';
         });
 
-        it('抽出スクリプトが箇条書きやファイル参照の構造を保持して抽出できること', () => {
-            // テスト用DOMの構築
+        it('preserves list structure and file references in extraction script output', () => {
+            // Build test DOM
             const panel = document.createElement('div');
             panel.className = 'antigravity-agent-side-panel';
 
             const message = document.createElement('div');
             message.setAttribute('data-message-role', 'assistant');
 
-            // 番号付きリスト・箇条書き
+            // Ordered and unordered lists
             const ol = document.createElement('ol');
             const li1 = document.createElement('li');
             li1.textContent = '最初の項目';
@@ -156,11 +156,11 @@ describe('assistantDomExtractor', () => {
             li3.textContent = '箇条書き1';
             ul.appendChild(li3);
 
-            // 段落と改行
+            // Paragraph with line break
             const p = document.createElement('p');
             p.textContent = '改行付き\nの段落';
 
-            // ファイル参照 (title や aria-label でパス保持されていると想定)
+            // File reference (assuming path is stored via title or aria-label)
             const fileRef = document.createElement('div');
             fileRef.setAttribute('title', 'src/bot/index.ts');
             fileRef.textContent = ':54';
@@ -172,10 +172,10 @@ describe('assistantDomExtractor', () => {
             panel.appendChild(message);
             document.body.appendChild(panel);
 
-            // 抽出スクリプトの評価実行
+            // Evaluate the extraction script
             const script = extractAssistantSegmentsPayloadScript();
 
-            // 抽出関数の即時実行
+            // Execute the extraction function immediately
             let payload: any;
             try {
                 // To avoid SyntaxError from evaluating an IIFE directly, we assign it.
@@ -192,13 +192,13 @@ describe('assistantDomExtractor', () => {
             const result = classifyAssistantSegments(payload);
             const output = result.finalOutputText;
 
-            // 期待値: Markdown構造が保持されていること
+            // Expected: Markdown structure is preserved
             expect(output).toContain('1. 最初の項目');
             expect(output).toContain('2. 次の項目');
             expect(output).toContain('- 箇条書き1');
             expect(output).toContain('改行付き\nの段落');
 
-            // 期待値: title 等からファイルパスが復元され "src/bot/index.ts:54" になること
+            // Expected: file path is restored from title attribute to "src/bot/index.ts:54"
             expect(output).toContain('src/bot/index.ts:54');
         });
     });

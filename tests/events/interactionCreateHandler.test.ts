@@ -1,7 +1,7 @@
 import { createInteractionCreateHandler } from '../../src/events/interactionCreateHandler';
 
 describe('interactionCreateHandler', () => {
-    it('権限のないユーザーにはephemeralで拒否応答する', async () => {
+    it('responds with an ephemeral rejection for unauthorized users', async () => {
         const reply = jest.fn().mockResolvedValue(undefined);
         const interaction = {
             isButton: () => true,

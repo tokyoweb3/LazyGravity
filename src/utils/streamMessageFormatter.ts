@@ -1,21 +1,21 @@
 /**
- * 初期ステータス表示用のモード/モデル行を生成する。
- * Fast/Planモデルが同一の場合は1行に集約する。
+ * Generate mode/model lines for initial status display.
+ * Consolidates into a single line if Fast and Plan models are the same.
  */
 export function buildModeModelLines(modeName: string, fastModel: string, planModel: string): string[] {
-    const lines = [`現在モード: ${modeName}`];
+    const lines = [`Current Mode: ${modeName}`];
     if (fastModel.trim().toLowerCase() === planModel.trim().toLowerCase()) {
-        lines.push(`モデル: ${fastModel}`);
+        lines.push(`Model: ${fastModel}`);
         return lines;
     }
 
-    lines.push(`Fastモデル: ${fastModel}`);
-    lines.push(`Planモデル: ${planModel}`);
+    lines.push(`Fast Model: ${fastModel}`);
+    lines.push(`Plan Model: ${planModel}`);
     return lines;
 }
 
 /**
- * Discord表示でノイズになりやすいアクティビティログを除外する。
+ * Filter out activity logs that tend to be noise in Discord display.
  */
 export function shouldSkipActivityLog(activity: string, modeName: string, modelName: string): boolean {
     const normalized = activity.trim().toLowerCase();
@@ -29,12 +29,12 @@ export function shouldSkipActivityLog(activity: string, modeName: string, modelN
         return true;
     }
 
-    // ノイズになりやすい1語ログ（create / ready / pull. など）
+    // Single-word logs that tend to be noise (create / ready / pull. etc.)
     if (/^[a-z][a-z0-9_-]{1,24}[.!…]?$/.test(normalized)) {
         return true;
     }
 
-    // ファイル読み取り系の詳細トレース（Analyzed....）
+    // Detailed trace for file reading operations (Analyzed....)
     if (/^analyzed/.test(normalized)) {
         return true;
     }
@@ -43,7 +43,7 @@ export function shouldSkipActivityLog(activity: string, modeName: string, modelN
 }
 
 /**
- * Embed description向けにテキストを複数チャンクへ分割する。
+ * Split text into multiple chunks for Embed description.
  */
 export function splitForEmbedDescription(text: string, maxLength: number = 3500): string[] {
     if (text.length <= maxLength) return [text];
@@ -83,12 +83,12 @@ export function splitForEmbedDescription(text: string, maxLength: number = 3500)
 }
 
 /**
- * 単一Embed description用にテキストを上限内へ収める。
- * 上限超過時は先頭を省略して末尾側（最新部分）を優先表示する。
+ * Fit text within the limit for a single Embed description.
+ * When exceeding the limit, truncate the beginning and prioritize displaying the tail (most recent part).
  */
 export function fitForSingleEmbedDescription(text: string, maxLength: number = 3500): string {
     if (text.length <= maxLength) return text;
-    const prefix = '… (先頭を省略)\n';
+    const prefix = '... (beginning truncated)\n';
     const tailLength = Math.max(0, maxLength - prefix.length);
     return `${prefix}${text.slice(-tailLength)}`;
 }

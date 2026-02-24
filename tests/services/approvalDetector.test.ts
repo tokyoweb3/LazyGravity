@@ -1,23 +1,23 @@
 /**
- * 承認ボタンの自動検出とリモート実行 TDDテスト
+ * Approval button auto-detection and remote execution TDD test
  *
- * テスト方針:
- *   - ApprovalDetector クラスをテスト対象とする
- *   - CdpService をモック化してDOM上の承認ボタン検出をシミュレート
- *   - 検出時に onApprovalRequired コールバックが呼ばれ、
- *     Discordへのボタン付きEmbedの送信トリガーとなることを検証
- *   - getLastDetectedInfo() で検出済みボタン情報が保持されることを検証
- *   - contextId を指定してスクリプト実行されることを検証
+ * Test strategy:
+ *   - ApprovalDetector class is the test target
+ *   - Mock CdpService to simulate DOM approval button detection
+ *   - Verify that onApprovalRequired callback is called upon detection,
+ *     triggering a button-attached Embed to be sent to Discord
+ *   - Verify that getLastDetectedInfo() retains detected button info
+ *   - Verify that scripts are executed with a specified contextId
  */
 
 import { ApprovalDetector, ApprovalDetectorOptions, ApprovalInfo } from '../../src/services/approvalDetector';
 import { CdpService } from '../../src/services/cdpService';
 
-// CdpService をモック化
+// Mock CdpService
 jest.mock('../../src/services/cdpService');
 const MockedCdpService = CdpService as jest.MockedClass<typeof CdpService>;
 
-describe('ApprovalDetector - 承認ボタン検出とリモート実行', () => {
+describe('ApprovalDetector - approval button detection and remote execution', () => {
     let detector: ApprovalDetector;
     let mockCdpService: jest.Mocked<CdpService>;
 
@@ -35,7 +35,7 @@ describe('ApprovalDetector - 承認ボタン検出とリモート実行', () => 
         jest.useRealTimers();
     });
 
-    /** テスト用のApprovalInfoを生成するヘルパー */
+    /** Helper to generate ApprovalInfo for testing */
     function makeApprovalInfo(overrides: Partial<ApprovalInfo> = {}): ApprovalInfo {
         return {
             approveText: '許可',
@@ -46,9 +46,9 @@ describe('ApprovalDetector - 承認ボタン検出とリモート実行', () => 
     }
 
     // ──────────────────────────────────────────────────────
-    // テスト 1: ボタンが検出されたらonApprovalRequiredを呼ぶ
+    // Test 1: Call onApprovalRequired when a button is detected
     // ──────────────────────────────────────────────────────
-    it('承認ボタンを検出した際にonApprovalRequiredコールバックを呼び出すこと', async () => {
+    it('calls the onApprovalRequired callback when an approval button is detected', async () => {
         const onApprovalRequired = jest.fn();
         const mockInfo = makeApprovalInfo();
 
@@ -76,9 +76,9 @@ describe('ApprovalDetector - 承認ボタン検出とリモート実行', () => 
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 2: ボタンがない場合はコールバックを呼ばない
+    // Test 2: Do not call the callback when no button exists
     // ──────────────────────────────────────────────────────
-    it('承認ボタンが存在しない場合はコールバックを呼ばないこと', async () => {
+    it('does not call the callback when no approval button exists', async () => {
         const onApprovalRequired = jest.fn();
         mockCdpService.call.mockResolvedValue({ result: { value: null } });
 
@@ -95,9 +95,9 @@ describe('ApprovalDetector - 承認ボタン検出とリモート実行', () => 
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 3: 同じボタンが連続検出されても重複呼び出ししない
+    // Test 3: No duplicate calls for the same button detected consecutively
     // ──────────────────────────────────────────────────────
-    it('同じ承認ボタンが連続検出されても重複してコールバックを呼ばないこと', async () => {
+    it('does not call the callback multiple times when the same approval button is detected consecutively', async () => {
         const onApprovalRequired = jest.fn();
         const mockInfo = makeApprovalInfo({ description: '重複テスト: run command' });
 
@@ -112,19 +112,19 @@ describe('ApprovalDetector - 承認ボタン検出とリモート実行', () => 
         });
         detector.start();
 
-        // 3回ポーリング
+        // 3 polling cycles
         await jest.advanceTimersByTimeAsync(500);
         await jest.advanceTimersByTimeAsync(500);
         await jest.advanceTimersByTimeAsync(500);
 
-        // 同じ内容なので1回だけ呼ばれること
+        // Should be called only once since the content is the same
         expect(onApprovalRequired).toHaveBeenCalledTimes(1);
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 4: approveButton()でボタンをクリックできること
+    // Test 4: approveButton() can click the button
     // ──────────────────────────────────────────────────────
-    it('approveButton()を呼ぶとCDPでクリックスクリプトが実行されること', async () => {
+    it('executes a click script via CDP when approveButton() is called', async () => {
         mockCdpService.call.mockResolvedValue({
             result: { value: { ok: true } }
         });
@@ -149,9 +149,9 @@ describe('ApprovalDetector - 承認ボタン検出とリモート実行', () => 
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 5: denyButton()でボタンをクリック（拒否）できること
+    // Test 5: denyButton() can click (deny) the button
     // ──────────────────────────────────────────────────────
-    it('denyButton()を呼ぶとCDPでDenyクリックスクリプトが実行されること', async () => {
+    it('executes a deny click script via CDP when denyButton() is called', async () => {
         mockCdpService.call.mockResolvedValue({
             result: { value: { ok: true } }
         });
@@ -175,7 +175,7 @@ describe('ApprovalDetector - 承認ボタン検出とリモート実行', () => 
         );
     });
 
-    it('alwaysAllowButton()が直接Allow This Conversationをクリックできること', async () => {
+    it('alwaysAllowButton() can directly click Allow This Conversation', async () => {
         mockCdpService.call.mockResolvedValue({
             result: { value: { ok: true } }
         });
@@ -199,18 +199,18 @@ describe('ApprovalDetector - 承認ボタン検出とリモート実行', () => 
         );
     });
 
-    it('alwaysAllowButton()がAllow Onceのドロップダウン展開後に会話許可をクリックできること', async () => {
+    it('alwaysAllowButton() can click the conversation allow button after expanding the Allow Once dropdown', async () => {
         let expanded = false;
         mockCdpService.call.mockImplementation(async (_method: string, params: any) => {
             const expression: string = params.expression || '';
 
-            // ドロップダウン展開スクリプト
+            // Dropdown expansion script
             if (expression.includes('ALLOW_ONCE_PATTERNS')) {
                 expanded = true;
                 return { result: { value: { ok: true, reason: 'toggle-button' } } } as any;
             }
 
-            // 展開後のみ会話許可ボタンのクリックを成功させる
+            // Only succeed the conversation allow button click after expansion
             if (expanded && expression.includes('Allow This Conversation')) {
                 return { result: { value: { ok: true } } } as any;
             }
@@ -234,9 +234,9 @@ describe('ApprovalDetector - 承認ボタン検出とリモート実行', () => 
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 6: stop()後はポーリングが停止すること
+    // Test 6: Polling stops after stop()
     // ──────────────────────────────────────────────────────
-    it('stop()後はポーリングが停止してコールバックが呼ばれないこと', async () => {
+    it('stops polling and no longer calls the callback after stop()', async () => {
         const onApprovalRequired = jest.fn();
         const mockInfo = makeApprovalInfo({ description: 'some action' });
 
@@ -256,21 +256,21 @@ describe('ApprovalDetector - 承認ボタン検出とリモート実行', () => 
 
         await detector.stop();
 
-        // 停止後のポーリングはスキップ
+        // Polling after stop is skipped
         await jest.advanceTimersByTimeAsync(1000);
-        expect(onApprovalRequired).toHaveBeenCalledTimes(1); // 増えない
+        expect(onApprovalRequired).toHaveBeenCalledTimes(1); // does not increase
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 7: CDPエラー時に監視が継続すること
+    // Test 7: Monitoring continues on CDP error
     // ──────────────────────────────────────────────────────
-    it('CDPエラーが発生しても監視を継続すること', async () => {
+    it('continues monitoring even when a CDP error occurs', async () => {
         const onApprovalRequired = jest.fn();
         const mockInfo = makeApprovalInfo({ description: 'エラー後リカバリ' });
 
         mockCdpService.call
-            .mockRejectedValueOnce(new Error('CDPエラー'))  // 1回目エラー
-            .mockResolvedValueOnce({ result: { value: mockInfo } }); // 2回目成功
+            .mockRejectedValueOnce(new Error('CDP error'))  // 1st call: error
+            .mockResolvedValueOnce({ result: { value: mockInfo } }); // 2nd call: success
 
         detector = new ApprovalDetector({
             cdpService: mockCdpService,
@@ -288,9 +288,9 @@ describe('ApprovalDetector - 承認ボタン検出とリモート実行', () => 
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 8: getLastDetectedInfo()で検出済み情報を取得できること
+    // Test 8: getLastDetectedInfo() can retrieve detected info
     // ──────────────────────────────────────────────────────
-    it('getLastDetectedInfo()が検出済みのApprovalInfoを返すこと', async () => {
+    it('getLastDetectedInfo() returns the detected ApprovalInfo', async () => {
         const mockInfo = makeApprovalInfo({
             approveText: 'Accept',
             denyText: 'Decline',
@@ -307,7 +307,7 @@ describe('ApprovalDetector - 承認ボタン検出とリモート実行', () => 
             onApprovalRequired: jest.fn(),
         });
 
-        // 検出前はnull
+        // null before detection
         expect(detector.getLastDetectedInfo()).toBeNull();
 
         detector.start();
@@ -321,14 +321,14 @@ describe('ApprovalDetector - 承認ボタン検出とリモート実行', () => 
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 9: ボタンが消えたらlastDetectedInfoがリセットされること
+    // Test 9: lastDetectedInfo resets when the button disappears
     // ──────────────────────────────────────────────────────
-    it('ボタンが消えたらgetLastDetectedInfo()がnullを返すこと', async () => {
+    it('getLastDetectedInfo() returns null when the button disappears', async () => {
         const mockInfo = makeApprovalInfo();
 
         mockCdpService.call
-            .mockResolvedValueOnce({ result: { value: mockInfo } })  // 1回目: 検出
-            .mockResolvedValueOnce({ result: { value: null } });     // 2回目: 消えた
+            .mockResolvedValueOnce({ result: { value: mockInfo } })  // 1st: detected
+            .mockResolvedValueOnce({ result: { value: null } });     // 2nd: disappeared
 
         detector = new ApprovalDetector({
             cdpService: mockCdpService,
@@ -337,23 +337,23 @@ describe('ApprovalDetector - 承認ボタン検出とリモート実行', () => 
         });
         detector.start();
 
-        await jest.advanceTimersByTimeAsync(500); // 検出
+        await jest.advanceTimersByTimeAsync(500); // detection
         expect(detector.getLastDetectedInfo()).not.toBeNull();
 
-        await jest.advanceTimersByTimeAsync(500); // 消失
+        await jest.advanceTimersByTimeAsync(500); // disappearance
         expect(detector.getLastDetectedInfo()).toBeNull();
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 10: 検出 → クリックの流れでボタンテキストが正しく伝搬すること
+    // Test 10: Button text propagates correctly through the detection-to-click flow
     // ──────────────────────────────────────────────────────
-    it('引数なしのapproveButton()が検出済みのapproveTextを使用すること', async () => {
+    it('approveButton() without arguments uses the detected approveText', async () => {
         const mockInfo = makeApprovalInfo({ approveText: '承認する' });
 
-        // 最初のcall: poll用（検出）
+        // 1st call: for polling (detection)
         mockCdpService.call
             .mockResolvedValueOnce({ result: { value: mockInfo } })
-            // 2回目のcall: approveButton用（クリック）
+            // 2nd call: for approveButton (click)
             .mockResolvedValueOnce({ result: { value: { ok: true } } });
 
         detector = new ApprovalDetector({
@@ -363,13 +363,13 @@ describe('ApprovalDetector - 承認ボタン検出とリモート実行', () => 
         });
         detector.start();
 
-        await jest.advanceTimersByTimeAsync(500); // 検出
+        await jest.advanceTimersByTimeAsync(500); // detection
 
-        // 引数なしでapproveButton()
+        // Call approveButton() without arguments
         const result = await detector.approveButton();
 
         expect(result).toBe(true);
-        // 2回目のcallで検出済みのapproveTextが使われている
+        // The detected approveText is used in the 2nd call
         expect(mockCdpService.call).toHaveBeenLastCalledWith(
             'Runtime.evaluate',
             expect.objectContaining({
@@ -379,9 +379,9 @@ describe('ApprovalDetector - 承認ボタン検出とリモート実行', () => 
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 11: 引数なしのdenyButton()が検出済みのdenyTextを使用すること
+    // Test 11: denyButton() without arguments uses the detected denyText
     // ──────────────────────────────────────────────────────
-    it('引数なしのdenyButton()が検出済みのdenyTextを使用すること', async () => {
+    it('denyButton() without arguments uses the detected denyText', async () => {
         const mockInfo = makeApprovalInfo({ denyText: 'キャンセル' });
 
         mockCdpService.call
@@ -409,9 +409,9 @@ describe('ApprovalDetector - 承認ボタン検出とリモート実行', () => 
     });
 
     // ──────────────────────────────────────────────────────
-    // テスト 12: contextIdがnullの場合はcontextIdなしでcallされること
+    // Test 12: Calls without contextId parameter when contextId is null
     // ──────────────────────────────────────────────────────
-    it('contextIdがnullの場合はcontextIdパラメータなしでcallされること', async () => {
+    it('calls without the contextId parameter when contextId is null', async () => {
         mockCdpService.getPrimaryContextId = jest.fn().mockReturnValue(null);
         mockCdpService.call.mockResolvedValue({ result: { value: null } });
 

@@ -1,14 +1,14 @@
 import { CdpService } from './cdpService';
 
-/** チャットセッション情報 */
+/** Chat session information */
 export interface ChatSessionInfo {
-    /** 現在のチャットタイトル（取得できた場合） */
+    /** Current chat title (if available) */
     title: string;
-    /** チャットが存在するか */
+    /** Whether an active chat exists */
     hasActiveChat: boolean;
 }
 
-/** 新規チャットボタンの状態を取得するスクリプト */
+/** Script to get the state of the new chat button */
 const GET_NEW_CHAT_BUTTON_SCRIPT = `(() => {
     const btn = document.querySelector('[data-tooltip-id="new-conversation-tooltip"]');
     if (!btn) return { found: false };
@@ -24,8 +24,8 @@ const GET_NEW_CHAT_BUTTON_SCRIPT = `(() => {
 })()`;
 
 /**
- * Cascade panel ヘッダーからチャットタイトルを取得するスクリプト。
- * ヘッダー内の text-ellipsis クラスを持つ div がタイトル要素。
+ * Script to get the chat title from the Cascade panel header.
+ * The title element is a div with the text-ellipsis class inside the header.
  */
 const GET_CHAT_TITLE_SCRIPT = `(() => {
     const panel = document.querySelector('.antigravity-agent-side-panel');
@@ -34,43 +34,43 @@ const GET_CHAT_TITLE_SCRIPT = `(() => {
     if (!header) return { title: '', hasActiveChat: false };
     const titleEl = header.querySelector('div[class*="text-ellipsis"]');
     const title = titleEl ? (titleEl.textContent || '').trim() : '';
-    // "Agent" はデフォルトの空チャットタイトル
+    // "Agent" is the default empty chat title
     const hasActiveChat = title.length > 0 && title !== 'Agent';
-    return { title: title || '(無題)', hasActiveChat };
+    return { title: title || '(Untitled)', hasActiveChat };
 })()`;
 
 /**
- * Antigravity上のチャットセッションをCDP経由で操作するサービス。
+ * Service for managing chat sessions on Antigravity via CDP.
  *
- * CDP依存はメソッド引数で受け取る（接続プール対応）。
+ * CDP dependencies are received as method arguments (connection pool compatible).
  */
 export class ChatSessionService {
     /**
-     * Antigravity UIで新しいチャットセッションを開始する。
+     * Start a new chat session in the Antigravity UI.
      *
-     * 戦略:
-     *   1. 新規チャットボタンの状態を確認
-     *   2. cursor: not-allowed → 既に空チャット（何もしない）
-     *   3. cursor: pointer → Input.dispatchMouseEvent で座標クリック
-     *   4. ボタンが見つからない場合 → エラー
+     * Strategy:
+     *   1. Check the state of the new chat button
+     *   2. cursor: not-allowed -> already an empty chat (do nothing)
+     *   3. cursor: pointer -> click via Input.dispatchMouseEvent coordinates
+     *   4. Button not found -> error
      *
-     * @param cdpService 使用するCdpServiceインスタンス
-     * @returns 成功時 { ok: true }, 失敗時 { ok: false, error: string }
+     * @param cdpService CdpService instance to use
+     * @returns { ok: true } on success, { ok: false, error: string } on failure
      */
     async startNewChat(cdpService: CdpService): Promise<{ ok: boolean; error?: string }> {
         try {
-            // Antigravity起動直後はコンテキストが空の場合がある。
-            // cascade-panel が準備完了するまで最大10秒待機する。
+            // Contexts may be empty right after Antigravity starts.
+            // Wait up to 10 seconds for the cascade-panel to become ready.
             let contexts = cdpService.getContexts();
             if (contexts.length === 0) {
                 const ready = await cdpService.waitForCascadePanelReady(10000, 500);
                 if (!ready) {
-                    return { ok: false, error: 'コンテキストがありません（タイムアウト）' };
+                    return { ok: false, error: 'No contexts available (timed out)' };
                 }
                 contexts = cdpService.getContexts();
             }
 
-            // ボタン状態を取得（DOMロード待ちリトライ: 最大5回、1秒間隔）
+            // Get button state (retry waiting for DOM load: up to 5 times, 1 second interval)
             let btnState = await this.getNewChatButtonState(cdpService, contexts);
 
             if (!btnState.found) {
@@ -83,15 +83,15 @@ export class ChatSessionService {
             }
 
             if (!btnState.found) {
-                return { ok: false, error: '新規チャットボタンが見つかりませんでした' };
+                return { ok: false, error: 'New chat button not found' };
             }
 
-            // cursor: not-allowed → 既に空チャット（新規作成不要）
+            // cursor: not-allowed -> already an empty chat (no need to create new)
             if (!btnState.enabled) {
                 return { ok: true };
             }
 
-            // cursor: pointer → CDP Input API で座標クリック
+            // cursor: pointer -> click via CDP Input API coordinates
             await cdpService.call('Input.dispatchMouseEvent', {
                 type: 'mouseMoved', x: btnState.x, y: btnState.y,
             });
@@ -104,17 +104,17 @@ export class ChatSessionService {
                 button: 'left', clickCount: 1,
             });
 
-            // クリック後、UI反映を待機
+            // Wait for UI to update after click
             await new Promise(r => setTimeout(r, 1500));
 
-            // ボタンが not-allowed に変わったか確認（新チャットが開かれた証拠）
+            // Check if button changed to not-allowed (evidence that a new chat was opened)
             const afterState = await this.getNewChatButtonState(cdpService, contexts);
             if (afterState.found && !afterState.enabled) {
                 return { ok: true };
             }
 
-            // ボタンがまだ有効 → クリックが効かなかった可能性
-            return { ok: false, error: '新規チャットボタンをクリックしましたが、状態が変化しませんでした' };
+            // Button still enabled -> click may not have worked
+            return { ok: false, error: 'Clicked new chat button but state did not change' };
         } catch (error: unknown) {
             const message = error instanceof Error ? error.message : String(error);
             return { ok: false, error: message };
@@ -122,9 +122,9 @@ export class ChatSessionService {
     }
 
     /**
-     * 現在のチャットセッション情報を取得する。
-     * @param cdpService 使用するCdpServiceインスタンス
-     * @returns チャットセッション情報
+     * Get the current chat session information.
+     * @param cdpService CdpService instance to use
+     * @returns Chat session information
      */
     async getCurrentSessionInfo(cdpService: CdpService): Promise<ChatSessionInfo> {
         try {
@@ -143,16 +143,16 @@ export class ChatSessionService {
                             hasActiveChat: value.hasActiveChat ?? false,
                         };
                     }
-                } catch (_) { /* 次のコンテキストへ */ }
+                } catch (_) { /* try next context */ }
             }
-            return { title: '(取得失敗)', hasActiveChat: false };
+            return { title: '(Failed to retrieve)', hasActiveChat: false };
         } catch (error) {
-            return { title: '(取得失敗)', hasActiveChat: false };
+            return { title: '(Failed to retrieve)', hasActiveChat: false };
         }
     }
 
     /**
-     * 新規チャットボタンの状態（有効/無効、座標）を取得する。
+     * Get the state (enabled/disabled, coordinates) of the new chat button.
      */
     private async getNewChatButtonState(
         cdpService: CdpService,
@@ -169,7 +169,7 @@ export class ChatSessionService {
                 if (value?.found) {
                     return { found: true, enabled: value.enabled, x: value.x, y: value.y };
                 }
-            } catch (_) { /* 次のコンテキストへ */ }
+            } catch (_) { /* try next context */ }
         }
         return { found: false, enabled: false, x: 0, y: 0 };
     }

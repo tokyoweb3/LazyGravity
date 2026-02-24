@@ -80,13 +80,13 @@ export class AutoAcceptService {
         if (!rawAction || rawAction.trim().length === 0) return 'status';
 
         const normalized = rawAction.trim().toLowerCase();
-        if (['on', 'enable', 'enabled', 'true', '1', 'オン'].includes(normalized)) {
+        if (['on', 'enable', 'enabled', 'true', '1'].includes(normalized)) {
             return 'on';
         }
-        if (['off', 'disable', 'disabled', 'false', '0', 'オフ'].includes(normalized)) {
+        if (['off', 'disable', 'disabled', 'false', '0'].includes(normalized)) {
             return 'off';
         }
-        if (['status', 'state', 'show', '状態'].includes(normalized)) {
+        if (['status', 'state', 'show'].includes(normalized)) {
             return 'status';
         }
         return null;

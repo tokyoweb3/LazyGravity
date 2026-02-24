@@ -1,9 +1,9 @@
 import { t } from "../utils/i18n";
 
 /**
- * 利用可能なLLMモデル一覧
- * Antigravity（Cursor Fork）のUIで選択可能なモデルに準拠
- * 注意: Antigravityのバージョンアップに伴いモデルは変更される可能性があります
+ * Available LLM models
+ * Aligned with models selectable in the Antigravity (Cursor fork) UI
+ * Note: Models may change with Antigravity version updates
  */
 export const AVAILABLE_MODELS = [
     'gemini-2.5-pro',
@@ -19,13 +19,13 @@ export const AVAILABLE_MODELS = [
     'o3-mini'
 ] as const;
 
-/** デフォルトのLLMモデル */
+/** Default LLM model */
 export const DEFAULT_MODEL: Model = 'gemini-2.5-pro';
 
-/** モデルの型定義 */
+/** Model type definition */
 export type Model = typeof AVAILABLE_MODELS[number];
 
-/** モデル設定結果の型定義 */
+/** Model set result type definition */
 export interface ModelSetResult {
     success: boolean;
     model?: Model;
@@ -33,22 +33,22 @@ export interface ModelSetResult {
 }
 
 /**
- * LLMモデルを管理するサービスクラス。
- * /models コマンドによるモデル切り替えを担う。
+ * Service class for managing LLM models.
+ * Handles model switching via the /model command.
  */
 export class ModelService {
     private currentModel: Model = DEFAULT_MODEL;
 
     /**
-     * 現在のLLMモデルを取得する
+     * Get the current LLM model
      */
     public getCurrentModel(): Model {
         return this.currentModel;
     }
 
     /**
-     * LLMモデルを切り替える
-     * @param modelName 設定するモデル名（大文字小文字は区別しない）
+     * Switch LLM model
+     * @param modelName Model name to set (case-insensitive)
      */
     public setModel(modelName: string): ModelSetResult {
         if (!modelName || modelName.trim() === '') {
@@ -75,7 +75,7 @@ export class ModelService {
     }
 
     /**
-     * 利用可能なモデル一覧を取得する
+     * Get the list of available models
      */
     public getAvailableModels(): readonly string[] {
         return AVAILABLE_MODELS;

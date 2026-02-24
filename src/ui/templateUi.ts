@@ -27,11 +27,11 @@ export async function sendTemplateUI(
 ): Promise<void> {
     if (templates.length === 0) {
         const embed = new EmbedBuilder()
-            .setTitle('テンプレート管理')
+            .setTitle('Template Management')
             .setColor(0x57F287)
             .setDescription(
-                '登録されているテンプレートはありません。\n\n' +
-                '`/template add name:<name> prompt:<prompt>` で追加してください。',
+                'No templates registered.\n\n' +
+                'Use `/template add name:<name> prompt:<prompt>` to add one.',
             )
             .setTimestamp();
 
@@ -50,14 +50,14 @@ export async function sendTemplateUI(
         .join('\n\n');
 
     const footerText = hasMore
-        ? `${templates.length - MAX_BUTTONS}件のテンプレートが非表示です。/template use <name> で直接実行できます。`
-        : 'ボタンをクリックするとテンプレートを実行します';
+        ? `${templates.length - MAX_BUTTONS} templates are hidden. Use /template use <name> to execute directly.`
+        : 'Click a button to execute the template';
 
     const embed = new EmbedBuilder()
-        .setTitle('テンプレート管理')
+        .setTitle('Template Management')
         .setColor(0x57F287)
         .setDescription(
-            `**登録テンプレート (${templates.length}件)**\n\n${description}`,
+            `**Registered Templates (${templates.length})**\n\n${description}`,
         )
         .setFooter({ text: footerText })
         .setTimestamp();

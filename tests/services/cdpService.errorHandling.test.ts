@@ -1,13 +1,13 @@
 /**
- * Step 12: エラーハンドリングとタイムアウト処理 テスト
- * TDD Red フェーズ
+ * Step 12: Error handling and timeout processing tests
+ * TDD Red phase
  *
- * 検証項目:
- * - CDPがクラッシュ/切断した際に自動再接続を試みるか
- * - 再接続試行回数の上限を超えたらエラーイベントを発火するか
- * - 再接続中に同時に複数回接続しようとしても安全か
- * - CdpServiceのpendingCallsが切断時に全てrejectされること（メモリリーク防止）
- * - 最大再試行回数に達した際に 'reconnectFailed' イベントを発火すること
+ * Verification items:
+ * - Does it attempt automatic reconnection when CDP crashes/disconnects?
+ * - Does it fire an error event when max reconnection attempts are exceeded?
+ * - Is it safe when multiple concurrent connection attempts occur during reconnection?
+ * - Are all pendingCalls rejected on disconnection (memory leak prevention)?
+ * - Does it fire a 'reconnectFailed' event when max retry count is reached?
  */
 
 import { CdpService } from '../../src/services/cdpService';
@@ -20,11 +20,11 @@ jest.mock('http', () => ({
     get: jest.fn(),
 }));
 
-describe('CdpService - エラーハンドリングとタイムアウト処理 (Step 12)', () => {
+describe('CdpService - error handling and timeout processing (Step 12)', () => {
     let cdpService: CdpService;
     let mockWsInstance: jest.Mocked<WebSocket>;
 
-    // 切断イベントのハンドラーをシミュレートするための関数
+    // Function to simulate disconnect event handlers
     let wsEventHandlers: Record<string, Function> = {};
 
     beforeEach(() => {
@@ -48,15 +48,15 @@ describe('CdpService - エラーハンドリングとタイムアウト処理 (S
         jest.restoreAllMocks();
     });
 
-    // ========== pendingCallsのクリーンアップ ==========
+    // ========== pendingCalls cleanup ==========
 
-    describe('切断時のpendingCallsクリーンアップ', () => {
-        it('WebSocket切断時に未解決のpendingCallsが全てrejectされること', async () => {
+    describe('pendingCalls cleanup on disconnection', () => {
+        it('rejects all unresolved pendingCalls when WebSocket disconnects', async () => {
             cdpService = new CdpService({ cdpCallTimeout: 5000, maxReconnectAttempts: 0 });
             (cdpService as any).isConnectedFlag = true;
             (cdpService as any).ws = mockWsInstance;
 
-            // pendingCallsに未解決のPromiseを追加
+            // Add unresolved Promises to pendingCalls
             const pendingPromise = new Promise<void>((_, reject) => {
                 (cdpService as any).pendingCalls.set(999, {
                     resolve: jest.fn(),
@@ -65,17 +65,17 @@ describe('CdpService - エラーハンドリングとタイムアウト処理 (S
                 });
             });
 
-            // CDP切断をシミュレート
+            // Simulate CDP disconnection
             (cdpService as any).isConnectedFlag = false;
             (cdpService as any).ws = null;
-            // clearPendingCallsメソッドを呼ぶ
+            // Call the clearPendingCalls method
             (cdpService as any).clearPendingCalls(new Error('WebSocket切断'));
 
-            // pendingCallsのrejectが呼ばれること
+            // Verify pendingCalls reject is called
             await expect(pendingPromise).rejects.toThrow('WebSocket切断');
         });
 
-        it('切断後はpendingCallsが空になること', () => {
+        it('pendingCalls is empty after disconnection', () => {
             cdpService = new CdpService({ cdpCallTimeout: 5000, maxReconnectAttempts: 0 });
             (cdpService as any).pendingCalls.set(1, {
                 resolve: jest.fn(),
@@ -96,10 +96,10 @@ describe('CdpService - エラーハンドリングとタイムアウト処理 (S
         });
     });
 
-    // ========== 自動再接続 ==========
+    // ========== Auto-reconnection ==========
 
-    describe('自動再接続機能', () => {
-        it('maxReconnectAttemptsが0の場合、再接続しないこと', (done) => {
+    describe('auto-reconnection feature', () => {
+        it('does not reconnect when maxReconnectAttempts is 0', (done) => {
             cdpService = new CdpService({
                 cdpCallTimeout: 1000,
                 maxReconnectAttempts: 0,
@@ -109,30 +109,30 @@ describe('CdpService - エラーハンドリングとタイムアウト処理 (S
 
             const reconnectSpy = jest.spyOn(cdpService as any, 'tryReconnect');
 
-            // disconnectedイベントを発火させる
+            // Fire the disconnected event
             cdpService.on('disconnected', () => {
-                // 少し待ってから再接続試行が行われないことを確認
+                // Wait briefly and verify no reconnection attempt was made
                 setTimeout(() => {
                     expect(reconnectSpy).not.toHaveBeenCalled();
                     done();
                 }, 100);
             });
 
-            // 切断をシミュレート
+            // Simulate disconnection
             (cdpService as any).isConnectedFlag = false;
             (cdpService as any).ws = null;
             cdpService.emit('disconnected');
         });
 
-        it('maxReconnectAttemptsが設定されている場合、reconnectFailed後にイベントを発火すること', (done) => {
+        it('fires a reconnectFailed event after exhausting maxReconnectAttempts', (done) => {
             cdpService = new CdpService({
                 cdpCallTimeout: 1000,
                 maxReconnectAttempts: 2,
-                reconnectDelayMs: 10, // テスト高速化のため短く設定
+                reconnectDelayMs: 10, // Set short for faster tests
             });
 
-            // discoverTargetを必ず失敗させる
-            jest.spyOn(cdpService, 'discoverTarget').mockRejectedValue(new Error('ターゲットが見つかりません'));
+            // Force discoverTarget to always fail
+            jest.spyOn(cdpService, 'discoverTarget').mockRejectedValue(new Error('Target not found'));
 
             cdpService.on('reconnectFailed', (err: Error) => {
                 expect(err).toBeDefined();
@@ -140,11 +140,11 @@ describe('CdpService - エラーハンドリングとタイムアウト処理 (S
                 done();
             });
 
-            // tryReconnectを直接呼び出してテスト
+            // Directly call tryReconnect for testing
             (cdpService as any).tryReconnect();
         }, 10000);
 
-        it('再接続試行回数がmaxReconnectAttemptsを超えないこと', async () => {
+        it('does not exceed maxReconnectAttempts for reconnection attempts', async () => {
             cdpService = new CdpService({
                 cdpCallTimeout: 1000,
                 maxReconnectAttempts: 2,
@@ -154,39 +154,39 @@ describe('CdpService - エラーハンドリングとタイムアウト処理 (S
             let connectCallCount = 0;
             jest.spyOn(cdpService, 'discoverTarget').mockImplementation(async () => {
                 connectCallCount++;
-                throw new Error('接続失敗');
+                throw new Error('Connection failed');
             });
 
-            // reconnectFailedイベントを待つ
+            // Wait for the reconnectFailed event
             await new Promise<void>((resolve) => {
                 cdpService.on('reconnectFailed', () => resolve());
                 (cdpService as any).tryReconnect();
             });
 
-            // maxReconnectAttempts回数分だけ試みること
+            // Verify only maxReconnectAttempts attempts were made
             expect(connectCallCount).toBeLessThanOrEqual(2);
         }, 10000);
     });
 
-    // ========== CdpServiceオプション ==========
+    // ========== CdpService options ==========
 
-    describe('CdpServiceOptions の拡張', () => {
-        it('maxReconnectAttemptsオプションを受け付けること', () => {
+    describe('CdpServiceOptions extension', () => {
+        it('accepts the maxReconnectAttempts option', () => {
             cdpService = new CdpService({ maxReconnectAttempts: 5 });
             expect((cdpService as any).maxReconnectAttempts).toBe(5);
         });
 
-        it('reconnectDelayMsオプションを受け付けること', () => {
+        it('accepts the reconnectDelayMs option', () => {
             cdpService = new CdpService({ reconnectDelayMs: 3000 });
             expect((cdpService as any).reconnectDelayMs).toBe(3000);
         });
 
-        it('デフォルトのmaxReconnectAttemptsは3であること', () => {
+        it('defaults maxReconnectAttempts to 3', () => {
             cdpService = new CdpService();
             expect((cdpService as any).maxReconnectAttempts).toBe(3);
         });
 
-        it('デフォルトのreconnectDelayMsは2000であること', () => {
+        it('defaults reconnectDelayMs to 2000', () => {
             cdpService = new CdpService();
             expect((cdpService as any).reconnectDelayMs).toBe(2000);
         });

@@ -88,9 +88,9 @@ function runStopSelector(panel: ReturnType<typeof createScope>): boolean {
 }
 
 describe('ResponseMonitor stop selector robustness', () => {
-    it('fixed配置でoffsetParentがnullでもストップボタンを検出できること', () => {
+    it('detects the stop button even when offsetParent is null for fixed-position elements', () => {
         const button: MockButton = {
-            // fixed配置要素はoffsetParentがnullになることがある
+            // Fixed-position elements can have null offsetParent
             offsetParent: null,
             click: jest.fn(),
             getAttribute: (name: string) => (name === 'aria-label' ? 'Stop generating' : null),
@@ -104,7 +104,7 @@ describe('ResponseMonitor stop selector robustness', () => {
         expect(isStopVisible).toBe(true);
     });
 
-    it('fixed配置でoffsetParentがnullでもストップボタンをクリックできること', () => {
+    it('clicks the stop button even when offsetParent is null for fixed-position elements', () => {
         const button: MockButton = {
             offsetParent: null,
             click: jest.fn(),
@@ -122,7 +122,7 @@ describe('ResponseMonitor stop selector robustness', () => {
         expect(button.click).toHaveBeenCalledTimes(1);
     });
 
-    it('data-tooltip-idベースのキャンセルボタンを生成中として検出できること', () => {
+    it('detects the cancel button by data-tooltip-id as generating', () => {
         const button: MockButton = {
             offsetParent: null,
             click: jest.fn(),
@@ -137,7 +137,7 @@ describe('ResponseMonitor stop selector robustness', () => {
         expect(isStopVisible).toBe(true);
     });
 
-    it('role=buttonが無い赤い四角アイコンでも停止操作できること', () => {
+    it('can perform stop operation even for a red square icon without role=button', () => {
         const genericControl: MockButton = {
             offsetParent: null,
             click: jest.fn(),
@@ -172,7 +172,7 @@ describe('ResponseMonitor stop selector robustness', () => {
         expect(genericControl.click).toHaveBeenCalledTimes(1);
     });
 
-    it('赤い四角アイコンのみの汎用ボタンは生成中判定に使わないこと', () => {
+    it('does not use a generic red square icon button for generating detection', () => {
         const genericControl: MockButton = {
             offsetParent: null,
             click: jest.fn(),
@@ -204,7 +204,7 @@ describe('ResponseMonitor stop selector robustness', () => {
         expect(isStopVisible).toBe(false);
     });
 
-    it('入力欄右下の四角アイコンボタンは生成中判定に使うこと', () => {
+    it('uses a square icon button near the input area for generating detection', () => {
         const input = createInput();
         const squareButton: MockButton = {
             tagName: 'BUTTON',
@@ -226,7 +226,7 @@ describe('ResponseMonitor stop selector robustness', () => {
         expect(isStopVisible).toBe(true);
     });
 
-    it('入力欄右下の矢印アイコンボタンは非生成中と判定すること', () => {
+    it('does not detect an arrow icon button near the input area as generating', () => {
         const input = createInput();
         const sendButton: MockButton = {
             tagName: 'BUTTON',
@@ -249,7 +249,7 @@ describe('ResponseMonitor stop selector robustness', () => {
         expect(isStopVisible).toBe(false);
     });
 
-    it('マイクボタン（path+rect SVG）をストップボタンと誤判定しないこと', () => {
+    it('does not misidentify a microphone button (path+rect SVG) as a stop button', () => {
         const input = createInput();
         const micButton: MockButton = {
             tagName: 'BUTTON',
@@ -274,7 +274,7 @@ describe('ResponseMonitor stop selector robustness', () => {
         expect(isStopVisible).toBe(false);
     });
 
-    it('マイクボタン（path+rect SVG）をクリックしないこと', () => {
+    it('does not click a microphone button (path+rect SVG)', () => {
         const input = createInput();
         const micButton: MockButton = {
             tagName: 'BUTTON',
@@ -302,7 +302,7 @@ describe('ResponseMonitor stop selector robustness', () => {
         expect(micButton.click).not.toHaveBeenCalled();
     });
 
-    it('rect のみの SVG（pathなし）は引き続きストップボタンと判定すること', () => {
+    it('still detects a rect-only SVG (no path) as a stop button', () => {
         const input = createInput();
         const stopButton: MockButton = {
             tagName: 'BUTTON',

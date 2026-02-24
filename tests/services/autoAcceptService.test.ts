@@ -1,12 +1,12 @@
 import { AutoAcceptService } from '../../src/services/autoAcceptService';
 
 describe('AutoAcceptService', () => {
-    it('初期状態はコンストラクタ引数どおりであること', () => {
+    it('initial state matches the constructor argument', () => {
         expect(new AutoAcceptService().isEnabled()).toBe(false);
         expect(new AutoAcceptService(true).isEnabled()).toBe(true);
     });
 
-    it('on で有効化されること', () => {
+    it('enables the service with "on"', () => {
         const service = new AutoAcceptService(false);
         const result = service.handle('on');
 
@@ -16,7 +16,7 @@ describe('AutoAcceptService', () => {
         expect(service.isEnabled()).toBe(true);
     });
 
-    it('off で無効化されること', () => {
+    it('disables the service with "off"', () => {
         const service = new AutoAcceptService(true);
         const result = service.handle('off');
 
@@ -26,7 +26,7 @@ describe('AutoAcceptService', () => {
         expect(service.isEnabled()).toBe(false);
     });
 
-    it('status では状態変更しないこと', () => {
+    it('does not change state with "status"', () => {
         const service = new AutoAcceptService(true);
         const result = service.handle('status');
 
@@ -36,7 +36,7 @@ describe('AutoAcceptService', () => {
         expect(service.isEnabled()).toBe(true);
     });
 
-    it('無効な引数ではエラーを返し状態変更しないこと', () => {
+    it('returns an error for invalid arguments without changing state', () => {
         const service = new AutoAcceptService(false);
         const result = service.handle('invalid');
 

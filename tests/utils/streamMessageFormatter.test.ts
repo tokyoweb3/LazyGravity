@@ -7,53 +7,53 @@ import {
 
 describe('streamMessageFormatter', () => {
     describe('buildModeModelLines', () => {
-        it('同一モデルの場合は1行に集約する', () => {
+        it('consolidates into a single line when both models are the same', () => {
             const lines = buildModeModelLines('Fast', 'Gemini 3.1 Pro (High)', 'Gemini 3.1 Pro (High)');
             expect(lines).toEqual([
-                '現在モード: Fast',
-                'モデル: Gemini 3.1 Pro (High)',
+                'Current Mode: Fast',
+                'Model: Gemini 3.1 Pro (High)',
             ]);
         });
 
-        it('異なるモデルの場合はFast/Plan両方を表示する', () => {
+        it('shows both Fast and Plan models when they differ', () => {
             const lines = buildModeModelLines('Planning', 'Claude Opus 4.6', 'Gemini 3.1 Pro');
             expect(lines).toEqual([
-                '現在モード: Planning',
-                'Fastモデル: Claude Opus 4.6',
-                'Planモデル: Gemini 3.1 Pro',
+                'Current Mode: Planning',
+                'Fast Model: Claude Opus 4.6',
+                'Plan Model: Gemini 3.1 Pro',
             ]);
         });
     });
 
     describe('shouldSkipActivityLog', () => {
-        it('モード/モデル名のみの重複ログは除外する', () => {
+        it('filters out duplicate logs that only contain mode/model names', () => {
             expect(shouldSkipActivityLog('Fast', 'Fast', 'Gemini 3.1 Pro')).toBe(true);
             expect(shouldSkipActivityLog('Gemini 3.1 Pro', 'Fast', 'Gemini 3.1 Pro')).toBe(true);
         });
 
-        it('Generatingなどの汎用状態ログは除外する', () => {
+        it('filters out generic status logs like Generating', () => {
             expect(shouldSkipActivityLog('Generating.', 'Fast', 'Gemini 3.1 Pro')).toBe(true);
             expect(shouldSkipActivityLog('Thinking...', 'Planning', 'Claude')).toBe(true);
         });
 
-        it('1語だけの曖昧な活動ログは除外する', () => {
+        it('filters out ambiguous single-word activity logs', () => {
             expect(shouldSkipActivityLog('create', 'Fast', 'Gemini 3.1 Pro')).toBe(true);
             expect(shouldSkipActivityLog('ready', 'Fast', 'Gemini 3.1 Pro')).toBe(true);
             expect(shouldSkipActivityLog('pull.', 'Fast', 'Gemini 3.1 Pro')).toBe(true);
         });
 
-        it('analyzed系のスキャンログは除外する', () => {
+        it('filters out analyzed-type scan logs', () => {
             expect(shouldSkipActivityLog('Analyzed.gemini/antigravity/global_skills', 'Fast', 'Gemini 3.1 Pro')).toBe(true);
             expect(shouldSkipActivityLog('Analyzedantigravity_claw_development.md#L1-49', 'Fast', 'Gemini 3.1 Pro')).toBe(true);
         });
 
-        it('実行内容のログは除外しない', () => {
+        it('does not filter out logs describing actual execution', () => {
             expect(shouldSkipActivityLog('Analyzing Name Preference', 'Fast', 'Gemini 3.1 Pro')).toBe(false);
         });
     });
 
     describe('splitForEmbedDescription', () => {
-        it('長文を上限で分割し、内容を保持する', () => {
+        it('splits long text at the limit while preserving content', () => {
             const text = 'a'.repeat(1200) + '\n' + 'b'.repeat(1200) + '\n' + 'c'.repeat(1200);
             const parts = splitForEmbedDescription(text, 1000);
 
@@ -66,17 +66,17 @@ describe('streamMessageFormatter', () => {
     });
 
     describe('fitForSingleEmbedDescription', () => {
-        it('上限以内ならそのまま返す', () => {
+        it('returns text as-is when within the limit', () => {
             const text = '短いテキスト';
             expect(fitForSingleEmbedDescription(text, 50)).toBe(text);
         });
 
-        it('上限を超える場合は先頭を省略して上限内に収める', () => {
+        it('truncates the beginning to fit within the limit when exceeded', () => {
             const text = `${'a'.repeat(200)}\n${'b'.repeat(200)}`;
             const fitted = fitForSingleEmbedDescription(text, 120);
 
             expect(fitted.length).toBeLessThanOrEqual(120);
-            expect(fitted.startsWith('… (先頭を省略)')).toBe(true);
+            expect(fitted.startsWith('... (beginning truncated)')).toBe(true);
             expect(fitted).toContain('b'.repeat(40));
         });
     });

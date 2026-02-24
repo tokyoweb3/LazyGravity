@@ -131,9 +131,9 @@ jest.mock('../../src/services/cdpService', () => {
         CdpService: jest.fn().mockImplementation(() => {
             const emitter = new EventEmitter();
             return Object.assign(emitter, {
-                connect: jest.fn().mockRejectedValue(new Error('テスト環境: CDP未接続')),
+                connect: jest.fn().mockRejectedValue(new Error('Test environment: CDP not connected')),
                 disconnect: jest.fn().mockResolvedValue(undefined),
-                discoverTarget: jest.fn().mockRejectedValue(new Error('テスト環境')),
+                discoverTarget: jest.fn().mockRejectedValue(new Error('Test environment')),
                 injectMessage: jest.fn().mockResolvedValue({ ok: false, error: 'mock' }),
                 getContexts: jest.fn().mockReturnValue([]),
                 call: jest.fn().mockResolvedValue({}),
@@ -154,14 +154,14 @@ describe('Bot Refactor Baseline', () => {
         jest.clearAllMocks();
     });
 
-    it('refactor後も起動時にMessageCreate/InteractionCreateを購読する', async () => {
+    it('subscribes to MessageCreate/InteractionCreate on startup even after refactoring', async () => {
         await startBot();
         const client = (Client as unknown as jest.Mock).mock.results[0].value;
         expect(client.on).toHaveBeenCalledWith(Events.MessageCreate, expect.any(Function));
         expect(client.on).toHaveBeenCalledWith(Events.InteractionCreate, expect.any(Function));
     });
 
-    it('response/activity 更新キューは相互にブロックしないこと', async () => {
+    it('response and activity update queues do not block each other', async () => {
         const events: string[] = [];
         const responseQueue = createSerialTaskQueueForTest('response', 'test-trace');
         const activityQueue = createSerialTaskQueueForTest('activity', 'test-trace');
@@ -195,7 +195,7 @@ describe('Bot Refactor Baseline', () => {
         expect(events).toContain('response:end');
     });
 
-    it('最終テキストも進捗テキストも空で activity が直近更新されている場合は最終化を遅延すること', () => {
+    it('delays finalization when both final and progress text are empty but activity was recently updated', () => {
         const shouldDelay = shouldDelayFinalizationForActiveGeneration({
             finalText: '',
             lastProgressText: '',
@@ -208,7 +208,7 @@ describe('Bot Refactor Baseline', () => {
         expect(shouldDelay).toBe(true);
     });
 
-    it('legacy-fallback の短文進捗のみで activity が継続している場合は最終化を遅延すること', () => {
+    it('delays finalization when only short legacy-fallback progress text exists and activity is ongoing', () => {
         const shouldDelay = shouldDelayFinalizationForActiveGeneration({
             finalText: '',
             lastProgressText: 'Initializing the Project',
@@ -221,7 +221,7 @@ describe('Bot Refactor Baseline', () => {
         expect(shouldDelay).toBe(true);
     });
 
-    it('activity 更新が十分古い場合は最終化を遅延しないこと', () => {
+    it('does not delay finalization when the activity update is old enough', () => {
         const shouldDelay = shouldDelayFinalizationForActiveGeneration({
             finalText: '',
             lastProgressText: '',

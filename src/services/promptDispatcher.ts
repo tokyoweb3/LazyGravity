@@ -42,8 +42,8 @@ export interface PromptDispatcherDeps {
 }
 
 /**
- * 既存のsendPromptToAntigravityを呼び出すディスパッチャー。
- * 呼び出し側の依存注入を統一し、イベントハンドラ側を単純化する。
+ * Dispatcher that calls the existing sendPromptToAntigravity.
+ * Unifies dependency injection on the caller side and simplifies event handlers.
  */
 export class PromptDispatcher {
     constructor(private readonly deps: PromptDispatcherDeps) { }

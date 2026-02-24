@@ -3,182 +3,215 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.0.0-blue?style=flat-square" alt="Version" />
+  <img src="https://img.shields.io/badge/version-0.0.1-blue?style=flat-square" alt="Version" />
   <img src="https://img.shields.io/badge/node-18.x+-brightgreen?style=flat-square&logo=node.js" alt="Node.js" />
   <img src="https://img.shields.io/badge/discord.js-14.x-5865F2?style=flat-square&logo=discord&logoColor=white" alt="discord.js" />
   <img src="https://img.shields.io/badge/protocol-CDP%20%2F%20WebSocket-orange?style=flat-square" alt="CDP/WebSocket" />
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License" />
 </p>
 
-# 🐾 LazyGravity
+# LazyGravity
 
-**LazyGravity** は、どこからでもスマホのDiscordアプリを使って、自宅PCで稼働する AI コーディング起動ツール (Antigravity 等) を遠隔操作・対話できるローカル完結型のセキュアなDiscord Botです。
+**LazyGravity** is a local, secure Discord Bot that lets you remotely operate [Antigravity](https://antigravity.dev) on your home PC — from your smartphone's Discord app, anywhere.
 
-外出先からの「あの件、直しておいて」「新しい機能の設計を始めて」といった自然言語の依頼を、自宅PCのマシンパワーとローカル環境で直接・安全に実行し、結果をDiscordで受け取ることができます。
+Send natural language instructions like "fix that bug" or "start designing the new feature" from your phone. Antigravity executes them locally on your home PC using its full resources, and reports results back to Discord.
 
-## ✨ 主な機能
+## Quick Setup
 
-1. 🔒 **完全ローカル・セキュア設計**
-   - 外部サーバーへのデプロイやWebHook(ポート開放/SSH)は**一切不要**。あなたのPC内でプロセスとして常駐し、Discordと直接通信します。
-   - **ホワイトリスト制御**: 許可されたDiscordユーザーID (`allowedUserIds`) 以外からのアクセスは完全に遮断されます。
-   - **安全な鍵管理**: Bot TokenやAPIキーはセキュアにPC内ローカル保管され（`.env`のパーミッション厳格化等）、ソースコード上には一切記述されません。
-   - **パストラバーサル防止 & リソース保護**: プロジェクト外のディレクトリへの不正アクセスを防ぐJail(サンドボックス)的制御に加え、タスクの同時実行数を制限しPCのフリーズ（DoS）を防ぎます。
+Runtime: **Node >= 18**.
 
-2. 📂 **プロジェクト管理 (チャンネル↔ディレクトリ バインディング)**
-   - `/project` コマンドでDiscordチャンネルとローカルPCのプロジェクトディレクトリを紐付け。セレクトメニューやボタンによるインタラクティブなUIで直感的に操作できます。
-   - バインドされたチャンネルからのメッセージは、自動的にプロジェクトのコンテキスト付きでAntigravityに送信されます。
+```bash
+npm install -g lazy-gravity
+lazy-gravity setup
+```
 
-3. 💬 **コンテキストを引き継ぐEmbed返信**
-   - 実行結果はリッチなEmbed形式で通知。その結果に対してDiscordの「返信（Reply）」機能を使って指示を出すことで、Botが過去の文脈や対象ディレクトリを正確に引き継いで後続処理を行います。
+The interactive wizard walks you through Discord bot creation, token setup, and workspace configuration. When done:
 
-4. 📊 **長時間ジョブのリアルタイム監視**
-   - 長時間かかるビルドや生成推論タスクの進行を、工程ごとの新規メッセージ（伝達完了 / 計画 / 分析 / 実行確認 / 実装内容 / 最終サマリー）として履歴で確認できます。
+```bash
+lazy-gravity open     # Launch Antigravity with CDP enabled
+lazy-gravity start    # Start the Discord bot
+```
 
-5. ⏰ **Cron対応のスケジュール・定期実行タスク機能（将来実装予定）**
-   - `ScheduleService` / `ScheduleRepository` は実装済みですが、Discordコマンド（`/schedule`, `/schedules`）への接続は未実装です。
+Or run directly without installing:
 
-6. 📎 **添付ファイルとコンテキスト解析**
-   - Discordに送信した画像（スクショ等）やテキストファイルを読み取り、Antigravity側にコンテキストとして自動で渡すことができます。
-
-## 🚀 使い方とコマンド一覧
-
-### 🪄 メッセージでの自然言語指示
-チャンネル内でBotに向けてメンション(`@LazyGravity`)して自然言語で指示を出すだけです。
-> `@LazyGravity src/components 配下をリファクタリングして。昨日のスクショみたいなレイアウトにして` (画像添付)
-
-### 💻 スラッシュコマンド（クイックアクション）
-
-- `⚙️ /model [model_name]`
-  - 利用するLLM（例: `gpt-4o`, `claude-3-opus`, `gemini-1.5-pro` など）をワンタップで切り替えます。
-- `⚙️ /mode [mode_name]`
-  - 実行モード（例: `code`, `architect`, `ask` など）を切り替えます。
-- `📝 /template list|use|add|delete`
-  - よく使うプロンプト（例: `PR作成`, `エラー調査`）を呼び出して即時実行します。新規登録も可能です。
-- `📂 /project`
-  - プロジェクト一覧をセレクトメニューで表示し、選択するとカテゴリとセッションチャンネルを自動作成します。
-- `📂 /project create <name>`
-  - 新しいプロジェクトディレクトリを作成し、カテゴリとセッションチャンネルを自動作成します。
-- `🛑 /stop`
-  - 実行中の時間のかかるタスクや暴走したAIプロセスを安全に強制終了（Kill）します。
-- `⏰ /schedule ...` / `/schedules ...`（将来実装予定）
-  - コード上のスケジュールサービスはありますが、現時点でDiscordコマンドからは利用できません。
-- `💬 /new`
-  - プロジェクトカテゴリ配下に新しいセッションチャンネルを作成し、Antigravityで新規チャットを開始します。
-- `💬 /chat`
-  - 現在のチャットセッション情報と同プロジェクト内の全セッション一覧を表示します。
-- `📸 /screenshot`
-  - Antigravityの現在の画面をキャプチャしてDiscordに画像として送信します。
-- `🔧 /status`
-  - BotのCDP接続状態、現在のモード、接続中のプロジェクトなど全体ステータスを表示します。
-- `✅ /autoaccept [on|off|status]`
-  - 承認ダイアログを自動で許可するモードを切り替えます。`on` で有効化、`off` で無効化、`status` で現在状態を確認できます。
+```bash
+npx lazy-gravity
+```
 
 ---
 
-## 🔄 運用とトラブルシューティング (再起動など)
+## Features
 
-Botの調子が悪い場合や、コードを更新した場合は、以下の手順でプロセスを再起動してください。
+1. **Fully Local & Secure**
+   - **No external server or port exposure** — runs as a local process on your PC, communicating directly with Discord.
+   - **Whitelist access control**: only authorized Discord user IDs (`allowedUserIds`) can interact with the bot.
+   - **Secure credential management**: Bot tokens and API keys are stored locally (never in source code).
+   - **Path traversal prevention & resource protection**: sandboxed directory access and concurrent task limits prevent abuse.
 
-1. **プロセスを終了する**
-   動かしているターミナルで `Ctrl + C` を押すか、以下のコマンドで現在動いているBotプロセスを強制終了します。
-   ```bash
-   pkill -f "src/index.ts"
-   ```
-2. **再度起動する**
-   プロジェクトのディレクトリで以下のコマンドを実行します。
-   ```bash
-   npx ts-node src/index.ts
-   # または npm run start
-   ```
+2. **Project Management (Channel-Directory Binding)**
+   - Use `/project` to bind a Discord channel to a local project directory via an interactive select menu with buttons.
+   - Messages sent in a bound channel are automatically forwarded to Antigravity with the correct project context.
 
-Antigravity本体を再起動した場合は、Botが自動でCDPの再接続を試みます。メッセージを送信すると自動的にプロジェクトに接続されます。
+3. **Context-Aware Embed Replies**
+   - Results are delivered as rich Discord Embeds. Use Discord's Reply feature on any result to continue the conversation — the bot preserves full context (directory, task history) across reply chains.
 
----
+4. **Real-Time Progress Monitoring**
+   - Long-running Antigravity tasks report progress as a series of messages (delivery confirmed / planning / analysis / execution / implementation / final summary).
 
-## 🛠️ セットアップ (現行手順)
+5. **File Attachments & Context Parsing**
+   - Send images (screenshots, mockups) or text files via Discord — they are automatically forwarded to Antigravity as context.
 
-1. **インストール & 起動**
-   ```bash
-   git clone https://github.com/yourusername/lazy-gravity.git
-   cd lazy-gravity
-   npm install
-   ```
+## Usage & Commands
 
-2. **初期設定 (初回のみ)**
-   ```bash
-   cp .env.example .env
-   ```
-   `.env` を編集し、以下を設定してください。
-   - `DISCORD_BOT_TOKEN`
-   - `CLIENT_ID`
-   - `ALLOWED_USER_IDS`
-   - `WORKSPACE_BASE_DIR`（任意）
+### Natural Language Messages
+Just type in any bound channel:
+> `refactor the components under src/components. Make the layout look like yesterday's screenshot` (with image attached)
 
-   > `npm run setup` / 対話型セットアップは **公開リリース計画の将来項目** で、現行コードには未実装です。
+### Slash Commands
 
-3. **Antigravityをデバッグモードで起動（CDP接続に必要）**
+- `📂 /project list` — Browse projects via select menu; selecting one auto-creates a category and session channel
+- `📂 /project create <name>` — Create a new project directory + Discord category/channel
+- `💬 /new` — Start a new Antigravity chat session in the current project
+- `💬 /chat` — Show current session info and list all sessions in the project
+- `⚙️ /model [name]` — Switch the LLM model (e.g. `gpt-4o`, `claude-3-opus`, `gemini-1.5-pro`)
+- `⚙️ /mode` — Switch execution mode via dropdown (`code`, `architect`, `ask`, etc.)
+- `📝 /template list` — Display registered templates with execute buttons
+- `📝 /template add <name> <prompt>` — Register a new prompt template
+- `📝 /template delete <name>` — Delete a template
+- `🛑 /stop` — Force-stop a running Antigravity task
+- `📸 /screenshot` — Capture and send Antigravity's current screen
+- `🔧 /status` — Show bot connection status, current mode, and active project
+- `✅ /autoaccept [on|off|status]` — Toggle auto-approval of file edit dialogs
+- `🧹 /cleanup [days]` — Scan and clean up inactive session channels (default: 7 days)
+- `❓ /help` — Display list of available commands
 
-   LazyGravityはChrome DevTools Protocol (CDP) を使ってAntigravityのUIを直接操作します。
-   そのため、**Antigravity（VSCode/Electron系）をリモートデバッグポート付きで起動**する必要があります。
+### CLI Commands
 
-   毎回コマンドを打つのは手間なため、**リポジトリ内に用意されている起動用スクリプトをご利用ください**。
-   *(※ スクリプトは空いているポートを 9222~9666 から自動検出して起動します)*
-
-   #### 🍏 macOS の場合
-   リポジトリ直下にある **`start_antigravity_mac.command`をダブルクリック**するだけでデバッグモードで起動します。
-
-   - **初回実行時**: パーミッションエラー等で開けない場合、一度だけターミナルで以下のコマンドから実行権限を付与してください。
-     ```bash
-     chmod +x start_antigravity_mac.command
-     ```
-   - **アプリ名が違う場合**: テキストエディタでファイルを開き、`"Antigravity"` の部分をご利用のアプリ名（例: `"Visual Studio Code"` や `"Cursor"`など）に変更して保存してください。
-
-   #### 🪟 Windows の場合
-   リポジトリ直下にある **`start_antigravity_win.bat`をダブルクリック**するだけでデバッグモードで起動します。
-
-   - **起動しない場合**: PATHが通っていない可能性があります。ファイルを右クリックして編集し、`"Antigravity.exe"` をインストール先のフルパス（例: `"%LOCALAPPDATA%\Programs\Antigravity\Antigravity.exe"`など）に書き換えてください。
-
-   ---
-   > 💡 **一時的に手動（ターミナル／コマンド）で起動したい場合**
-   > ```bash
-   > # macOS / Linux
-   > open -a "Antigravity" --args --remote-debugging-port=9222
-   > 
-   > # Windows
-   > Antigravity.exe --remote-debugging-port=9222
-   > ```
-
-   `.env` の設定例:
-   ```env
-   # .env
-   DISCORD_BOT_TOKEN=your_token_here
-   CLIENT_ID=your_application_id_here
-   ALLOWED_USER_IDS=123456789,987654321
-   WORKSPACE_BASE_DIR=~/Code  # ワークスペースのベースディレクトリ（デフォルト: ~/Code）
-   ```
-
-   > **💡 ヒント**: CDPポートは固定候補（9222, 9223, 9333, 9444, 9555, 9666）を自動スキャンします。
-   > Antigravityを起動後にBotを起動すれば自動で接続されます。
-
-4. **実行**
-   ```bash
-   npm run start
-   ```
-   これでBotがオンラインになります！Discordから話しかけてみてください。
+```bash
+lazy-gravity              # Auto: runs setup if unconfigured, otherwise starts the bot
+lazy-gravity setup        # Interactive setup wizard
+lazy-gravity open         # Open Antigravity with CDP (auto-selects available port)
+lazy-gravity start        # Start the Discord bot
+lazy-gravity doctor       # Check environment and dependencies
+lazy-gravity --version    # Show version
+lazy-gravity --help       # Show help
+```
 
 ---
 
-## 🔗 CDP接続の仕組み
+## Setup (Detailed)
 
-LazyGravityは以下のようにAntigravityのUIへ接続します:
+### Option A: npm (Recommended)
+
+```bash
+npm install -g lazy-gravity
+lazy-gravity setup
+```
+
+The wizard guides you through 4 steps:
+
+1. **Discord Bot Token** — create a bot at the [Discord Developer Portal](https://discord.com/developers/applications), enable Privileged Gateway Intents (PRESENCE, SERVER MEMBERS, MESSAGE CONTENT), and copy the token. Client ID is extracted from the token automatically.
+2. **Guild (Server) ID** — for instant slash command registration (optional; press Enter to skip).
+3. **Allowed User IDs** — Discord users authorized to interact with the bot.
+4. **Workspace Directory** — parent directory where your coding projects live.
+
+Config is saved to `~/.lazy-gravity/config.json`.
+
+### Option B: From source
+
+```bash
+git clone https://github.com/tokyoweb3/LazyGravity.git
+cd LazyGravity
+npm install
+```
+
+Set up your `.env` file:
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and fill in the required values:
+
+```env
+DISCORD_BOT_TOKEN=your_bot_token_here
+GUILD_ID=your_guild_id_here
+ALLOWED_USER_IDS=123456789,987654321
+WORKSPACE_BASE_DIR=~/Code
+```
+
+Then start the bot:
+
+```bash
+npm run start
+```
+
+Alternatively, you can build and use the CLI:
+
+```bash
+npm run build
+node dist/bin/cli.js setup    # or: node dist/bin/cli.js start
+```
+
+### Launch Antigravity with CDP
+
+LazyGravity connects to Antigravity via Chrome DevTools Protocol (CDP).
+You need to launch Antigravity with a remote debugging port enabled.
+
+```bash
+# Easiest way (auto-selects an available port):
+lazy-gravity open
+```
+
+If you cloned from source, you can also use the bundled launcher scripts (they auto-detect an available port from 9222–9666):
+
+#### macOS
+Double-click **`start_antigravity_mac.command`** in the repo root.
+
+- **First run**: if you get a permission error, run `chmod +x start_antigravity_mac.command` once in the terminal.
+
+#### Windows
+Double-click **`start_antigravity_win.bat`** in the repo root.
+
+- **If it doesn't launch**: the executable may not be in your PATH. Right-click the file, edit it, and replace `"Antigravity.exe"` with the full install path (e.g. `"%LOCALAPPDATA%\Programs\Antigravity\Antigravity.exe"`).
+
+> **Tip**: CDP ports are auto-scanned from candidates (9222, 9223, 9333, 9444, 9555, 9666).
+> Launch Antigravity first, then start the bot — it connects automatically.
+
+---
+
+## Troubleshooting
+
+If the bot is unresponsive or you've updated the code, restart it:
+
+1. **Stop the bot** — press `Ctrl + C` in the terminal, or:
+   ```bash
+   pkill -f "lazy-gravity"
+   ```
+2. **Restart**
+   ```bash
+   lazy-gravity start
+   # or, from source: npm run start
+   ```
+
+If Antigravity is restarted, the bot automatically attempts CDP reconnection. Sending a message triggers automatic project reconnection.
+
+Run `lazy-gravity doctor` to diagnose configuration and connectivity issues.
+
+---
+
+## How CDP Connection Works
 
 <p align="center">
   <img src="docs/images/architecture.svg" alt="LazyGravity Architecture" width="100%" />
 </p>
 
-1. Botがデバッグポート（デフォルト: 9222）をスキャンし、Antigravityのターゲットを自動検出
-2. WebSocket経由でCDPに接続（`Runtime.evaluate` でDOM操作）
-3. チャット入力欄へのメッセージ注入、AIレスポンスの監視、スクリーンショット取得などを実行
+1. The bot scans debug ports (default: 9222) and auto-detects the Antigravity target
+2. Connects via WebSocket to CDP (`Runtime.evaluate` for DOM operations)
+3. Injects messages into the chat input, monitors Antigravity responses, and captures screenshots
 
-**接続が切れた場合**: 最大3回まで自動再接続を試みます（`maxReconnectAttempts`で設定可）。
-接続に失敗し続けた場合は、Discordにエラーメッセージ（⚠️）が送信されます。
+**On disconnect**: automatically retries up to 3 times (`maxReconnectAttempts`). If all retries fail, an error notification is sent to Discord.
+
+## License
+
+[MIT](LICENSE)

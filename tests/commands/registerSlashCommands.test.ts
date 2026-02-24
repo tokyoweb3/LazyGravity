@@ -75,7 +75,7 @@ import { REST, Routes } from 'discord.js';
 import { registerSlashCommands, slashCommands } from '../../src/commands/registerSlashCommands';
 
 describe('registerSlashCommands', () => {
-    it('autoaccept コマンドが登録対象に含まれること', () => {
+    it('includes the autoaccept command in registration targets', () => {
         const names = slashCommands.map((cmd) => cmd.toJSON().name);
         expect(names).toContain('autoaccept');
     });
@@ -84,7 +84,7 @@ describe('registerSlashCommands', () => {
         jest.clearAllMocks();
     });
 
-    it('guildId指定時はギルドコマンドとして登録する', async () => {
+    it('registers as guild commands when guildId is specified', async () => {
         await registerSlashCommands('token', 'client-id', 'guild-id');
 
         expect(Routes.applicationGuildCommands).toHaveBeenCalledWith('client-id', 'guild-id');
@@ -96,7 +96,7 @@ describe('registerSlashCommands', () => {
         expect(body).toHaveLength(slashCommands.length);
     });
 
-    it('guildId未指定時はグローバルコマンドとして登録する', async () => {
+    it('registers as global commands when guildId is not specified', async () => {
         await registerSlashCommands('token', 'client-id');
 
         expect(Routes.applicationCommands).toHaveBeenCalledWith('client-id');
@@ -105,7 +105,7 @@ describe('registerSlashCommands', () => {
         });
     });
 
-    it('REST登録失敗時は例外を再送出する', async () => {
+    it('re-throws the exception when REST registration fails', async () => {
         mockPut.mockRejectedValueOnce(new Error('register failed'));
 
         await expect(registerSlashCommands('token', 'client-id')).rejects.toThrow('register failed');

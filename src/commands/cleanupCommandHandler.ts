@@ -15,7 +15,7 @@ import { ChatSessionRepository } from '../database/chatSessionRepository';
 import { WorkspaceBindingRepository } from '../database/workspaceBindingRepository';
 import { logger } from '../utils/logger';
 
-/** クリーンアップ対象のセッションチャンネル情報 */
+/** Inactive session channel info for cleanup */
 interface InactiveSession {
     channelId: string;
     channelName: string;
@@ -25,7 +25,7 @@ interface InactiveSession {
     daysSinceActivity: number;
 }
 
-/** クリーンアップ対象のカテゴリ情報 */
+/** Inactive category info for cleanup */
 interface InactiveCategory {
     categoryId: string;
     categoryName: string;
@@ -34,7 +34,7 @@ interface InactiveCategory {
     daysSinceOldestActivity: number;
 }
 
-/** クリーンアップスキャン結果 */
+/** Cleanup scan result */
 interface CleanupScanResult {
     inactiveSessions: InactiveSession[];
     inactiveCategories: InactiveCategory[];
@@ -42,21 +42,21 @@ interface CleanupScanResult {
     thresholdDays: number;
 }
 
-/** ボタンのカスタムID */
+/** Button custom IDs */
 export const CLEANUP_ARCHIVE_BTN = 'cleanup_archive';
 export const CLEANUP_DELETE_BTN = 'cleanup_delete';
 export const CLEANUP_CANCEL_BTN = 'cleanup_cancel';
 
 /**
- * /cleanup コマンドのハンドラー。
- * 指定された日数間の活動がないセッションチャンネルおよびカテゴリを検出し、
- * アーカイブまたは削除の確認を行う。
+ * Handler for the /cleanup command.
+ * Detects session channels and categories that have been inactive for the specified days,
+ * and presents a confirmation for archiving or deletion.
  */
 export class CleanupCommandHandler {
     private readonly chatSessionRepo: ChatSessionRepository;
     private readonly bindingRepo: WorkspaceBindingRepository;
 
-    /** 直近のスキャン結果を保持（ボタン押下時に参照） */
+    /** Holds the latest scan result (referenced on button press) */
     private lastScanResult: CleanupScanResult | null = null;
 
     constructor(
@@ -68,7 +68,7 @@ export class CleanupCommandHandler {
     }
 
     /**
-     * /cleanup [days] — 未使用チャンネル/カテゴリをスキャンし、確認UIを表示
+     * /cleanup [days] -- Scan unused channels/categories and display confirmation UI
      */
     async handleCleanup(
         interaction: ChatInputCommandInteraction,
@@ -90,7 +90,7 @@ export class CleanupCommandHandler {
             return;
         }
 
-        // スキャン実行
+        // Execute scan
         const scanResult = await this.scanInactiveChannels(guild, days);
         this.lastScanResult = scanResult;
 
@@ -110,42 +110,42 @@ export class CleanupCommandHandler {
             return;
         }
 
-        // セッション一覧を構築
+        // Build session list
         const sessionLines = scanResult.inactiveSessions.map((s) => {
             const name = s.channelName;
-            const category = s.categoryName ? `📂 ${s.categoryName}` : '(カテゴリなし)';
-            return `• <#${s.channelId}> — ${category} — 最終活動: **${s.daysSinceActivity}日前**`;
+            const category = s.categoryName ? `📂 ${s.categoryName}` : '(No category)';
+            return `• <#${s.channelId}> — ${category} — Last activity: **${s.daysSinceActivity} days ago**`;
         });
 
-        // カテゴリ一覧を構築
+        // Build category list
         const categoryLines = scanResult.inactiveCategories.map((c) => {
-            return `• 📂 **${c.categoryName}** (${c.sessionCount}セッション) — 最終活動: **${c.daysSinceOldestActivity}日前**`;
+            return `• 📂 **${c.categoryName}** (${c.sessionCount} sessions) — Last activity: **${c.daysSinceOldestActivity} days ago**`;
         });
 
-        // Embed構築（Discord Embedの制限に注意: descriptionは4096文字まで）
+        // Build embed (note Discord Embed limit: description is up to 4096 chars)
         let description = '';
 
         if (categoryLines.length > 0) {
-            description += `**🗂️ 非活性カテゴリ (${totalInactiveCategories}件)**\n`;
+            description += `**🗂️ Inactive Categories (${totalInactiveCategories})**\n`;
             description += `${t('All sessions within these categories have been inactive.')}\n`;
             description += categoryLines.slice(0, 15).join('\n');
             if (categoryLines.length > 15) {
-                description += `\n...他 ${categoryLines.length - 15} 件`;
+                description += `\n...and ${categoryLines.length - 15} more`;
             }
             description += '\n\n';
         }
 
         if (sessionLines.length > 0) {
-            description += `**💬 非活性セッション (${totalInactive}件)**\n`;
+            description += `**💬 Inactive Sessions (${totalInactive})**\n`;
             description += sessionLines.slice(0, 20).join('\n');
             if (sessionLines.length > 20) {
-                description += `\n...他 ${sessionLines.length - 20} 件`;
+                description += `\n...and ${sessionLines.length - 20} more`;
             }
         }
 
-        // 4096文字の制限に収まるよう切り詰める
+        // Truncate to fit within the 4096 character limit
         if (description.length > 4000) {
-            description = description.substring(0, 3950) + '\n\n...(一部省略)';
+            description = description.substring(0, 3950) + '\n\n...(truncated)';
         }
 
         const embed = new EmbedBuilder()
@@ -174,7 +174,7 @@ export class CleanupCommandHandler {
             })
             .setTimestamp();
 
-        // アクションボタン
+        // Action buttons
         const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
             new ButtonBuilder()
                 .setCustomId(CLEANUP_ARCHIVE_BTN)
@@ -197,7 +197,7 @@ export class CleanupCommandHandler {
     }
 
     /**
-     * ボタン押下時の処理: アーカイブ
+     * Button press handler: Archive
      */
     async handleArchive(interaction: ButtonInteraction): Promise<void> {
         if (!this.lastScanResult) {
@@ -218,17 +218,17 @@ export class CleanupCommandHandler {
         let archivedCount = 0;
         let failedCount = 0;
 
-        // セッションチャンネルをアーカイブ（ロック + 権限制限で非表示化）
+        // Archive session channels (lock + permission restriction to hide)
         for (const session of result.inactiveSessions) {
             try {
                 const channel = guild.channels.cache.get(session.channelId);
                 if (channel && channel.type === ChannelType.GuildText) {
                     const textChannel = channel as TextChannel;
-                    // チャンネル名にアーカイブ接頭辞を追加
+                    // Add archive prefix to channel name
                     const archivedName = `archived-${textChannel.name}`;
                     await textChannel.setName(archivedName);
 
-                    // チャンネルに @everyone のメッセージ送信権限を拒否してロック
+                    // Lock channel by denying @everyone's send message permission
                     const everyoneRole = guild.roles.everyone;
                     await textChannel.permissionOverwrites.create(everyoneRole, {
                         SendMessages: false,
@@ -238,12 +238,12 @@ export class CleanupCommandHandler {
                     archivedCount++;
                 }
             } catch (e) {
-                logger.error(`[Cleanup] チャンネル ${session.channelId} のアーカイブに失敗:`, e);
+                logger.error(`[Cleanup] Failed to archive channel ${session.channelId}:`, e);
                 failedCount++;
             }
         }
 
-        // 非活性カテゴリのアーカイブ
+        // Archive inactive categories
         for (const category of result.inactiveCategories) {
             try {
                 const categoryChannel = guild.channels.cache.get(category.categoryId);
@@ -252,7 +252,7 @@ export class CleanupCommandHandler {
                     const archivedName = `📦-archived-${cat.name.replace(/^🗂️-/, '')}`;
                     await cat.setName(archivedName);
 
-                    // カテゴリ全体を非表示
+                    // Hide entire category
                     const everyoneRole = guild.roles.everyone;
                     await cat.permissionOverwrites.create(everyoneRole, {
                         ViewChannel: false,
@@ -261,7 +261,7 @@ export class CleanupCommandHandler {
                     archivedCount++;
                 }
             } catch (e) {
-                logger.error(`[Cleanup] カテゴリ ${category.categoryId} のアーカイブに失敗:`, e);
+                logger.error(`[Cleanup] Failed to archive category ${category.categoryId}:`, e);
                 failedCount++;
             }
         }
@@ -284,7 +284,7 @@ export class CleanupCommandHandler {
     }
 
     /**
-     * ボタン押下時の処理: 削除
+     * Button press handler: Delete
      */
     async handleDelete(interaction: ButtonInteraction): Promise<void> {
         if (!this.lastScanResult) {
@@ -305,53 +305,53 @@ export class CleanupCommandHandler {
         let deletedCount = 0;
         let failedCount = 0;
 
-        // セッションチャンネルの削除
+        // Delete session channels
         for (const session of result.inactiveSessions) {
             try {
                 const channel = guild.channels.cache.get(session.channelId);
                 if (channel) {
                     await channel.delete(`Cleanup: ${result.thresholdDays} days inactive`);
-                    // DBからもバインディング・セッション情報を削除
+                    // Also delete binding and session info from DB
                     this.chatSessionRepo.deleteByChannelId(session.channelId);
                     this.bindingRepo.deleteByChannelId(session.channelId);
                     deletedCount++;
                 }
             } catch (e) {
-                logger.error(`[Cleanup] チャンネル ${session.channelId} の削除に失敗:`, e);
+                logger.error(`[Cleanup] Failed to delete channel ${session.channelId}:`, e);
                 failedCount++;
             }
         }
 
-        // 非活性カテゴリの削除（配下が空の場合のみカテゴリ自体を削除）
+        // Delete inactive categories (delete category itself only if children are empty)
         for (const category of result.inactiveCategories) {
             try {
                 const categoryChannel = guild.channels.cache.get(category.categoryId);
                 if (categoryChannel && categoryChannel.type === ChannelType.GuildCategory) {
-                    // カテゴリ配下の残存チャンネルを確認
+                    // Check remaining channels under the category
                     const children = guild.channels.cache.filter(
                         (ch) => 'parentId' in ch && ch.parentId === category.categoryId
                     );
 
-                    // 配下チャンネルも削除
+                    // Delete child channels as well
                     for (const [, child] of children) {
                         try {
-                            // DBからもレコード削除
+                            // Also delete records from DB
                             this.chatSessionRepo.deleteByChannelId(child.id);
                             this.bindingRepo.deleteByChannelId(child.id);
                             await child.delete(`Cleanup: category ${category.categoryName} removed`);
                             deletedCount++;
                         } catch (e) {
-                            logger.error(`[Cleanup] カテゴリ配下チャンネル ${child.id} の削除に失敗:`, e);
+                            logger.error(`[Cleanup] Failed to delete child channel ${child.id} under category:`, e);
                             failedCount++;
                         }
                     }
 
-                    // カテゴリ自体を削除
+                    // Delete the category itself
                     await categoryChannel.delete(`Cleanup: ${result.thresholdDays} days inactive`);
                     deletedCount++;
                 }
             } catch (e) {
-                logger.error(`[Cleanup] カテゴリ ${category.categoryId} の削除に失敗:`, e);
+                logger.error(`[Cleanup] Failed to delete category ${category.categoryId}:`, e);
                 failedCount++;
             }
         }
@@ -374,7 +374,7 @@ export class CleanupCommandHandler {
     }
 
     /**
-     * ボタン押下時の処理: キャンセル
+     * Button press handler: Cancel
      */
     async handleCancel(interaction: ButtonInteraction): Promise<void> {
         this.lastScanResult = null;
@@ -392,7 +392,7 @@ export class CleanupCommandHandler {
     }
 
     /**
-     * 非活性チャンネル/カテゴリをスキャンする
+     * Scan for inactive channels/categories
      */
     private async scanInactiveChannels(
         guild: Guild,
@@ -401,10 +401,10 @@ export class CleanupCommandHandler {
         const now = new Date();
         const thresholdMs = thresholdDays * 24 * 60 * 60 * 1000;
 
-        // 全チャンネルをフェッチ
+        // Fetch all channels
         const allChannels = await guild.channels.fetch();
 
-        // Bot管理のカテゴリ（🗂️- プレフィックスつき）を検出
+        // Detect bot-managed categories (with 🗂️- prefix)
         const botCategories = allChannels.filter(
             (ch): ch is CategoryChannel =>
                 ch !== null && ch.type === ChannelType.GuildCategory && ch.name.startsWith('🗂️-')
@@ -415,7 +415,7 @@ export class CleanupCommandHandler {
 
         let totalScanned = 0;
 
-        // 各カテゴリ配下のテキストチャンネルを走査
+        // Scan text channels under each category
         for (const [, category] of botCategories) {
             const children = allChannels.filter(
                 (ch): ch is TextChannel =>
@@ -431,7 +431,7 @@ export class CleanupCommandHandler {
             for (const [, child] of children) {
                 totalScanned++;
 
-                // 最終メッセージの日時を取得
+                // Get the timestamp of the last message
                 const lastActivity = await this.getLastActivityDate(child);
                 const daysSince = Math.floor((now.getTime() - lastActivity.getTime()) / (24 * 60 * 60 * 1000));
 
@@ -458,13 +458,13 @@ export class CleanupCommandHandler {
             });
         }
 
-        // カテゴリ全体が非活性かどうかを判定
+        // Determine if entire category is inactive
         const inactiveCategories: InactiveCategory[] = [];
 
         for (const [categoryId, data] of categoryActivityMap) {
-            // カテゴリ内の全セッションが非活性の場合のみ（かつ少なくとも1セッションが存在する場合）
+            // Only if all sessions in the category are inactive (and at least 1 session exists)
             if (!data.active && data.sessions.length > 0) {
-                // 最も古いアクティビティ日時を取得
+                // Get the oldest activity timestamp
                 const oldestActivity = data.sessions.reduce(
                     (oldest, s) => (s.lastActivityAt < oldest ? s.lastActivityAt : oldest),
                     data.sessions[0].lastActivityAt,
@@ -492,12 +492,12 @@ export class CleanupCommandHandler {
     }
 
     /**
-     * チャンネルの最終活動日時を取得する。
-     * 最後のメッセージのタイムスタンプ、またはチャンネル作成日時のいずれか新しい方を返す。
+     * Get the last activity date of a channel.
+     * Returns the timestamp of the last message, or the channel creation date, whichever is newer.
      */
     private async getLastActivityDate(channel: TextChannel): Promise<Date> {
         try {
-            // 最新の1メッセージを取得（降順）
+            // Fetch the most recent message (descending)
             const messages = await channel.messages.fetch({ limit: 1 });
             if (messages.size > 0) {
                 const lastMessage = messages.values().next().value;
@@ -506,15 +506,15 @@ export class CleanupCommandHandler {
                 }
             }
         } catch (e) {
-            logger.warn(`[Cleanup] チャンネル ${channel.id} のメッセージ取得に失敗:`, e);
+            logger.warn(`[Cleanup] Failed to fetch messages for channel ${channel.id}:`, e);
         }
 
-        // メッセージがない場合はチャンネルの作成日時を使用
+        // Use channel creation date if no messages
         return channel.createdAt;
     }
 
     /**
-     * 現在のスキャン結果を取得する（テスト用）
+     * Get the current scan result (for testing)
      */
     getLastScanResult(): CleanupScanResult | null {
         return this.lastScanResult;

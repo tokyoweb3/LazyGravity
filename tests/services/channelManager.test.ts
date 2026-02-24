@@ -2,15 +2,15 @@ import { ChannelManager } from '../../src/services/channelManager';
 import { ChannelType, Guild, CategoryChannel, TextChannel, Collection } from 'discord.js';
 
 /**
- * Step 8: チャンネル/カテゴリ自動生成ロジックのテスト
+ * Step 8: Tests for channel/category auto-generation logic
  *
- * テスト対象:
- * - 相対パスからDiscordカテゴリ・チャンネルが無ければ作成する
- * - 既存のカテゴリ・チャンネルがあればそのIDを返す
- * - カテゴリ名のサニタイズ（Discord制約への準拠）
+ * Test targets:
+ * - Create Discord category/channel from a relative path if they don't exist
+ * - Return existing category/channel IDs if they already exist
+ * - Category name sanitization (Discord constraint compliance)
  */
 
-// discord.js のオブジェクトをモック化するヘルパー関数
+// Helper function to mock discord.js objects
 function createMockGuild(existingChannels: Array<{ id: string; name: string; type: ChannelType; parentId?: string | null }>): Guild {
     const channelCollection = new Collection<string, any>();
 
@@ -20,7 +20,7 @@ function createMockGuild(existingChannels: Array<{ id: string; name: string; typ
             name: ch.name,
             type: ch.type,
             parentId: ch.parentId ?? null,
-            // カテゴリの場合は children プロパティを持つ
+            // Categories have a children property
             ...(ch.type === ChannelType.GuildCategory ? {
                 children: {
                     cache: new Collection<string, any>()
@@ -48,18 +48,18 @@ describe('ChannelManager', () => {
         channelManager = new ChannelManager();
     });
 
-    describe('ensureChannel - カテゴリが存在しない場合', () => {
-        it('新しいカテゴリとテキストチャンネルを作成し、チャンネルIDを返すこと', async () => {
-            // 空のギルド（チャンネルなし）
+    describe('ensureChannel - when category does not exist', () => {
+        it('creates a new category and text channel, and returns the channel ID', async () => {
+            // Empty guild (no channels)
             const mockGuild = createMockGuild([]);
 
-            // カテゴリ作成のモック
+            // Mock for category creation
             const mockCategory = {
                 id: 'cat-new-1',
                 name: '🗂️-frontend',
                 type: ChannelType.GuildCategory,
             };
-            // テキストチャンネル作成のモック
+            // Mock for text channel creation
             const mockTextChannel = {
                 id: 'ch-new-1',
                 name: 'general',
@@ -68,19 +68,19 @@ describe('ChannelManager', () => {
             };
 
             (mockGuild.channels.create as jest.Mock)
-                .mockResolvedValueOnce(mockCategory)   // 1回目: カテゴリ作成
-                .mockResolvedValueOnce(mockTextChannel); // 2回目: チャンネル作成
+                .mockResolvedValueOnce(mockCategory)   // 1st: category creation
+                .mockResolvedValueOnce(mockTextChannel); // 2nd: channel creation
 
             const result = await channelManager.ensureChannel(mockGuild, 'frontend');
 
-            // カテゴリが作成されること
+            // Category should be created
             expect(mockGuild.channels.create).toHaveBeenCalledWith(
                 expect.objectContaining({
                     name: '🗂️-frontend',
                     type: ChannelType.GuildCategory,
                 })
             );
-            // テキストチャンネルがカテゴリ配下に作成されること
+            // Text channel should be created under the category
             expect(mockGuild.channels.create).toHaveBeenCalledWith(
                 expect.objectContaining({
                     name: 'general',
@@ -88,7 +88,7 @@ describe('ChannelManager', () => {
                     parent: 'cat-new-1',
                 })
             );
-            // 戻り値のチャンネルIDが正しいこと
+            // Return value channel ID should be correct
             expect(result).toEqual({
                 categoryId: 'cat-new-1',
                 channelId: 'ch-new-1',
@@ -97,8 +97,8 @@ describe('ChannelManager', () => {
         });
     });
 
-    describe('ensureChannel - カテゴリが既に存在する場合', () => {
-        it('既存のカテゴリ配下にテキストチャンネルがある場合、そのIDを返すこと', async () => {
+    describe('ensureChannel - when category already exists', () => {
+        it('returns the existing ID when a text channel exists under the existing category', async () => {
             const mockGuild = createMockGuild([
                 { id: 'cat-existing', name: '🗂️-frontend', type: ChannelType.GuildCategory },
                 { id: 'ch-existing', name: 'general', type: ChannelType.GuildText, parentId: 'cat-existing' },
@@ -106,17 +106,17 @@ describe('ChannelManager', () => {
 
             const result = await channelManager.ensureChannel(mockGuild, 'frontend');
 
-            // 既存のIDが返ること
+            // Existing IDs should be returned
             expect(result).toEqual({
                 categoryId: 'cat-existing',
                 channelId: 'ch-existing',
                 created: false,
             });
-            // 新規作成API が呼ばれないこと
+            // Creation API should not be called
             expect(mockGuild.channels.create).not.toHaveBeenCalled();
         });
 
-        it('既存のカテゴリはあるがテキストチャンネルが無い場合、チャンネルのみ作成すること', async () => {
+        it('creates only the text channel when the category exists but has no text channel', async () => {
             const mockGuild = createMockGuild([
                 { id: 'cat-existing-2', name: '🗂️-backend', type: ChannelType.GuildCategory },
             ]);
@@ -133,7 +133,7 @@ describe('ChannelManager', () => {
 
             const result = await channelManager.ensureChannel(mockGuild, 'backend');
 
-            // カテゴリ作成は呼ばれない（テキストチャンネルのみ作成）
+            // Category creation is not called (only text channel is created)
             expect(mockGuild.channels.create).toHaveBeenCalledTimes(1);
             expect(mockGuild.channels.create).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -150,35 +150,35 @@ describe('ChannelManager', () => {
         });
     });
 
-    describe('sanitizeCategoryName - カテゴリ名のサニタイズ', () => {
-        it('スラッシュをハイフンに変換すること', () => {
+    describe('sanitizeCategoryName - category name sanitization', () => {
+        it('converts slashes to hyphens', () => {
             expect(channelManager.sanitizeCategoryName('frontend/src')).toBe('frontend-src');
         });
 
-        it('大文字は小文字に変換すること', () => {
+        it('converts uppercase to lowercase', () => {
             expect(channelManager.sanitizeCategoryName('MyProject')).toBe('myproject');
         });
 
-        it('末尾のスラッシュを除去すること', () => {
+        it('removes trailing slashes', () => {
             expect(channelManager.sanitizeCategoryName('frontend/')).toBe('frontend');
         });
 
-        it('連続するハイフンを1つにまとめること', () => {
+        it('collapses consecutive hyphens into one', () => {
             expect(channelManager.sanitizeCategoryName('my--project')).toBe('my-project');
         });
 
-        it('Discord チャンネル名で使えない文字を除去すること', () => {
+        it('removes characters not allowed in Discord channel names', () => {
             expect(channelManager.sanitizeCategoryName('my project@v2!')).toBe('my-project-v2');
         });
 
-        it('100文字を超える場合は切り詰めること', () => {
+        it('truncates names exceeding 100 characters', () => {
             const longName = 'a'.repeat(150);
             expect(channelManager.sanitizeCategoryName(longName).length).toBeLessThanOrEqual(100);
         });
     });
 
     describe('ensureCategory', () => {
-        it('カテゴリが存在しない場合、新規作成すること', async () => {
+        it('creates a new category when it does not exist', async () => {
             const mockGuild = createMockGuild([]);
             const mockCategory = { id: 'cat-new', name: '🗂️-myproject' };
             (mockGuild.channels.create as jest.Mock).mockResolvedValueOnce(mockCategory);
@@ -194,7 +194,7 @@ describe('ChannelManager', () => {
             );
         });
 
-        it('カテゴリが既に存在する場合、既存のIDを返すこと', async () => {
+        it('returns the existing ID when the category already exists', async () => {
             const mockGuild = createMockGuild([
                 { id: 'cat-existing', name: '🗂️-myproject', type: ChannelType.GuildCategory },
             ]);
@@ -207,7 +207,7 @@ describe('ChannelManager', () => {
     });
 
     describe('createSessionChannel', () => {
-        it('カテゴリ配下にセッションチャンネルを作成すること', async () => {
+        it('creates a session channel under the category', async () => {
             const mockGuild = createMockGuild([]);
             const mockChannel = { id: 'ch-session-1', name: 'session-1' };
             (mockGuild.channels.create as jest.Mock).mockResolvedValueOnce(mockChannel);
@@ -226,7 +226,7 @@ describe('ChannelManager', () => {
     });
 
     describe('renameChannel', () => {
-        it('チャンネル名をリネームすること', async () => {
+        it('renames the channel', async () => {
             const mockSetName = jest.fn().mockResolvedValue(undefined);
             const channelCollection = new Collection<string, any>();
             channelCollection.set('ch-1', { id: 'ch-1', setName: mockSetName });
@@ -238,25 +238,25 @@ describe('ChannelManager', () => {
             expect(mockSetName).toHaveBeenCalledWith('1-react-auth-bug');
         });
 
-        it('チャンネルが見つからない場合エラーをスローすること', async () => {
+        it('throws an error when the channel is not found', async () => {
             const mockGuild = createMockGuild([]);
 
             await expect(
                 channelManager.renameChannel(mockGuild, 'nonexistent', 'new-name')
-            ).rejects.toThrow('チャンネル nonexistent が見つかりません');
+            ).rejects.toThrow('Channel nonexistent not found');
         });
     });
 
     describe('sanitizeChannelName', () => {
-        it('sanitizeCategoryNameと同じ結果を返すこと', () => {
+        it('returns the same result as sanitizeCategoryName', () => {
             expect(channelManager.sanitizeChannelName('Hello World')).toBe(
                 channelManager.sanitizeCategoryName('Hello World')
             );
         });
     });
 
-    describe('ensureChannel - エラーハンドリング', () => {
-        it('Discord API がエラーを返した場合、エラーを伝播すること', async () => {
+    describe('ensureChannel - error handling', () => {
+        it('propagates errors when the Discord API returns an error', async () => {
             const mockGuild = createMockGuild([]);
 
             (mockGuild.channels.create as jest.Mock)
@@ -267,12 +267,12 @@ describe('ChannelManager', () => {
             ).rejects.toThrow('Discord APIエラー: 権限不足');
         });
 
-        it('空文字列のワークスペースパスが渡された場合、エラーをスローすること', async () => {
+        it('throws an error when an empty workspace path is provided', async () => {
             const mockGuild = createMockGuild([]);
 
             await expect(
                 channelManager.ensureChannel(mockGuild, '')
-            ).rejects.toThrow('ワークスペースパスが指定されていません');
+            ).rejects.toThrow('Workspace path not specified');
         });
     });
 });

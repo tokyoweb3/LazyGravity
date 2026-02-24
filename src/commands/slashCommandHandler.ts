@@ -4,14 +4,14 @@ import { ModelService } from '../services/modelService';
 import { TemplateRepository } from '../database/templateRepository';
 
 /**
- * コマンド実行結果の型定義
+ * Command execution result type definition
  */
 export interface CommandResult {
-    /** 実行が成功したか（成功時は true, エラー時や無効な引数の時は false） */
+    /** Whether execution succeeded (true on success, false on error or invalid arguments) */
     success: boolean;
-    /** ユーザーに表示するメッセージ内容 */
+    /** Message content to display to the user */
     message: string;
-    /** `/templates` で取得したプロンプト（後続のタスク実行用・存在する場合のみ） */
+    /** Prompt retrieved from `/templates` (for subsequent task execution, if present) */
     prompt?: string;
 }
 
@@ -31,17 +31,17 @@ export class SlashCommandHandler {
     }
 
     /**
-     * スラッシュコマンド名と引数をパースして処理をルーティングする
+     * Parse the slash command name and arguments, then route to the appropriate handler
      */
     public async handleCommand(commandName: string, args: string[]): Promise<CommandResult> {
         switch (commandName.toLowerCase()) {
             case 'mode':
                 return this.handleModeCommand(args);
             case 'model':
-            case 'models': // 後方互換
+            case 'models': // backward compatibility
                 return this.handleModelsCommand(args);
             case 'template':
-            case 'templates': // 後方互換
+            case 'templates': // backward compatibility
                 return this.handleTemplatesCommand(args);
             default:
                 return {
@@ -101,7 +101,7 @@ export class SlashCommandHandler {
 
         const subCommandOrName = args[0];
 
-        // add: 新規登録
+        // add: register new template
         if (subCommandOrName.toLowerCase() === 'add') {
             if (args.length < 3) {
                 return {
@@ -110,7 +110,7 @@ export class SlashCommandHandler {
                 };
             }
             const name = args[1];
-            // messageParser側でクォート除去済み。以降の引数を結合してプロンプトとする
+            // Quotes already stripped by messageParser. Join remaining args as the prompt
             const prompt = args.slice(2).join(' ');
 
             try {
@@ -127,7 +127,7 @@ export class SlashCommandHandler {
             }
         }
 
-        // delete: 削除
+        // delete: remove template
         if (subCommandOrName.toLowerCase() === 'delete') {
             if (args.length < 2) {
                 return {
@@ -150,7 +150,7 @@ export class SlashCommandHandler {
             }
         }
 
-        // それ以外はテンプレートの呼び出しとして扱う
+        // Otherwise treat as template invocation
         const templateName = subCommandOrName;
         const template = this.templateRepo.findByName(templateName);
 

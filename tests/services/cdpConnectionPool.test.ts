@@ -2,7 +2,7 @@ import { CdpConnectionPool } from '../../src/services/cdpConnectionPool';
 import { CdpService } from '../../src/services/cdpService';
 import { ApprovalDetector } from '../../src/services/approvalDetector';
 
-// CdpService をモック
+// Mock CdpService
 jest.mock('../../src/services/cdpService');
 
 describe('CdpConnectionPool', () => {
@@ -17,21 +17,21 @@ describe('CdpConnectionPool', () => {
     });
 
     describe('extractDirName()', () => {
-        it('フルパスからディレクトリ名を抽出すること', () => {
+        it('extracts the directory name from a full path', () => {
             expect(pool.extractDirName('/home/user/Code/MyProject')).toBe('MyProject');
         });
 
-        it('末尾スラッシュを処理すること', () => {
+        it('handles trailing slashes', () => {
             expect(pool.extractDirName('/home/user/Code/MyProject/')).toBe('MyProject');
         });
 
-        it('単純な名前をそのまま返すこと', () => {
+        it('returns a simple name as-is', () => {
             expect(pool.extractDirName('MyProject')).toBe('MyProject');
         });
     });
 
     describe('getOrConnect()', () => {
-        it('新しい CdpService を作成して接続すること', async () => {
+        it('creates a new CdpService and connects', async () => {
             const mockCdp = {
                 isConnected: jest.fn().mockReturnValue(true),
                 discoverAndConnectForWorkspace: jest.fn().mockResolvedValue(true),
@@ -47,7 +47,7 @@ describe('CdpConnectionPool', () => {
             expect(pool.getActiveWorkspaceNames()).toContain('ProjectA');
         });
 
-        it('同じワークスペースへの二度目の呼び出しではキャッシュを返すこと', async () => {
+        it('returns the cached instance on the second call to the same workspace', async () => {
             const mockCdp = {
                 isConnected: jest.fn().mockReturnValue(true),
                 discoverAndConnectForWorkspace: jest.fn().mockResolvedValue(true),
@@ -60,11 +60,11 @@ describe('CdpConnectionPool', () => {
             const cdp2 = await pool.getOrConnect('/path/to/ProjectA');
 
             expect(cdp1).toBe(cdp2);
-            // discoverAndConnectForWorkspace は1回だけ呼ばれる
+            // discoverAndConnectForWorkspace should be called only once
             expect(mockCdp.discoverAndConnectForWorkspace).toHaveBeenCalledTimes(1);
         });
 
-        it('異なるワークスペースには別のインスタンスを作成すること', async () => {
+        it('creates separate instances for different workspaces', async () => {
             let callCount = 0;
             (CdpService as jest.MockedClass<typeof CdpService>).mockImplementation(() => {
                 callCount++;
@@ -84,8 +84,8 @@ describe('CdpConnectionPool', () => {
             expect(pool.getActiveWorkspaceNames()).toEqual(expect.arrayContaining(['ProjectA', 'ProjectB']));
         });
 
-        it('同時接続をPromiseロックで防止すること', async () => {
-            // このテスト用にモックカウンターをリセット
+        it('prevents concurrent connections with a Promise lock', async () => {
+            // Reset mock counter for this test
             (CdpService as jest.MockedClass<typeof CdpService>).mockReset();
 
             let resolveConnect: () => void;
@@ -102,13 +102,13 @@ describe('CdpConnectionPool', () => {
             };
             (CdpService as jest.MockedClass<typeof CdpService>).mockImplementation(() => mockCdp as any);
 
-            // 新しいプールで同時接続テスト
+            // Concurrent connection test with a new pool
             const freshPool = new CdpConnectionPool({ cdpCallTimeout: 5000 });
 
             const p1 = freshPool.getOrConnect('/path/to/ProjectX');
             const p2 = freshPool.getOrConnect('/path/to/ProjectX');
 
-            // まだ解決していないのでCdpServiceは1つだけ作られているはず
+            // Only one CdpService should have been created since it hasn't resolved yet
             expect(CdpService).toHaveBeenCalledTimes(1);
 
             resolveConnect!();
@@ -121,7 +121,7 @@ describe('CdpConnectionPool', () => {
     });
 
     describe('getConnected()', () => {
-        it('接続済みの場合 CdpService を返すこと', async () => {
+        it('returns the CdpService when connected', async () => {
             const mockCdp = {
                 isConnected: jest.fn().mockReturnValue(true),
                 discoverAndConnectForWorkspace: jest.fn().mockResolvedValue(true),
@@ -136,14 +136,14 @@ describe('CdpConnectionPool', () => {
             expect(result).toBe(mockCdp);
         });
 
-        it('未接続の場合 null を返すこと', () => {
+        it('returns null when not connected', () => {
             const result = pool.getConnected('NonExistent');
             expect(result).toBeNull();
         });
     });
 
     describe('disconnectWorkspace()', () => {
-        it('指定ワークスペースの接続を切断しMapから削除すること', async () => {
+        it('disconnects the specified workspace and removes it from the map', async () => {
             const mockCdp = {
                 isConnected: jest.fn().mockReturnValue(true),
                 discoverAndConnectForWorkspace: jest.fn().mockResolvedValue(true),
@@ -161,7 +161,7 @@ describe('CdpConnectionPool', () => {
             expect(pool.getConnected('ProjectA')).toBeNull();
         });
 
-        it('承認検出器も停止すること', async () => {
+        it('also stops the approval detector', async () => {
             const mockCdp = {
                 isConnected: jest.fn().mockReturnValue(true),
                 discoverAndConnectForWorkspace: jest.fn().mockResolvedValue(true),
@@ -187,7 +187,7 @@ describe('CdpConnectionPool', () => {
     });
 
     describe('disconnectAll()', () => {
-        it('全てのワークスペース接続を切断すること', async () => {
+        it('disconnects all workspace connections', async () => {
             let callCount = 0;
             const mocks: any[] = [];
             (CdpService as jest.MockedClass<typeof CdpService>).mockImplementation(() => {
@@ -213,8 +213,8 @@ describe('CdpConnectionPool', () => {
         });
     });
 
-    describe('ApprovalDetector管理', () => {
-        it('registerApprovalDetector で登録し getApprovalDetector で取得できること', () => {
+    describe('ApprovalDetector management', () => {
+        it('can register with registerApprovalDetector and retrieve with getApprovalDetector', () => {
             const mockDetector = {
                 isActive: jest.fn().mockReturnValue(true),
                 stop: jest.fn(),
@@ -226,7 +226,7 @@ describe('CdpConnectionPool', () => {
             expect(pool.getApprovalDetector('ProjectA')).toBe(mockDetector);
         });
 
-        it('既存の検出器を置換する場合、古い検出器を停止すること', () => {
+        it('stops the old detector when replacing an existing one', () => {
             const oldDetector = {
                 isActive: jest.fn().mockReturnValue(true),
                 stop: jest.fn().mockResolvedValue(undefined),
@@ -247,7 +247,7 @@ describe('CdpConnectionPool', () => {
     });
 
     describe('getActiveWorkspaceNames()', () => {
-        it('接続中のワークスペース名のみを返すこと', async () => {
+        it('returns only connected workspace names', async () => {
             let callCount = 0;
             (CdpService as jest.MockedClass<typeof CdpService>).mockImplementation(() => {
                 callCount++;

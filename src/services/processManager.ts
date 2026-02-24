@@ -67,7 +67,7 @@ export class ProcessManager {
             this.runningProcesses.delete(taskId);
             return true;
         }
-        // キューに入っている場合
+        // Check if queued
         const indexInQueue = this.queue.findIndex((task) => task.id === taskId);
         if (indexInQueue !== -1) {
             this.queue.splice(indexInQueue, 1);

@@ -2,21 +2,21 @@ import * as cron from 'node-cron';
 import { ScheduleRepository, ScheduleRecord } from '../database/scheduleRepository';
 
 /**
- * ジョブ実行時のコールバック型
- * スケジュールレコードの情報を受け取り、実際のタスクを実行する
+ * Callback type for job execution.
+ * Receives schedule record info and executes the actual task.
  */
 export type JobCallback = (schedule: ScheduleRecord) => void;
 
 /**
- * 定期実行ジョブの管理を担うサービスクラス。
+ * Service class for managing scheduled jobs.
  *
- * - Bot起動時にSQLiteに保存されたスケジュールを読み込み、node-cronに再登録する
- * - 新規スケジュールの追加・削除・一覧表示を行う
- * - 全スケジュールの一括停止（シャットダウン時など）を行う
+ * - On bot startup, loads schedules from SQLite and re-registers them with node-cron
+ * - Handles adding, removing, and listing schedules
+ * - Provides bulk stop of all schedules (e.g. on shutdown)
  */
 export class ScheduleService {
     private repo: ScheduleRepository;
-    /** 実行中のcronタスクを管理するMap（スケジュールID → ScheduledTask） */
+    /** Map managing active cron tasks (schedule ID -> ScheduledTask) */
     private activeTasks: Map<number, cron.ScheduledTask> = new Map();
 
     constructor(repo: ScheduleRepository) {
@@ -24,10 +24,10 @@ export class ScheduleService {
     }
 
     /**
-     * Bot起動時に呼ばれる。有効なスケジュールを全てDBから読み込み、node-cronに登録・再開する。
+     * Called on bot startup. Loads all enabled schedules from DB and registers/resumes them with node-cron.
      *
-     * @param jobCallback - 各ジョブ実行時に呼ばれるコールバック
-     * @returns 復元されたスケジュール数
+     * @param jobCallback - Callback invoked when each job executes
+     * @returns Number of restored schedules
      */
     public restoreAll(jobCallback: JobCallback): number {
         const enabledSchedules = this.repo.findEnabled();
@@ -40,15 +40,15 @@ export class ScheduleService {
     }
 
     /**
-     * 新しいスケジュールを追加する。
-     * Cron式のバリデーション → DB保存 → node-cron登録 の順に処理する。
+     * Add a new schedule.
+     * Processes in order: cron expression validation -> DB save -> node-cron registration.
      *
-     * @param cronExpression - Cron式
-     * @param prompt - 実行するプロンプト
-     * @param workspacePath - 対象ワークスペースパス
-     * @param jobCallback - ジョブ実行時のコールバック
-     * @returns 作成されたスケジュールレコード
-     * @throws 不正なCron式の場合
+     * @param cronExpression - Cron expression
+     * @param prompt - Prompt to execute
+     * @param workspacePath - Target workspace path
+     * @param jobCallback - Callback for job execution
+     * @returns Created schedule record
+     * @throws On invalid cron expression
      */
     public addSchedule(
         cronExpression: string,
@@ -56,12 +56,12 @@ export class ScheduleService {
         workspacePath: string,
         jobCallback: JobCallback
     ): ScheduleRecord {
-        // Cron式のバリデーション
+        // Validate cron expression
         if (!cron.validate(cronExpression)) {
-            throw new Error(`不正なCron式です: ${cronExpression}`);
+            throw new Error(`Invalid cron expression: ${cronExpression}`);
         }
 
-        // DBに保存
+        // Save to DB
         const record = this.repo.create({
             cronExpression,
             prompt,
@@ -69,33 +69,33 @@ export class ScheduleService {
             enabled: true,
         });
 
-        // node-cronに登録
+        // Register with node-cron
         this.registerCronTask(record, jobCallback);
 
         return record;
     }
 
     /**
-     * スケジュールを削除する。
-     * 実行中のcronジョブを停止し、DBからも削除する。
+     * Remove a schedule.
+     * Stops the running cron job and deletes it from the DB.
      *
-     * @param scheduleId - 削除対象のスケジュールID
-     * @returns 削除に成功したかどうか
+     * @param scheduleId - ID of the schedule to remove
+     * @returns Whether the removal was successful
      */
     public removeSchedule(scheduleId: number): boolean {
-        // 実行中のcronジョブを停止
+        // Stop the running cron job
         const task = this.activeTasks.get(scheduleId);
         if (task) {
             task.stop();
             this.activeTasks.delete(scheduleId);
         }
 
-        // DBから削除
+        // Delete from DB
         return this.repo.delete(scheduleId);
     }
 
     /**
-     * 全ての実行中cronジョブを停止する（Bot停止時に呼ぶ）
+     * Stop all running cron jobs (called on bot shutdown)
      */
     public stopAll(): void {
         for (const [id, task] of this.activeTasks) {
@@ -105,14 +105,14 @@ export class ScheduleService {
     }
 
     /**
-     * 全スケジュールの一覧を取得する
+     * Get a list of all schedules
      */
     public listSchedules(): ScheduleRecord[] {
         return this.repo.findAll();
     }
 
     /**
-     * node-cronにタスクを登録する内部メソッド
+     * Internal method to register a task with node-cron
      */
     private registerCronTask(schedule: ScheduleRecord, jobCallback: JobCallback): void {
         const task = cron.schedule(

@@ -15,7 +15,7 @@ export function parseMessageContent(content: string): ParsedMessage {
         };
     }
 
-    // '/'を取り除いて、スペース区切りで抽出。ダブルクォートで囲まれた部分は1つにまとめる
+    // Strip leading '/' and split by spaces. Double-quoted segments are kept as one token
     const parts = trimmed.slice(1).match(/(?:[^\s"]+|"[^"]*")+/g) || [];
 
     if (parts.length === 0) {
@@ -26,7 +26,7 @@ export function parseMessageContent(content: string): ParsedMessage {
     }
 
     const commandName = parts[0];
-    // ダブルクォートで囲まれた引数の前後のクォートを除去する
+    // Strip surrounding double quotes from arguments
     const args = parts.slice(1).map((arg) => arg.replace(/^"(.*)"$/, '$1'));
 
     return {

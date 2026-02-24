@@ -101,11 +101,11 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                             const originalEmbed = interaction.message.embeds[0];
                             const updatedEmbed = originalEmbed
                                 ? EmbedBuilder.from(originalEmbed)
-                                : new EmbedBuilder().setTitle('承認リクエスト');
+                                : new EmbedBuilder().setTitle('Approval Request');
                             const historyText = `${actionLabel} by <@${interaction.user.id}> (${new Date().toLocaleString('ja-JP')})`;
                             updatedEmbed
                                 .setColor(approvalAction.action === 'deny' ? 0xE74C3C : 0x2ECC71)
-                                .addFields({ name: '処理履歴', value: historyText, inline: false })
+                                .addFields({ name: 'Action History', value: historyText, inline: false })
                                 .setTimestamp();
 
                             const disabledRows = interaction.message.components
@@ -135,15 +135,15 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                                 components: disabledRows,
                             });
                         } else {
-                            await interaction.reply({ content: '承認ボタンが見つかりませんでした。', flags: MessageFlags.Ephemeral });
+                            await interaction.reply({ content: 'Approval button not found.', flags: MessageFlags.Ephemeral });
                         }
                     } catch (interactionError: any) {
                         if (interactionError?.code === 10062 || interactionError?.code === 40060) {
-                            logger.warn('[Approval] interaction期限切れ。チャンネルに直接応答します。');
+                            logger.warn('[Approval] Interaction expired. Responding directly in the channel.');
                             if (interaction.channel && 'send' in interaction.channel) {
                                 const fallbackMessage = success
-                                    ? `${actionLabel}しました。`
-                                    : '承認ボタンが見つかりませんでした。';
+                                    ? `${actionLabel} completed.`
+                                    : 'Approval button not found.';
                                 await (interaction.channel as any).send(fallbackMessage).catch(logger.error);
                             }
                         } else {
@@ -185,14 +185,14 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                     const cdp = deps.getCurrentCdp(deps.bridge);
 
                     if (!cdp) {
-                        await interaction.followUp({ content: 'CDPに未接続です。', flags: MessageFlags.Ephemeral });
+                        await interaction.followUp({ content: 'Not connected to CDP.', flags: MessageFlags.Ephemeral });
                         return;
                     }
 
                     const res = await cdp.setUiModel(modelName);
 
                     if (!res.ok) {
-                        await interaction.followUp({ content: res.error || 'モデルの変更に失敗しました。', flags: MessageFlags.Ephemeral });
+                        await interaction.followUp({ content: res.error || 'Failed to change model.', flags: MessageFlags.Ephemeral });
                     } else {
                         await deps.sendModelsUI(
                             { editReply: async (data: any) => await interaction.editReply(data) },
@@ -201,7 +201,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                                 fetchQuota: async () => deps.bridge.quota.fetchQuota(),
                             },
                         );
-                        await interaction.followUp({ content: `モデルを **${res.model}** に変更しました！`, flags: MessageFlags.Ephemeral });
+                        await interaction.followUp({ content: `Model changed to **${res.model}**!`, flags: MessageFlags.Ephemeral });
                     }
                     return;
                 }
@@ -215,16 +215,16 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                     return;
                 }
             } catch (error) {
-                logger.error('ボタンインタラクションの処理中にエラーが発生:', error);
+                logger.error('Error during button interaction handling:', error);
 
                 try {
                     if (!(interaction as any).replied && !(interaction as any).deferred) {
-                        await interaction.reply({ content: 'ボタン操作の処理中にエラーが発生しました。', flags: MessageFlags.Ephemeral });
+                        await interaction.reply({ content: 'An error occurred while processing the button action.', flags: MessageFlags.Ephemeral });
                     } else {
-                        await interaction.followUp({ content: 'ボタン操作の処理中にエラーが発生しました。', flags: MessageFlags.Ephemeral }).catch(logger.error);
+                        await interaction.followUp({ content: 'An error occurred while processing the button action.', flags: MessageFlags.Ephemeral }).catch(logger.error);
                     }
                 } catch (e) {
-                    logger.error('エラーメッセージの送信にも失敗しました:', e);
+                    logger.error('Failed to send error message as well:', e);
                 }
             }
         }
@@ -239,10 +239,10 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                 await interaction.deferUpdate();
             } catch (deferError: any) {
                 if (deferError?.code === 10062 || deferError?.code === 40060) {
-                    logger.warn('[Mode] deferUpdate期限切れ。スキップします。');
+                    logger.warn('[Mode] deferUpdate expired. Skipping.');
                     return;
                 }
-                logger.error('[Mode] deferUpdate失敗:', deferError);
+                logger.error('[Mode] deferUpdate failed:', deferError);
                 return;
             }
 
@@ -255,20 +255,20 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                 if (cdp) {
                     const res = await cdp.setUiMode(selectedMode);
                     if (!res.ok) {
-                        logger.warn(`[Mode] UIモード切替失敗: ${res.error}`);
+                        logger.warn(`[Mode] UI mode switch failed: ${res.error}`);
                     }
                 }
 
                 await deps.sendModeUI({ editReply: async (data: any) => await interaction.editReply(data) }, deps.modeService);
-                await interaction.followUp({ content: `モードを **${MODE_DISPLAY_NAMES[selectedMode] || selectedMode}** に変更しました！`, flags: MessageFlags.Ephemeral });
+                await interaction.followUp({ content: `Mode changed to **${MODE_DISPLAY_NAMES[selectedMode] || selectedMode}**!`, flags: MessageFlags.Ephemeral });
             } catch (error: any) {
-                logger.error('モードDropdown処理中にエラー:', error);
+                logger.error('Error during mode dropdown handling:', error);
                 try {
                     if (interaction.deferred || interaction.replied) {
-                        await interaction.followUp({ content: 'モード変更中にエラーが発生しました。', flags: MessageFlags.Ephemeral }).catch(logger.error);
+                        await interaction.followUp({ content: 'An error occurred while changing the mode.', flags: MessageFlags.Ephemeral }).catch(logger.error);
                     }
                 } catch (e) {
-                    logger.error('エラーメッセージの送信にも失敗:', e);
+                    logger.error('Failed to send error message:', e);
                 }
             }
             return;
@@ -281,14 +281,14 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
             }
 
             if (!interaction.guild) {
-                await interaction.reply({ content: 'サーバー内でのみ使用できます。', flags: MessageFlags.Ephemeral }).catch(logger.error);
+                await interaction.reply({ content: 'This can only be used in a server.', flags: MessageFlags.Ephemeral }).catch(logger.error);
                 return;
             }
 
             try {
                 await deps.wsHandler.handleSelectMenu(interaction, interaction.guild);
             } catch (error) {
-                logger.error('ワークスペース選択エラー:', error);
+                logger.error('Workspace selection error:', error);
             }
             return;
         }
@@ -299,7 +299,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
 
         if (!deps.config.allowedUserIds.includes(interaction.user.id)) {
             await commandInteraction.reply({
-                content: 'このコマンドを使用する権限がありません。',
+                content: 'You do not have permission to use this command.',
                 flags: MessageFlags.Ephemeral,
             }).catch(logger.error);
             return;
@@ -309,7 +309,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
             await commandInteraction.deferReply();
         } catch (deferError: any) {
             if (deferError?.code === 10062) {
-                logger.warn('[SlashCommand] インタラクション期限切れ（deferReply失敗）。スキップします。');
+                logger.warn('[SlashCommand] Interaction expired (deferReply failed). Skipping.');
                 return;
             }
             throw deferError;
@@ -329,11 +329,11 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                 deps.client,
             );
         } catch (error) {
-            logger.error('スラッシュコマンドの処理でエラーが発生:', error);
+            logger.error('Error during slash command handling:', error);
             try {
-                await commandInteraction.editReply({ content: 'コマンドの処理中にエラーが発生しました。' });
+                await commandInteraction.editReply({ content: 'An error occurred while processing the command.' });
             } catch (replyError) {
-                logger.error('エラー応答の送信にも失敗:', replyError);
+                logger.error('Failed to send error response:', replyError);
             }
         }
     };

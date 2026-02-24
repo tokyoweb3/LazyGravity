@@ -45,7 +45,7 @@ describe('WorkspaceCommandHandler', () => {
     });
 
     describe('handleShow', () => {
-        it('ワークスペース一覧をセレクトメニューで表示すること', async () => {
+        it('displays workspace list in a select menu', async () => {
             fs.mkdirSync(path.join(tmpDir, 'project-a'));
             const interaction = mockInteraction();
 
@@ -57,7 +57,7 @@ describe('WorkspaceCommandHandler', () => {
             expect(call.components).toHaveLength(1);
         });
 
-        it('ワークスペースが空の場合、コンポーネントなしで表示すること', async () => {
+        it('displays without components when there are no workspaces', async () => {
             const interaction = mockInteraction();
 
             await handler.handleShow(interaction as any);
@@ -68,7 +68,7 @@ describe('WorkspaceCommandHandler', () => {
     });
 
     describe('handleSelectMenu', () => {
-        it('選択されたワークスペースのカテゴリとsession-1を作成してバインドすること', async () => {
+        it('creates a category and session-1 for the selected workspace and binds them', async () => {
             fs.mkdirSync(path.join(tmpDir, 'selected-project'));
 
             const mockGuild = {
@@ -97,10 +97,10 @@ describe('WorkspaceCommandHandler', () => {
 
             expect(interaction.update).toHaveBeenCalledTimes(1);
 
-            // session-1チャンネルがバインドされていること
+            // The session-1 channel should be bound
             expect(bindingRepo.findByChannelId('new-ch-1')?.workspacePath).toBe('selected-project');
 
-            // チャットセッションが登録されていること
+            // A chat session should be registered
             const session = chatSessionRepo.findByChannelId('new-ch-1');
             expect(session).toBeDefined();
             expect(session?.categoryId).toBe('cat-1');
@@ -108,7 +108,7 @@ describe('WorkspaceCommandHandler', () => {
             expect(session?.workspacePath).toBe('selected-project');
         });
 
-        it('存在しないワークスペースはエラーを表示すること', async () => {
+        it('displays an error for a non-existent workspace', async () => {
             const mockGuild = { id: 'guild-1' };
             const interaction = {
                 values: ['nonexistent'],
@@ -125,13 +125,13 @@ describe('WorkspaceCommandHandler', () => {
     });
 
     describe('getWorkspaceForChannel', () => {
-        it('バインドされたチャンネルのワークスペースパスを返すこと', () => {
+        it('returns the workspace path for a bound channel', () => {
             bindingRepo.create({ channelId: 'ch-1', workspacePath: 'my-proj', guildId: 'guild-1' });
             const result = handler.getWorkspaceForChannel('ch-1');
             expect(result).toBe(path.join(tmpDir, 'my-proj'));
         });
 
-        it('バインドされていない場合はundefinedを返すこと', () => {
+        it('returns undefined when the channel is not bound', () => {
             const result = handler.getWorkspaceForChannel('ch-1');
             expect(result).toBeUndefined();
         });
