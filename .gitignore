@@ -48,3 +48,6 @@ npm-debug.log*
 
 # Coverage
 coverage/
+
+# npm pack artifacts
+*.tgz

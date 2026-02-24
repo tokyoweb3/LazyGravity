@@ -511,7 +511,7 @@ async function sendPromptToAntigravity(
 
             onProgress: (text) => {
                 if (isFinalized) return;
-                // TODO: Re-enable live output streaming after RESPONSE_TEXT reliably excludes process logs.
+                // Live output streaming disabled: RESPONSE_TEXT currently includes process logs (see #1).
                 const separated = splitOutputAndLogs(text);
                 if (separated.output && separated.output.trim().length > 0) {
                     lastProgressText = separated.output;

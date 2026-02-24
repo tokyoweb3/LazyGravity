@@ -1,6 +1,6 @@
 @echo off
-rem Antigravity を CDP デバッグポート付きで起動するランチャー
-rem 空いているポートを自動検出して使用します
+rem Launcher to start Antigravity with a CDP debugging port
+rem Automatically detects and uses an available port
 setlocal enabledelayedexpansion
 
 set PORTS=9222 9333 9444 9555 9666
@@ -15,14 +15,14 @@ for %%p in (%PORTS%) do (
 )
 
 :notfound
-echo ❌ 利用可能なポートが見つかりませんでした (%PORTS%)
-echo    いずれかのポートを使用しているプロセスを終了してください。
+echo [ERROR] No available ports were found (%PORTS%)
+echo    Please stop any process using one of these ports.
 pause
 exit /b 1
 
 :found
-echo � Antigravity をポート %SELECTED_PORT% で起動します...
+echo [INFO] Starting Antigravity on port %SELECTED_PORT%...
 start "" "Antigravity.exe" --remote-debugging-port=%SELECTED_PORT%
-echo ✅ 起動完了！CDP ポート: %SELECTED_PORT%
+echo [OK] Launch complete! CDP port: %SELECTED_PORT%
 timeout /t 2 >nul
 exit /b 0

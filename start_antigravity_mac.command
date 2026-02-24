@@ -1,6 +1,6 @@
 #!/bin/bash
-# Antigravity を CDP デバッグポート付きで起動するランチャー
-# 空いているポートを自動検出して使用します
+# Launcher to start Antigravity with a CDP debugging port
+# Automatically detects and uses an available port
 
 PORTS=(9222 9333 9444 9555 9666)
 SELECTED_PORT=""
@@ -13,14 +13,14 @@ for port in "${PORTS[@]}"; do
 done
 
 if [ -z "$SELECTED_PORT" ]; then
-    echo "❌ 利用可能なポートが見つかりませんでした (${PORTS[*]})"
-    echo "   いずれかのポートを使用しているプロセスを終了してください。"
-    read -p "Enterキーで閉じます..."
+    echo "[ERROR] No available ports were found (${PORTS[*]})"
+    echo "   Please stop any process using one of these ports."
+    read -p "Press Enter to close..."
     exit 1
 fi
 
-echo "🚀 Antigravity をポート $SELECTED_PORT で起動します..."
+echo "[INFO] Starting Antigravity on port $SELECTED_PORT..."
 open -a Antigravity --args --remote-debugging-port=$SELECTED_PORT
-echo "✅ 起動完了！CDP ポート: $SELECTED_PORT"
+echo "[OK] Launch complete! CDP port: $SELECTED_PORT"
 sleep 2
 exit
