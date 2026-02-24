@@ -319,6 +319,10 @@ export class ApprovalDetector {
             }
         } catch (error) {
             // Ignore CDP errors and continue monitoring
+            const message = error instanceof Error ? error.message : String(error);
+            if (message.includes('WebSocket is not connected')) {
+                return;
+            }
             logger.error('[ApprovalDetector] Error during polling:', error);
         }
     }

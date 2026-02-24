@@ -152,7 +152,9 @@ export function parseApprovalCustomId(customId: string): { action: 'approve' | '
 export function initCdpBridge(autoApproveDefault: boolean): CdpBridge {
     const pool = new CdpConnectionPool({
         cdpCallTimeout: 15000,
-        maxReconnectAttempts: 5,
+        // Keep CDP reconnection lazy: do not reopen windows in background.
+        // Reconnection is triggered when the next chat/template message is sent.
+        maxReconnectAttempts: 0,
         reconnectDelayMs: 3000,
     });
 
