@@ -183,7 +183,7 @@ describe('ChatSessionService', () => {
             mockCdpService.call.mockImplementation(async (_method: string, params: any) => {
                 const expression = String(params?.expression || '');
 
-                if (expression.includes('const panel = document.querySelector(\'.antigravity-agent-side-panel\')')) {
+                if (expression.includes('const header = panel.querySelector(\'div[class*="border-b"]\');')) {
                     infoCallCount += 1;
                     if (infoCallCount === 1) {
                         return { result: { value: { title: 'current-session', hasActiveChat: true } } };
@@ -206,11 +206,50 @@ describe('ChatSessionService', () => {
             expect(result).toEqual({ ok: true });
         });
 
+        it('retries activation while UI is still loading and eventually succeeds', async () => {
+            let infoCallCount = 0;
+            let directAttemptCount = 0;
+
+            mockCdpService.call.mockImplementation(async (_method: string, params: any) => {
+                const expression = String(params?.expression || '');
+
+                if (expression.includes('const header = panel.querySelector(\'div[class*="border-b"]\');')) {
+                    infoCallCount += 1;
+                    if (infoCallCount === 1) {
+                        return { result: { value: { title: 'current-session', hasActiveChat: true } } };
+                    }
+                    return { result: { value: { title: 'target-session', hasActiveChat: true } } };
+                }
+
+                if (expression.includes('Chat title not found in side panel')) {
+                    directAttemptCount += 1;
+                    if (directAttemptCount < 3) {
+                        return { result: { value: { ok: false, error: 'side panel still loading' } } };
+                    }
+                    return { result: { value: { ok: true } } };
+                }
+
+                if (expression.includes('Past Conversations button not found')) {
+                    return { result: { value: { ok: false, error: 'past conversations still loading' } } };
+                }
+
+                return { result: { value: null } };
+            });
+
+            const result = await service.activateSessionByTitle(
+                mockCdpService,
+                'target-session',
+                { maxWaitMs: 100, retryIntervalMs: 1 },
+            );
+            expect(result).toEqual({ ok: true });
+            expect(directAttemptCount).toBe(3);
+        });
+
         it('returns direct and past errors when both activation paths fail', async () => {
             mockCdpService.call.mockImplementation(async (_method: string, params: any) => {
                 const expression = String(params?.expression || '');
 
-                if (expression.includes('const panel = document.querySelector(\'.antigravity-agent-side-panel\')')) {
+                if (expression.includes('const header = panel.querySelector(\'div[class*="border-b"]\');')) {
                     return { result: { value: { title: 'current-session', hasActiveChat: true } } };
                 }
                 if (expression.includes('Chat title not found in side panel')) {
@@ -222,10 +261,15 @@ describe('ChatSessionService', () => {
                 return { result: { value: null } };
             });
 
-            const result = await service.activateSessionByTitle(mockCdpService, 'target-session');
+            const result = await service.activateSessionByTitle(
+                mockCdpService,
+                'target-session',
+                { maxWaitMs: 5, retryIntervalMs: 1 },
+            );
             expect(result.ok).toBe(false);
             expect(result.error).toContain('direct:');
             expect(result.error).toContain('past: past miss');
+            expect(result.error).toContain('after');
         });
     });
 });

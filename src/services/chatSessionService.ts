@@ -295,6 +295,8 @@ function buildActivateViaPastConversationsScript(title: string): string {
  * CDP dependencies are received as method arguments (connection pool compatible).
  */
 export class ChatSessionService {
+    private static readonly ACTIVATE_SESSION_MAX_WAIT_MS = 30000;
+    private static readonly ACTIVATE_SESSION_RETRY_INTERVAL_MS = 800;
     /**
      * Start a new chat session in the Antigravity UI.
      *
@@ -408,6 +410,10 @@ export class ChatSessionService {
     async activateSessionByTitle(
         cdpService: CdpService,
         title: string,
+        options?: {
+            maxWaitMs?: number;
+            retryIntervalMs?: number;
+        },
     ): Promise<{ ok: boolean; error?: string }> {
         if (!title || title.trim().length === 0) {
             return { ok: false, error: 'Session title is empty' };
@@ -418,15 +424,34 @@ export class ChatSessionService {
             return { ok: true };
         }
 
-        let usedPastConversations = false;
-        const directResult = await this.tryActivateByDirectSidePanel(cdpService, title);
-        let clicked = directResult.ok;
-        let pastResult: { ok: boolean; error?: string } | null = null;
+        const maxWaitMs = options?.maxWaitMs ?? ChatSessionService.ACTIVATE_SESSION_MAX_WAIT_MS;
+        const retryIntervalMs = options?.retryIntervalMs ?? ChatSessionService.ACTIVATE_SESSION_RETRY_INTERVAL_MS;
 
-        if (!clicked) {
-            pastResult = await this.tryActivateByPastConversations(cdpService, title);
-            clicked = pastResult.ok;
-            usedPastConversations = pastResult.ok;
+        let usedPastConversations = false;
+        let directResult: { ok: boolean; error?: string } = { ok: false, error: 'not attempted' };
+        let pastResult: { ok: boolean; error?: string } | null = null;
+        let clicked = false;
+        const startedAt = Date.now();
+        let attempts = 0;
+
+        while (Date.now() - startedAt <= maxWaitMs) {
+            attempts += 1;
+            directResult = await this.tryActivateByDirectSidePanel(cdpService, title);
+            clicked = directResult.ok;
+
+            if (!clicked) {
+                pastResult = await this.tryActivateByPastConversations(cdpService, title);
+                clicked = pastResult.ok;
+                usedPastConversations = pastResult.ok;
+            }
+
+            if (clicked) {
+                break;
+            }
+
+            if (Date.now() - startedAt <= maxWaitMs) {
+                await new Promise((resolve) => setTimeout(resolve, retryIntervalMs));
+            }
         }
 
         if (!clicked) {
@@ -434,6 +459,7 @@ export class ChatSessionService {
                 ok: false,
                 error:
                     `Failed to activate session "${title}" ` +
+                    `after ${attempts} attempt(s) ` +
                     `(direct: ${directResult.error || 'direct search failed'}; ` +
                     `past: ${pastResult?.error || 'past conversations search failed'})`,
             };
