@@ -50,8 +50,9 @@ import {
     initCdpBridge,
     parseApprovalCustomId,
 } from '../services/cdpBridgeManager';
-import { buildModeModelLines, splitForEmbedDescription } from '../utils/streamMessageFormatter';
-import { formatForDiscord, sanitizeActivityLines, splitOutputAndLogs } from '../utils/discordFormatter';
+import { buildModeModelLines, fitForSingleEmbedDescription, splitForEmbedDescription } from '../utils/streamMessageFormatter';
+import { formatForDiscord, splitOutputAndLogs } from '../utils/discordFormatter';
+import { ProcessLogBuffer } from '../utils/processLogBuffer';
 import {
     buildPromptWithAttachmentUrls,
     cleanupInboundImageAttachments,
@@ -302,6 +303,11 @@ async function sendPromptToAntigravity(
     let lastActivityLogText = '';
     const LIVE_RESPONSE_MAX_LEN = 3800;
     const LIVE_ACTIVITY_MAX_LEN = 3800;
+    const processLogBuffer = new ProcessLogBuffer({
+        maxChars: LIVE_ACTIVITY_MAX_LEN,
+        maxEntries: 120,
+        maxEntryLength: 220,
+    });
     const liveResponseMessages: any[] = [];
     const liveActivityMessages: any[] = [];
     let lastLiveResponseKey = '';
@@ -322,7 +328,14 @@ async function sendPromptToAntigravity(
     const buildLiveActivityDescriptions = (text: string): string[] => {
         const normalized = (text || '').trim();
         if (!normalized) return [ACTIVITY_PLACEHOLDER];
-        return splitForEmbedDescription(formatForDiscord(normalized), LIVE_ACTIVITY_MAX_LEN);
+        const formatted = formatForDiscord(normalized);
+        return [fitForSingleEmbedDescription(formatted, LIVE_ACTIVITY_MAX_LEN)];
+    };
+
+    const appendProcessLogs = (text: string): string => {
+        const normalized = (text || '').trim();
+        if (!normalized) return processLogBuffer.snapshot();
+        return processLogBuffer.append(normalized);
     };
 
     const upsertLiveResponseEmbeds = (
@@ -461,13 +474,6 @@ async function sendPromptToAntigravity(
             t('⏱️ Elapsed: 0s | Process log'),
             { source: 'initial' },
         );
-        await upsertLiveResponseEmbeds(
-            `${PHASE_ICONS.generating} Generating Output`,
-            '',
-            PHASE_COLORS.generating,
-            t('⏱️ Elapsed: 0s | Waiting to start'),
-            { source: 'initial' },
-        );
 
         const monitor = new ResponseMonitor({
             cdpService: cdp,
@@ -482,14 +488,14 @@ async function sendPromptToAntigravity(
             onProcessLog: (logText) => {
                 if (isFinalized) return;
                 if (logText && logText.trim().length > 0) {
-                    lastActivityLogText = logText;
+                    lastActivityLogText = appendProcessLogs(logText);
                 }
                 const elapsed = Math.round((Date.now() - startTime) / 1000);
                 liveActivityUpdateVersion += 1;
                 const activityVersion = liveActivityUpdateVersion;
                 upsertLiveActivityEmbeds(
                     `${PHASE_ICONS.thinking} Process Log`,
-                    logText || lastActivityLogText || ACTIVITY_PLACEHOLDER,
+                    lastActivityLogText || ACTIVITY_PLACEHOLDER,
                     PHASE_COLORS.thinking,
                     t(`⏱️ Elapsed: ${elapsed}s | Process log`),
                     {
@@ -502,42 +508,11 @@ async function sendPromptToAntigravity(
 
             onProgress: (text) => {
                 if (isFinalized) return;
+                // TODO: Re-enable live output streaming after RESPONSE_TEXT reliably excludes process logs.
                 const separated = splitOutputAndLogs(text);
-                const sanitizedLogs = sanitizeActivityLines(separated.logs || '');
                 if (separated.output && separated.output.trim().length > 0) {
                     lastProgressText = separated.output;
                 }
-                if (sanitizedLogs && sanitizedLogs.trim().length > 0) {
-                    lastActivityLogText = sanitizedLogs;
-                }
-                const elapsed = Math.round((Date.now() - startTime) / 1000);
-                liveResponseUpdateVersion += 1;
-                const responseVersion = liveResponseUpdateVersion;
-                upsertLiveResponseEmbeds(
-                    `${PHASE_ICONS.generating} Generating Output`,
-                    separated.output || lastProgressText || '',
-                    PHASE_COLORS.generating,
-                    t(`⏱️ Elapsed: ${elapsed}s | Generating`),
-                    {
-                        source: 'progress',
-                        expectedVersion: responseVersion,
-                        skipWhenFinalized: true,
-                    },
-                ).catch(() => { });
-
-                liveActivityUpdateVersion += 1;
-                const activityVersion = liveActivityUpdateVersion;
-                upsertLiveActivityEmbeds(
-                    `${PHASE_ICONS.thinking} Process Log`,
-                    sanitizedLogs || lastActivityLogText || ACTIVITY_PLACEHOLDER,
-                    PHASE_COLORS.thinking,
-                    t(`⏱️ Elapsed: ${elapsed}s | Process log`),
-                    {
-                        source: 'progress',
-                        expectedVersion: activityVersion,
-                        skipWhenFinalized: true,
-                    },
-                ).catch(() => { });
             },
 
             onComplete: async (finalText) => {
@@ -559,7 +534,7 @@ async function sendPromptToAntigravity(
                     // Process logs are now collected by onProcessLog callback directly;
                     // sanitizeActivityLines is NOT applied because it would strip the very
                     // content we want to display (activity messages, tool names, etc.)
-                    const finalLogText = lastActivityLogText || '';
+                    const finalLogText = lastActivityLogText || processLogBuffer.snapshot();
                     if (finalLogText && finalLogText.trim().length > 0) {
                         logger.divider('Process Log');
                         console.info(finalLogText);
@@ -656,7 +631,7 @@ async function sendPromptToAntigravity(
                         ? lastText
                         : lastProgressText;
                     const separated = splitOutputAndLogs(timeoutText || '');
-                    const sanitizedTimeoutLogs = lastActivityLogText || '';
+                    const sanitizedTimeoutLogs = lastActivityLogText || processLogBuffer.snapshot();
                     const payload = separated.output && separated.output.trim().length > 0
                         ? t(`${separated.output}\n\n[Monitor Ended] Timeout after 5 minutes.`)
                         : 'Monitor ended after 5 minutes. No text was retrieved.';

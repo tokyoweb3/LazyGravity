@@ -358,6 +358,40 @@ describe('Lean ResponseMonitor (new API)', () => {
     });
 
     // ---------------------------------------------------------------
+    // Test 7b: Baseline suppression does NOT block completion transitions
+    // ---------------------------------------------------------------
+    it('baseline suppression does not block completion when stop button disappears', async () => {
+        let completedText: string | null = null;
+        const monitor = createMonitor({
+            onComplete: (text) => { completedText = text; },
+        });
+
+        // Baseline captures old response
+        cdpService.call.mockResolvedValueOnce(cdpResult('old response'));
+        await monitor.start();
+
+        // Poll 1: generation starts but extracted text is still baseline (suppressed)
+        cdpService.call
+            .mockResolvedValueOnce(cdpResult({ isGenerating: true }))
+            .mockResolvedValueOnce(cdpResult(false))
+            .mockResolvedValueOnce(cdpResult('old response'));
+        await jest.advanceTimersByTimeAsync(2000);
+        expect(completedText).toBeNull();
+
+        // Poll 2-4: stop disappears 3 times, text remains baseline
+        for (let i = 0; i < 3; i++) {
+            cdpService.call
+                .mockResolvedValueOnce(cdpResult({ isGenerating: false }))
+                .mockResolvedValueOnce(cdpResult(false))
+                .mockResolvedValueOnce(cdpResult('old response'));
+            await jest.advanceTimersByTimeAsync(2000);
+        }
+
+        // Even with no new text, monitor must complete instead of hanging in thinking
+        expect(completedText).toBe('');
+    });
+
+    // ---------------------------------------------------------------
     // Test 8: Timeout triggers onTimeout after maxDurationMs
     // ---------------------------------------------------------------
     it('timeout triggers onTimeout after maxDurationMs', async () => {

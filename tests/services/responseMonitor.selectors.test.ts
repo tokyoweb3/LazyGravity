@@ -72,6 +72,21 @@ describe('Lean RESPONSE_SELECTORS', () => {
     });
 
     // ---------------------------------------------------------------
+    // Test 8b: stop detection should avoid broad substring matching
+    // ---------------------------------------------------------------
+    it('STOP_BUTTON script does NOT use broad substring includes matching', () => {
+        expect(RESPONSE_SELECTORS.STOP_BUTTON).not.toContain('blob.includes');
+        expect(RESPONSE_SELECTORS.STOP_BUTTON).not.toContain('includes(w)');
+    });
+
+    // ---------------------------------------------------------------
+    // Test 8c: stop detection supports Japanese fallback labels
+    // ---------------------------------------------------------------
+    it('STOP_BUTTON script includes Japanese stop labels', () => {
+        expect(RESPONSE_SELECTORS.STOP_BUTTON).toContain('停止');
+    });
+
+    // ---------------------------------------------------------------
     // Test 9: RESPONSE_SELECTORS does NOT have ACTIVITY_STATUS property
     // ---------------------------------------------------------------
     it('does NOT have ACTIVITY_STATUS property', () => {

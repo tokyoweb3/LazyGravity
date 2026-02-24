@@ -388,7 +388,6 @@ export class CdpService extends EventEmitter {
                     returnByValue: true,
                 });
                 const liveTitle = result?.result?.value || '';
-                logger.debug(`[CdpService] Probe: page.id=${page.id} liveTitle="${liveTitle}"`);
 
                 if (liveTitle.includes(workspaceDirName)) {
                     this.currentWorkspaceName = workspaceDirName;
@@ -462,7 +461,6 @@ export class CdpService extends EventEmitter {
             const value = res?.result?.value;
             if (value?.found && value?.value) {
                 const detectedValue = value.value as string;
-                logger.debug(`[CdpService] Folder path probe (${value.source}): "${detectedValue}"`);
 
                 if (
                     detectedValue.includes(workspaceDirName) ||

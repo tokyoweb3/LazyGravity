@@ -6,21 +6,16 @@ import { t } from "../utils/i18n";
  * Note: Models may change with Antigravity version updates
  */
 export const AVAILABLE_MODELS = [
-    'gemini-2.5-pro',
-    'gemini-2.5-flash',
-    'gemini-2.0-flash-thinking-exp',
-    'gemini-2.0-pro-exp-02-05',
-    'gemini-2.0-flash',
-    'gemini-1.5-pro',
-    'gemini-1.5-flash',
-    'claude-3-5-sonnet-20241022',
-    'claude-3.5-sonnet',
-    'gpt-4o',
-    'o3-mini'
+    'gemini-3.1-pro-high',
+    'gemini-3.1-pro-low',
+    'gemini-3-flash',
+    'claude-sonnet-4.6-thinking',
+    'claude-opus-4.6-thinking',
+    'gpt-oss-120b-medium'
 ] as const;
 
 /** Default LLM model */
-export const DEFAULT_MODEL: Model = 'gemini-2.5-pro';
+export const DEFAULT_MODEL: Model = 'gemini-3-flash';
 
 /** Model type definition */
 export type Model = typeof AVAILABLE_MODELS[number];

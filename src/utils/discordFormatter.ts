@@ -181,4 +181,3 @@ export function sanitizeActivityLines(raw: string): string {
 
     return Array.from(new Set(kept)).join('\n');
 }
-

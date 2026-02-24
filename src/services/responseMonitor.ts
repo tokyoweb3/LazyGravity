@@ -56,32 +56,27 @@ export const RESPONSE_SELECTORS = {
             return false;
         };
 
-        let bestText = null;
-        let bestScore = -1;
+        const combinedSelector = selectors.map((s) => s.sel).join(', ');
         const seen = new Set();
 
         for (const scope of scopes) {
-            for (const { sel, score } of selectors) {
-                const nodes = scope.querySelectorAll(sel);
-                for (let i = nodes.length - 1; i >= 0; i--) {
-                    const node = nodes[i];
-                    if (!node || seen.has(node)) continue;
-                    seen.add(node);
-                    if (isInsideExcludedContainer(node)) continue;
-                    const text = (node.innerText || node.textContent || '').replace(/\\r/g, '').trim();
-                    if (!text || text.length < 8) continue;
-                    if (looksLikeActivityLog(text)) continue;
-                    if (looksLikeFeedbackFooter(text)) continue;
-                    if (looksLikeToolOutput(text)) continue;
-                    if (score > bestScore) {
-                        bestText = text;
-                        bestScore = score;
-                    }
-                }
+            const nodes = scope.querySelectorAll(combinedSelector);
+            for (let i = nodes.length - 1; i >= 0; i--) {
+                const node = nodes[i];
+                if (!node || seen.has(node)) continue;
+                seen.add(node);
+                if (isInsideExcludedContainer(node)) continue;
+                const text = (node.innerText || node.textContent || '').replace(/\\r/g, '').trim();
+                if (!text || text.length < 2) continue;
+                if (looksLikeActivityLog(text)) continue;
+                if (looksLikeFeedbackFooter(text)) continue;
+                if (looksLikeToolOutput(text)) continue;
+                // Prefer recency first: return the newest acceptable node.
+                return text;
             }
         }
 
-        return bestText;
+        return null;
     })()`,
     /** Stop button detection via tooltip-id + text fallback */
     STOP_BUTTON: `(() => {
@@ -93,17 +88,30 @@ export const RESPONSE_SELECTORS = {
             if (el) return { isGenerating: true };
         }
 
-        const STOP_WORDS = ['stop'];
+        const normalize = (value) => (value || '').toLowerCase().replace(/\\s+/g, ' ').trim();
+        const STOP_PATTERNS = [
+            /^stop$/,
+            /^stop generating$/,
+            /^stop response$/,
+            /^停止$/,
+            /^生成を停止$/,
+            /^応答を停止$/,
+        ];
+        const isStopLabel = (value) => {
+            const normalized = normalize(value);
+            if (!normalized) return false;
+            return STOP_PATTERNS.some((re) => re.test(normalized));
+        };
         for (const scope of scopes) {
             const buttons = scope.querySelectorAll('button, [role="button"]');
             for (let i = 0; i < buttons.length; i++) {
                 const btn = buttons[i];
-                const blob = [
+                const labels = [
                     btn.textContent || '',
                     btn.getAttribute('aria-label') || '',
                     btn.getAttribute('title') || '',
-                ].join(' ').toLowerCase();
-                if (STOP_WORDS.some((w) => blob.includes(w))) {
+                ];
+                if (labels.some(isStopLabel)) {
                     return { isGenerating: true };
                 }
             }
@@ -124,17 +132,30 @@ export const RESPONSE_SELECTORS = {
             }
         }
 
-        const STOP_WORDS = ['stop'];
+        const normalize = (value) => (value || '').toLowerCase().replace(/\\s+/g, ' ').trim();
+        const STOP_PATTERNS = [
+            /^stop$/,
+            /^stop generating$/,
+            /^stop response$/,
+            /^停止$/,
+            /^生成を停止$/,
+            /^応答を停止$/,
+        ];
+        const isStopLabel = (value) => {
+            const normalized = normalize(value);
+            if (!normalized) return false;
+            return STOP_PATTERNS.some((re) => re.test(normalized));
+        };
         for (const scope of scopes) {
             const buttons = scope.querySelectorAll('button, [role="button"]');
             for (let i = 0; i < buttons.length; i++) {
                 const btn = buttons[i];
-                const blob = [
+                const labels = [
                     btn.textContent || '',
                     btn.getAttribute('aria-label') || '',
                     btn.getAttribute('title') || '',
-                ].join(' ').toLowerCase();
-                if (STOP_WORDS.some((w) => blob.includes(w)) && typeof btn.click === 'function') {
+                ];
+                if (labels.some(isStopLabel) && typeof btn.click === 'function') {
                     btn.click();
                     return { ok: true, method: 'text-fallback' };
                 }
@@ -202,7 +223,7 @@ export const RESPONSE_SELECTORS = {
                     seen.add(node);
                     const text = (node.innerText || node.textContent || '').replace(/\\r/g, '').trim();
                     let skip = null;
-                    if (!text || text.length < 8) skip = 'too-short';
+                    if (!text || text.length < 2) skip = 'too-short';
                     else if (isInsideExcludedContainer(node)) skip = 'excluded-container';
                     else if (looksLikeActivityLog(text)) skip = 'activity-log';
                     else if (looksLikeFeedbackFooter(text)) skip = 'feedback-footer';
@@ -369,8 +390,7 @@ export class ResponseMonitor {
     private currentPhase: ResponsePhase = 'waiting';
     private stopGoneCount: number = 0;
     private quotaDetected: boolean = false;
-    private baselineProcessLogs: Set<string> = new Set();
-    private lastProcessLog: string | null = null;
+    private seenProcessLogKeys: Set<string> = new Set();
 
     constructor(options: ResponseMonitorOptions) {
         this.cdpService = options.cdpService;
@@ -394,8 +414,7 @@ export class ResponseMonitor {
         this.currentPhase = 'waiting';
         this.stopGoneCount = 0;
         this.quotaDetected = false;
-        this.baselineProcessLogs = new Set();
-        this.lastProcessLog = null;
+        this.seenProcessLogKeys = new Set();
 
         // Always fire callback on start, even though phase is already 'waiting'
         this.onPhaseChange?.('waiting', null);
@@ -412,7 +431,7 @@ export class ResponseMonitor {
             this.baselineText = null;
         }
 
-        // Capture baseline process logs
+        // Capture baseline process logs as already-seen keys
         try {
             const logResult = await this.cdpService.call(
                 'Runtime.evaluate',
@@ -420,8 +439,11 @@ export class ResponseMonitor {
             );
             const logEntries = logResult?.result?.value;
             if (Array.isArray(logEntries)) {
-                this.baselineProcessLogs = new Set(
-                    logEntries.map((s: string) => (s || '').slice(0, 200)),
+                this.seenProcessLogKeys = new Set(
+                    logEntries
+                        .map((s: string) => (s || '').replace(/\r/g, '').trim())
+                        .filter((s: string) => s.length > 0)
+                        .map((s: string) => s.slice(0, 200)),
                 );
             }
         } catch {
@@ -582,6 +604,10 @@ export class ResponseMonitor {
                 this.buildEvaluateParams(RESPONSE_SELECTORS.RESPONSE_TEXT),
             );
             const rawText = textResult?.result?.value;
+            const exceptionDetail = textResult?.result?.exceptionDetails ?? textResult?.exceptionDetails;
+            if (exceptionDetail) {
+                logger.warn('[ResponseMonitor:poll] RESPONSE_TEXT threw:', exceptionDetail.text ?? JSON.stringify(exceptionDetail).slice(0, 200));
+            }
             const currentText = typeof rawText === 'string' ? rawText.trim() || null : null;
 
             // 4. Process log extraction
@@ -592,14 +618,19 @@ export class ResponseMonitor {
                 );
                 const logEntries = logResult?.result?.value;
                 if (Array.isArray(logEntries)) {
-                    const newEntries = logEntries.filter(
-                        (s: string) => !this.baselineProcessLogs.has((s || '').slice(0, 200)),
-                    );
-                    const currentLog = newEntries.join('\n');
-                    if (currentLog.length > 0 && currentLog !== this.lastProcessLog) {
-                        this.lastProcessLog = currentLog;
+                    const newEntries: string[] = [];
+                    for (const raw of logEntries) {
+                        const normalized = (raw || '').replace(/\r/g, '').trim();
+                        if (!normalized) continue;
+                        const key = normalized.slice(0, 200);
+                        if (this.seenProcessLogKeys.has(key)) continue;
+                        this.seenProcessLogKeys.add(key);
+                        newEntries.push(normalized.slice(0, 300));
+                    }
+
+                    if (newEntries.length > 0) {
                         try {
-                            this.onProcessLog?.(currentLog);
+                            this.onProcessLog?.(newEntries.join('\n\n'));
                         } catch {
                             // callback error
                         }
@@ -636,24 +667,28 @@ export class ResponseMonitor {
                 }
             }
 
-            // Baseline suppression: same text as before start is not treated as new
-            if (currentText !== null && this.baselineText !== null && currentText === this.baselineText && this.lastText === null) {
-                return;
-            }
+            // Baseline suppression: do not emit progress for pre-existing text.
+            // IMPORTANT: do not early-return here; completion logic must still run.
+            const effectiveText = (
+                currentText !== null &&
+                this.baselineText !== null &&
+                currentText === this.baselineText &&
+                this.lastText === null
+            ) ? null : currentText;
 
             // Text change handling
-            const textChanged = currentText !== null && currentText !== this.lastText;
+            const textChanged = effectiveText !== null && effectiveText !== this.lastText;
             if (textChanged) {
-                this.lastText = currentText;
+                this.lastText = effectiveText;
 
                 if (this.currentPhase === 'waiting' || this.currentPhase === 'thinking') {
-                    this.setPhase('generating', currentText);
+                    this.setPhase('generating', effectiveText);
                     if (!this.generationStarted) {
                         this.generationStarted = true;
                     }
                 }
 
-                this.onProgress?.(currentText);
+                this.onProgress?.(effectiveText);
             }
 
             // Completion: stop button gone N consecutive times

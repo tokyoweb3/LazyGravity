@@ -199,4 +199,35 @@ describe('Lean discordFormatter (new API)', () => {
         expect(result.logs).toContain('output.txt#L1-131');
         expect(result.output).toBe('');
     });
+
+    // ---------------------------------------------------------------
+    // Test 16: "Initiating..." should remain output (avoid narrative misclassification)
+    // ---------------------------------------------------------------
+    it('splitOutputAndLogs keeps initiating narrative in output', () => {
+        const input = [
+            'Initiating Task Execution',
+            '',
+            "I'm now preparing the next execution step.",
+            '',
+            'Final answer: done.',
+        ].join('\n');
+
+        const result = splitOutputAndLogs(input);
+
+        expect(result.output).toContain('Initiating Task Execution');
+        expect(result.output).toContain("I'm now preparing the next execution step.");
+        expect(result.output).toContain('Final answer: done.');
+        expect(result.logs).toBe('');
+    });
+
+    // ---------------------------------------------------------------
+    // Test 17: "prioritizing/querying/retrieving" style narrative is output by default
+    // ---------------------------------------------------------------
+    it('splitOutputAndLogs keeps process-like narrative words in output', () => {
+        const input = 'Prioritizing the next implementation steps.';
+        const result = splitOutputAndLogs(input);
+
+        expect(result.output).toContain(input);
+        expect(result.logs).toBe('');
+    });
 });
