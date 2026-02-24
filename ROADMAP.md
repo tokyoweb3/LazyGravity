@@ -1,47 +1,47 @@
 # LazyGravity Roadmap
 
 > Tracking upcoming work and known issues.
-> Checked items are complete; unchecked items are planned or in progress.
+> Items link to GitHub Issues — contributions welcome!
 
 ---
 
 ## Known Issues
 
-- [ ] **Error Retry UI** — Display a Retry button in Discord when Antigravity returns a model error
-- [ ] **Planning Mode Flow** — Surface Open / Proceed decision points in Discord when Antigravity enters Planning mode
-- [ ] **Output Streaming** — Re-enable real-time streaming of final output (currently buffered to avoid process-log noise)
+- [ ] **Error Retry UI** — Display a Retry button in Discord on model errors ([#1](https://github.com/tokyoweb3/LazyGravity/issues/1))
+- [ ] **Planning Mode Flow** — Surface Open / Proceed decision points in Discord ([#2](https://github.com/tokyoweb3/LazyGravity/issues/2))
+- [ ] **Output Streaming** — Re-enable real-time streaming of final output ([#3](https://github.com/tokyoweb3/LazyGravity/issues/3))
 
 ## CLI & Management
 
 - [x] **`/status` command** — Show bot connection state, active projects, and current mode
 - [x] **Invite Link Generator** — Auto-generate a bot invite URL during `lazy-gravity setup`
-- [ ] **`doctor` enhancements** — Expand environment checks and add colored terminal output
+- [ ] **`doctor` enhancements** — Colored output and expanded checks ([#4](https://github.com/tokyoweb3/LazyGravity/issues/4))
 
 ## UX & Notifications
 
-- [ ] **Startup Dashboard** — Post a rich Embed to Discord on bot startup (OS, port, model, version)
-- [ ] **Heartbeat** — Optional periodic alive-check notification
-- [ ] **Scheduled Tasks** — Wire the existing `ScheduleService` backend to a `/schedule` slash command
-- [ ] **Usage Stats & Rate Limiting** — `/stats` command and per-user rate limits
-- [ ] **External Webhooks** — Notify Slack, LINE Notify, etc. on task completion
+- [ ] **Startup Dashboard** — Rich embed on bot launch with system info ([#5](https://github.com/tokyoweb3/LazyGravity/issues/5))
+- [ ] **Heartbeat** — Optional periodic alive-check notification ([#6](https://github.com/tokyoweb3/LazyGravity/issues/6))
+- [ ] **Scheduled Tasks** — Wire `ScheduleService` backend to `/schedule` command ([#7](https://github.com/tokyoweb3/LazyGravity/issues/7))
+- [ ] **Usage Stats & Rate Limiting** — `/stats` command and per-user rate limits ([#8](https://github.com/tokyoweb3/LazyGravity/issues/8))
+- [ ] **External Webhooks** — Notify Slack, LINE Notify, etc. on task completion ([#9](https://github.com/tokyoweb3/LazyGravity/issues/9))
 
 ## Advanced Features
 
-- [ ] **Template Import / Export** — Portable prompt templates (file-based or clipboard)
-- [ ] **Auto Update Check** — Query the npm registry on startup and notify when a new version is available
+- [ ] **Template Import / Export** — Portable prompt templates ([#10](https://github.com/tokyoweb3/LazyGravity/issues/10))
+- [ ] **Auto Update Check** — Notify on new npm version at startup ([#11](https://github.com/tokyoweb3/LazyGravity/issues/11))
 
 ## Scalability & Architecture
 
-- [ ] **Logger Improvements** — Log-level filtering, file output, rotation, `--verbose` / `--quiet` flags
-- [ ] **Multi-Editor Support** — Adapter abstraction for Cursor, Windsurf, and other CDP-compatible editors
-- [ ] **Plugin System** — User-defined hooks and commands
+- [ ] **Logger Improvements** — File output, rotation, `--verbose` / `--quiet` flags ([#12](https://github.com/tokyoweb3/LazyGravity/issues/12))
+- [ ] **Multi-Editor Support** — Adapter abstraction for Cursor, Windsurf, etc. ([#13](https://github.com/tokyoweb3/LazyGravity/issues/13))
+- [ ] **Plugin System** — User-defined hooks and commands ([#14](https://github.com/tokyoweb3/LazyGravity/issues/14))
 
 ## Public Release
 
 - [x] **Assets** — Demo video, banner image, and Mermaid architecture diagram (all in README)
 - [x] **npm Publish** — Published as `lazy-gravity` (v0.0.4)
-- [ ] **GitHub Infrastructure** — Issue / PR templates, `CONTRIBUTING.md`, GitHub Discussions
-- [ ] **v1.0 Stable Release** — First production-ready version
+- [ ] **GitHub Infrastructure** — Issue/PR templates, `CONTRIBUTING.md`, Discussions ([#15](https://github.com/tokyoweb3/LazyGravity/issues/15))
+- [ ] **v1.0 Stable Release** — First production-ready version ([#16](https://github.com/tokyoweb3/LazyGravity/issues/16))
 
 ---
 
