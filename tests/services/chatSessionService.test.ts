@@ -177,5 +177,33 @@ describe('ChatSessionService', () => {
             expect(result.ok).toBe(false);
             expect(result.error).toContain('did not match target title');
         });
+
+        it('falls back to Past Conversations flow when direct side-panel search cannot find the chat', async () => {
+            let infoCallCount = 0;
+            mockCdpService.call.mockImplementation(async (_method: string, params: any) => {
+                const expression = String(params?.expression || '');
+
+                if (expression.includes('const panel = document.querySelector(\'.antigravity-agent-side-panel\')')) {
+                    infoCallCount += 1;
+                    if (infoCallCount === 1) {
+                        return { result: { value: { title: 'current-session', hasActiveChat: true } } };
+                    }
+                    return { result: { value: { title: 'target-session', hasActiveChat: true } } };
+                }
+
+                if (expression.includes('Chat title not found in side panel')) {
+                    return { result: { value: { ok: false, error: 'not found in side panel' } } };
+                }
+
+                if (expression.includes('Past Conversations button not found')) {
+                    return { result: { value: { ok: true } } };
+                }
+
+                return { result: { value: null } };
+            });
+
+            const result = await service.activateSessionByTitle(mockCdpService, 'target-session');
+            expect(result).toEqual({ ok: true });
+        });
     });
 });

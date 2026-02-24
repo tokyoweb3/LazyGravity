@@ -89,6 +89,163 @@ function buildActivateChatByTitleScript(title: string): string {
 }
 
 /**
+ * Build a script that opens Past Conversations and selects a conversation by title.
+ * This path is required for older chats that are not visible in the current side panel.
+ */
+function buildActivateViaPastConversationsScript(title: string): string {
+    const safeTitle = JSON.stringify(title);
+    return `(() => {
+        const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        const wantedRaw = ${safeTitle};
+        const normalize = (text) => (text || '')
+            .normalize('NFKC')
+            .toLowerCase()
+            .replace(/[\\u2018\\u2019\\u201C\\u201D'"\`]/g, '')
+            .replace(/\\s+/g, ' ')
+            .trim();
+        const normalizeLoose = (text) => normalize(text).replace(/[^a-z0-9\\u3040-\\u30ff\\u4e00-\\u9faf\\s]/g, '').replace(/\\s+/g, ' ').trim();
+
+        const wanted = normalize(wantedRaw || '');
+        const wantedLoose = normalizeLoose(wantedRaw || '');
+        if (!wanted) return { ok: false, error: 'Empty target title' };
+
+        const isVisible = (el) => !!el && el instanceof HTMLElement && el.offsetParent !== null;
+        const asArray = (nodeList) => Array.from(nodeList || []);
+        const getLabelText = (el) => {
+            if (!el || !(el instanceof Element)) return '';
+            const parts = [
+                el.textContent || '',
+                el.getAttribute('aria-label') || '',
+                el.getAttribute('title') || '',
+                el.getAttribute('placeholder') || '',
+                el.getAttribute('data-tooltip-content') || '',
+                el.getAttribute('data-testid') || '',
+            ];
+            return parts.filter(Boolean).join(' ');
+        };
+        const getClickable = (el) => {
+            if (!el || !(el instanceof Element)) return null;
+            const clickable = el.closest('button, [role="button"], a, li, [role="option"], [data-testid*="conversation"]');
+            return clickable instanceof HTMLElement ? clickable : (el instanceof HTMLElement ? el : null);
+        };
+        const pickBest = (elements, patterns) => {
+            const matched = [];
+            for (const el of elements) {
+                if (!isVisible(el)) continue;
+                const text = normalize(getLabelText(el));
+                const textLoose = normalizeLoose(getLabelText(el));
+                if (!text) continue;
+                for (const pattern of patterns) {
+                    if (!pattern) continue;
+                    const p = normalize(pattern);
+                    const pLoose = normalizeLoose(pattern);
+                    if (
+                        text === p ||
+                        text.includes(p) ||
+                        (pLoose && (textLoose === pLoose || textLoose.includes(pLoose)))
+                    ) {
+                        matched.push({ el, score: Math.abs(text.length - pattern.length) });
+                        break;
+                    }
+                }
+            }
+            if (matched.length === 0) return null;
+            matched.sort((a, b) => a.score - b.score);
+            return matched[0].el;
+        };
+        const clickByPatterns = (patterns, selector) => {
+            const nodes = asArray(document.querySelectorAll('button, [role="button"], a, li, div, span'));
+            const scopedNodes = selector ? asArray(document.querySelectorAll(selector)) : [];
+            const source = scopedNodes.length > 0 ? scopedNodes : nodes;
+            const target = pickBest(source, patterns);
+            const clickable = getClickable(target);
+            if (!clickable) return false;
+            clickable.click();
+            return true;
+        };
+        const setInputValue = (el, value) => {
+            if (!el) return false;
+            if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+                el.focus();
+                el.value = value;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+                return true;
+            }
+            if (el instanceof HTMLElement) {
+                el.focus();
+                if (el.isContentEditable) {
+                    el.textContent = value;
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    return true;
+                }
+            }
+            return false;
+        };
+        const pressEnter = (el) => {
+            if (!(el instanceof HTMLElement)) return;
+            el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
+            el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true }));
+        };
+        const findSearchInput = () => {
+            const inputs = asArray(document.querySelectorAll('input, textarea, [role="combobox"], [role="searchbox"], [contenteditable="true"]'));
+            const strongPatterns = ['select a conversation', 'search conversation', 'search chats', 'search'];
+            const placeholders = [];
+            for (const el of inputs) {
+                if (!isVisible(el)) continue;
+                const placeholder = normalize(el.getAttribute('placeholder') || '');
+                const ariaLabel = normalize(el.getAttribute('aria-label') || '');
+                const text = normalize(getLabelText(el));
+                const combined = [placeholder, ariaLabel, text].filter(Boolean).join(' ');
+                placeholders.push({ el, combined });
+            }
+            for (const p of strongPatterns) {
+                const found = placeholders.find((x) => x.combined.includes(p));
+                if (found) return found.el;
+            }
+            return placeholders[0]?.el || null;
+        };
+
+        return (async () => {
+            const opened = clickByPatterns([
+                'past conversations',
+                'past conversation',
+                'conversation history',
+                'past chats',
+                '過去の会話',
+                'chat history',
+            ]);
+            if (!opened) {
+                return { ok: false, error: 'Past Conversations button not found' };
+            }
+
+            await wait(320);
+
+            // In some UI states "Select a conversation" itself is a trigger.
+            clickByPatterns(['select a conversation', 'select conversation', 'conversation'], '[role="button"], button, [aria-haspopup], [data-testid*="conversation"]');
+            await wait(220);
+
+            const input = findSearchInput();
+            if (input) {
+                setInputValue(input, wantedRaw);
+                await wait(260);
+            }
+
+            let selected = clickByPatterns([wanted, wantedLoose], '[role="option"], li, button, [data-testid*="conversation"]');
+            if (!selected && input) {
+                pressEnter(input);
+                await wait(220);
+                selected = true;
+            }
+            if (!selected) {
+                return { ok: false, error: 'Conversation not found in Past Conversations' };
+            }
+            return { ok: true };
+        })();
+    })()`;
+}
+
+/**
  * Service for managing chat sessions on Antigravity via CDP.
  *
  * CDP dependencies are received as method arguments (connection pool compatible).
@@ -217,29 +374,18 @@ export class ChatSessionService {
             return { ok: true };
         }
 
-        const contexts = cdpService.getContexts();
-        const script = buildActivateChatByTitleScript(title);
-        let clicked = false;
+        let usedPastConversations = false;
+        const directResult = await this.tryActivateByDirectSidePanel(cdpService, title);
+        let clicked = directResult.ok;
 
-        for (const ctx of contexts) {
-            try {
-                const result = await cdpService.call('Runtime.evaluate', {
-                    expression: script,
-                    returnByValue: true,
-                    contextId: ctx.id,
-                });
-                const value = result?.result?.value;
-                if (value?.ok) {
-                    clicked = true;
-                    break;
-                }
-            } catch {
-                // Try next context
-            }
+        if (!clicked) {
+            const pastResult = await this.tryActivateByPastConversations(cdpService, title);
+            clicked = pastResult.ok;
+            usedPastConversations = pastResult.ok;
         }
 
         if (!clicked) {
-            return { ok: false, error: `Failed to activate session "${title}"` };
+            return { ok: false, error: `Failed to activate session "${title}" (${directResult.error || 'direct search failed'})` };
         }
 
         // Wait briefly for DOM state transition and verify destination chat.
@@ -249,10 +395,69 @@ export class ChatSessionService {
             return { ok: true };
         }
 
+        // If direct side-panel activation hit the wrong row, try the explicit Past Conversations flow.
+        if (!usedPastConversations) {
+            const viaPast = await this.tryActivateByPastConversations(cdpService, title);
+            if (viaPast.ok) {
+                await new Promise((resolve) => setTimeout(resolve, 500));
+                const afterPast = await this.getCurrentSessionInfo(cdpService);
+                if (afterPast.title.trim() === title.trim()) {
+                    return { ok: true };
+                }
+                return {
+                    ok: false,
+                    error: `Past Conversations selected a different chat (expected="${title}", actual="${afterPast.title}")`,
+                };
+            }
+        }
+
         return {
             ok: false,
             error: `Activated chat did not match target title (expected="${title}", actual="${after.title}")`,
         };
+    }
+
+    private async tryActivateByDirectSidePanel(
+        cdpService: CdpService,
+        title: string,
+    ): Promise<{ ok: boolean; error?: string }> {
+        return this.tryActivateWithScript(cdpService, buildActivateChatByTitleScript(title), false);
+    }
+
+    private async tryActivateByPastConversations(
+        cdpService: CdpService,
+        title: string,
+    ): Promise<{ ok: boolean; error?: string }> {
+        return this.tryActivateWithScript(cdpService, buildActivateViaPastConversationsScript(title), true);
+    }
+
+    private async tryActivateWithScript(
+        cdpService: CdpService,
+        script: string,
+        awaitPromise: boolean,
+    ): Promise<{ ok: boolean; error?: string }> {
+        const contexts = cdpService.getContexts();
+        let lastError = 'Activation script returned no match';
+        for (const ctx of contexts) {
+            try {
+                const result = await cdpService.call('Runtime.evaluate', {
+                    expression: script,
+                    returnByValue: true,
+                    awaitPromise,
+                    contextId: ctx.id,
+                });
+                const value = result?.result?.value;
+                if (value?.ok) {
+                    return { ok: true };
+                }
+                if (value?.error && typeof value.error === 'string') {
+                    lastError = value.error;
+                }
+            } catch (error: unknown) {
+                lastError = error instanceof Error ? error.message : String(error);
+            }
+        }
+        return { ok: false, error: lastError };
     }
 
     /**

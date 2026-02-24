@@ -189,9 +189,10 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                         if (session?.isRenamed && session.displayName) {
                             const activationResult = await deps.chatSessionService.activateSessionByTitle(cdp, session.displayName);
                             if (!activationResult.ok) {
+                                const reason = activationResult.error ? ` (${activationResult.error})` : '';
                                 await message.reply(
                                     `⚠️ Could not route this message to the bound session (${session.displayName}). ` +
-                                    'Please open `/chat` and verify the session.',
+                                    `Please open /chat and verify the session${reason}.`,
                                 ).catch(() => { });
                                 return;
                             }
