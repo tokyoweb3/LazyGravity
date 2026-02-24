@@ -79,6 +79,8 @@ LLMエージェントへの指示と実行結果を、Discordの「リプライ�
 - Antigravityなどの裏側のAIエージェントのログやステータス出力（標準出力や特定フォーマットのログ）をストリームで監視する。
 - 数秒（例: 3〜5秒）に一度だけDiscordのメッセージ編集API (`message.edit`) を叩き、Rate Limit（API制限）に引っかからないようDebounce/Throttle制御を強くかけること。
 
+> **詳細:** ResponseMonitor による CDP ベースの応答監視・プロセスログ抽出の仕組みについては [RESPONSE_MONITOR.md](./RESPONSE_MONITOR.md) を参照。
+
 ## 7. Antigravity プロセスの起動方式 (CLI Spawn) とリソース制御
 - **CLI Spawn:** Antigravity(または対象ディレクトリのAIコーディングツール)は、`child_process.spawn` を用いて、独立したバックグラウンドプロセスとして起動します。
 - **排他制御とキューイング (Task Queue):** ローカルPCのリソース枯渇（DoS状態）を防ぐため、ワークスペース単位、または全体での同時実行タスク数を制限（Mutex/Queue）します。

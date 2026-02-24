@@ -99,23 +99,15 @@ export function createSerialTaskQueueForTest(queueName: string, traceId: string)
     return (task: () => Promise<void>, label: string = 'queue-task'): Promise<void> => {
         taskSeq += 1;
         const seq = taskSeq;
-        const enqueuedAt = Date.now();
         queueDepth += 1;
-        logger.debug(`[sendQueue:${traceId}:${queueName}] enqueued #${seq} label=${label} depth=${queueDepth}`);
 
         queue = queue.then(async () => {
-            const waitMs = Date.now() - enqueuedAt;
-            logger.debug(
-                `[sendQueue:${traceId}:${queueName}] start #${seq} label=${label} wait=${waitMs}ms depth=${queueDepth}`,
-            );
             try {
                 await task();
-                logger.debug(`[sendQueue:${traceId}:${queueName}] done #${seq} label=${label}`);
             } catch (err: any) {
                 logger.error(`[sendQueue:${traceId}:${queueName}] error #${seq} label=${label}:`, err?.message || err);
             } finally {
                 queueDepth = Math.max(0, queueDepth - 1);
-                logger.debug(`[sendQueue:${traceId}:${queueName}] settle #${seq} label=${label} depth=${queueDepth}`);
             }
         });
 
@@ -598,6 +590,12 @@ async function sendPromptToAntigravity(
                         `[sendPromptToAntigravity:${monitorTraceId}] finalize payload ` +
                         `outputLen=${finalOutputText?.length ?? 0} logLen=${finalLogText?.length ?? 0}`,
                     );
+                    if (finalOutputText && finalOutputText.trim().length > 0) {
+                        logger.done(`[Output]\n${finalOutputText}`);
+                    }
+                    if (finalLogText && finalLogText.trim().length > 0) {
+                        logger.phase(`[ProcessLog]\n${finalLogText}`);
+                    }
 
                     liveActivityUpdateVersion += 1;
                     const activityVersion = liveActivityUpdateVersion;

@@ -88,9 +88,9 @@ describe('Lean ResponseMonitor (new API)', () => {
 
         expect(phases).toContain('waiting');
         expect(monitor.getPhase()).toBe('waiting');
-        // Baseline should have been captured via 3 CDP calls:
-        // 1. RESPONSE_TEXT baseline, 2. DUMP_ALL_TEXTS baseline, 3. PROCESS_LOGS baseline
-        expect(cdpService.call).toHaveBeenCalledTimes(3);
+        // Baseline should have been captured via 2 CDP calls:
+        // 1. RESPONSE_TEXT baseline, 2. PROCESS_LOGS baseline
+        expect(cdpService.call).toHaveBeenCalledTimes(2);
 
         await monitor.stop();
     });
@@ -485,18 +485,18 @@ describe('Lean ResponseMonitor (new API)', () => {
     });
 
     // ---------------------------------------------------------------
-    // Structural test: poll makes 4 CDP calls normally,
-    // 5 when text changes (dump triggered on change only)
+    // Structural test: poll makes exactly 4 CDP calls
+    // (stop, quota, text, process_logs)
     // ---------------------------------------------------------------
-    it('poll makes 4 CDP calls normally, 5 when text changes (dump on change)', async () => {
+    it('poll makes exactly 4 CDP calls (stop, quota, text, process_logs)', async () => {
         const monitor = createMonitor();
 
         cdpService.call.mockResolvedValueOnce(cdpResult(null)); // baseline text
-        // baseline dump + process logs fall through to default mock
+        // baseline process_logs falls through to default mock
         await monitor.start();
         const callsAfterStart = cdpService.call.mock.calls.length;
 
-        // Poll with no text change: 4 calls (stop, quota, text, process_logs)
+        // Poll with no text change: 4 calls
         cdpService.call
             .mockResolvedValueOnce(cdpResult({ isGenerating: false }))
             .mockResolvedValueOnce(cdpResult(false))
@@ -506,17 +506,16 @@ describe('Lean ResponseMonitor (new API)', () => {
 
         expect(cdpService.call.mock.calls.length - callsAfterStart).toBe(4);
 
-        // Poll with text change: 5 calls (stop, quota, text, process_logs, dump)
+        // Poll with text change: still 4 calls (dump removed)
         const callsBefore = cdpService.call.mock.calls.length;
         cdpService.call
             .mockResolvedValueOnce(cdpResult({ isGenerating: true }))
             .mockResolvedValueOnce(cdpResult(false))
-            .mockResolvedValueOnce(cdpResult('new text'))
-            .mockResolvedValueOnce(cdpResult(null))   // process_logs
-            .mockResolvedValueOnce(cdpResult([]));     // dump
+            .mockResolvedValueOnce(cdpResult('new text'));
+        // process_logs falls through to default mock
         await jest.advanceTimersByTimeAsync(2000);
 
-        expect(cdpService.call.mock.calls.length - callsBefore).toBe(5);
+        expect(cdpService.call.mock.calls.length - callsBefore).toBe(4);
 
         await monitor.stop();
     });

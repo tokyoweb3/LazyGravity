@@ -370,7 +370,6 @@ export class ResponseMonitor {
     private stopGoneCount: number = 0;
     private quotaDetected: boolean = false;
     private baselineProcessLogs: Set<string> = new Set();
-    private baselineEntryPreviews: Set<string> = new Set();
     private lastProcessLog: string | null = null;
 
     constructor(options: ResponseMonitorOptions) {
@@ -396,7 +395,6 @@ export class ResponseMonitor {
         this.stopGoneCount = 0;
         this.quotaDetected = false;
         this.baselineProcessLogs = new Set();
-        this.baselineEntryPreviews = new Set();
         this.lastProcessLog = null;
 
         // Always fire callback on start, even though phase is already 'waiting'
@@ -414,24 +412,7 @@ export class ResponseMonitor {
             this.baselineText = null;
         }
 
-        // Capture baseline entry previews (for DUMP filtering) and process logs
-        try {
-            const dumpResult = await this.cdpService.call(
-                'Runtime.evaluate',
-                this.buildEvaluateParams(RESPONSE_SELECTORS.DUMP_ALL_TEXTS),
-            );
-            const candidates = dumpResult?.result?.value;
-            if (Array.isArray(candidates)) {
-                this.baselineEntryPreviews = new Set(
-                    candidates
-                        .filter((c: any) => c.score >= 9)
-                        .map((c: any) => (c.preview || '').slice(0, 120)),
-                );
-            }
-        } catch {
-            // baseline capture only
-        }
-
+        // Capture baseline process logs
         try {
             const logResult = await this.cdpService.call(
                 'Runtime.evaluate',
@@ -462,7 +443,7 @@ export class ResponseMonitor {
         }
 
         logger.info(
-            `[ResponseMonitor] start — pollInterval=${this.pollIntervalMs}ms maxDuration=${this.maxDurationMs}ms stopGoneConfirm=${this.stopGoneConfirmCount} baseline="${(this.baselineText ?? '').slice(0, 40)}"`,
+            `[ResponseMonitor] start — pollInterval=${this.pollIntervalMs}ms maxDuration=${this.maxDurationMs}ms stopGoneConfirm=${this.stopGoneConfirmCount} baselineLen=${this.baselineText?.length ?? 0}`,
         );
 
         // Start polling
@@ -554,7 +535,7 @@ export class ResponseMonitor {
     }
 
     /**
-     * Single poll: 4 CDP calls (+ 1 diagnostic DUMP on text change).
+     * Single poll: exactly 4 CDP calls.
      * 1. Stop button check
      * 2. Quota error check
      * 3. Text extraction
@@ -569,7 +550,6 @@ export class ResponseMonitor {
             );
             const stopValue = stopResult?.result?.value;
             const isGenerating = !!(stopValue && typeof stopValue === 'object' && (stopValue as any).isGenerating);
-            logger.debug(`[ResponseMonitor] stopButton raw=${JSON.stringify(stopValue)} → isGenerating=${isGenerating}`);
 
             // 2. Quota error check
             const quotaResult = await this.cdpService.call(
@@ -585,9 +565,6 @@ export class ResponseMonitor {
             );
             const rawText = textResult?.result?.value;
             const currentText = typeof rawText === 'string' ? rawText.trim() || null : null;
-            logger.debug(
-                `[ResponseMonitor] text raw type=${typeof rawText} len=${currentText?.length ?? 0} preview="${(currentText ?? '').slice(0, 60)}"`,
-            );
 
             // 4. Process log extraction
             try {
@@ -603,8 +580,9 @@ export class ResponseMonitor {
                     const currentLog = newEntries.join('\n');
                     if (currentLog.length > 0 && currentLog !== this.lastProcessLog) {
                         this.lastProcessLog = currentLog;
-                        logger.debug(
-                            `[ResponseMonitor] processLog changed entries=${newEntries.length} len=${currentLog.length}`,
+                        const latestEntry = newEntries[newEntries.length - 1] || '';
+                        logger.info(
+                            `[ResponseMonitor] processLog updated entries=${newEntries.length} len=${currentLog.length} latest="${latestEntry.slice(0, 80)}${latestEntry.length > 80 ? '...' : ''}"`,
                         );
                         try {
                             this.onProcessLog?.(currentLog);
@@ -646,37 +624,13 @@ export class ResponseMonitor {
 
             // Baseline suppression: same text as before start is not treated as new
             if (currentText !== null && this.baselineText !== null && currentText === this.baselineText && this.lastText === null) {
-                logger.debug('[ResponseMonitor] baseline suppression — text matches pre-start snapshot');
                 return;
             }
 
             // Text change handling
             const textChanged = currentText !== null && currentText !== this.lastText;
             if (textChanged) {
-                logger.info(`[ResponseMonitor] text changed len=${this.lastText?.length ?? 0}→${currentText!.length}`);
-
-                // Diagnostic dump on text change only — skip old/baseline entries
-                try {
-                    const dumpResult = await this.cdpService.call(
-                        'Runtime.evaluate',
-                        this.buildEvaluateParams(RESPONSE_SELECTORS.DUMP_ALL_TEXTS),
-                    );
-                    const candidates = dumpResult?.result?.value;
-                    if (Array.isArray(candidates)) {
-                        for (const c of candidates) {
-                            if (c.score < 9) continue;
-                            // Skip entries that existed at baseline (old turns / unrelated content)
-                            const prev = (c.preview || '').slice(0, 120);
-                            if (!c.skip && this.baselineEntryPreviews.has(prev)) continue;
-                            const tag = c.skip ? `SKIP:${c.skip}` : 'OK';
-                            logger.debug(
-                                `[ResponseMonitor:DUMP] [${tag}] len=${c.len} preview="${c.preview}"`,
-                            );
-                        }
-                    }
-                } catch {
-                    // diagnostic only
-                }
+                logger.info(`[ResponseMonitor] text changed len=${this.lastText?.length ?? 0}→${currentText!.length} "${currentText!.slice(0, 80)}${currentText!.length > 80 ? '...' : ''}"`);
 
                 this.lastText = currentText;
 
