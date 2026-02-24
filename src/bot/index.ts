@@ -335,17 +335,8 @@ async function sendPromptToAntigravity(
             skipWhenFinalized?: boolean;
         },
     ): Promise<void> => enqueueResponse(async () => {
-        if (opts?.skipWhenFinalized && isFinalized) {
-            logger.debug(`[sendPromptToAntigravity:${monitorTraceId}] skip response render after finalized source=${opts?.source ?? 'unknown'}`);
-            return;
-        }
-        if (opts?.expectedVersion !== undefined && opts.expectedVersion !== liveResponseUpdateVersion) {
-            logger.debug(
-                `[sendPromptToAntigravity:${monitorTraceId}] skip stale response render ` +
-                `source=${opts?.source ?? 'unknown'} expected=${opts.expectedVersion} current=${liveResponseUpdateVersion}`,
-            );
-            return;
-        }
+        if (opts?.skipWhenFinalized && isFinalized) return;
+        if (opts?.expectedVersion !== undefined && opts.expectedVersion !== liveResponseUpdateVersion) return;
         if (!channel) return;
         const descriptions = buildLiveResponseDescriptions(rawText);
         const renderKey = `${title}|${color}|${footerText}|${descriptions.join('\n<<<PAGE_BREAK>>>\n')}`;
@@ -391,17 +382,8 @@ async function sendPromptToAntigravity(
             skipWhenFinalized?: boolean;
         },
     ): Promise<void> => enqueueActivity(async () => {
-        if (opts?.skipWhenFinalized && isFinalized) {
-            logger.debug(`[sendPromptToAntigravity:${monitorTraceId}] skip activity render after finalized source=${opts?.source ?? 'unknown'}`);
-            return;
-        }
-        if (opts?.expectedVersion !== undefined && opts.expectedVersion !== liveActivityUpdateVersion) {
-            logger.debug(
-                `[sendPromptToAntigravity:${monitorTraceId}] skip stale activity render ` +
-                `source=${opts?.source ?? 'unknown'} expected=${opts.expectedVersion} current=${liveActivityUpdateVersion}`,
-            );
-            return;
-        }
+        if (opts?.skipWhenFinalized && isFinalized) return;
+        if (opts?.expectedVersion !== undefined && opts.expectedVersion !== liveActivityUpdateVersion) return;
         if (!channel) return;
 
         const descriptions = buildLiveActivityDescriptions(rawText);
@@ -436,7 +418,6 @@ async function sendPromptToAntigravity(
         }
     }, `upsert-activity:${opts?.source ?? 'unknown'}`);
 
-    logger.info(`[sendPromptToAntigravity:${monitorTraceId}] response mode=${RESPONSE_DELIVERY_MODE}`);
 
     try {
 
@@ -472,7 +453,6 @@ async function sendPromptToAntigravity(
         }
 
         const startTime = Date.now();
-        logger.info(`[sendPromptToAntigravity:${monitorTraceId}] monitor start`);
         await upsertLiveActivityEmbeds(
             `${PHASE_ICONS.thinking} 生成プロセスログ`,
             '',
@@ -494,11 +474,8 @@ async function sendPromptToAntigravity(
             maxDurationMs: 300000,
             stopGoneConfirmCount: 3,
 
-            onPhaseChange: (phase, text) => {
-                logger.info(
-                    `[sendPromptToAntigravity:${monitorTraceId}] phase=${phase} ` +
-                    `textLen=${text?.length ?? 0}`,
-                );
+            onPhaseChange: (_phase, _text) => {
+                // Phase transitions are already logged inside ResponseMonitor.setPhase()
             },
 
             onProcessLog: (logText) => {
@@ -564,10 +541,6 @@ async function sendPromptToAntigravity(
 
             onComplete: async (finalText) => {
                 isFinalized = true;
-                logger.info(
-                    `[sendPromptToAntigravity:${monitorTraceId}] onComplete start ` +
-                    `phase=${monitor.getPhase()} finalTextLen=${finalText?.length ?? 0} lastProgressLen=${lastProgressText.length}`,
-                );
 
                 try {
                     const elapsed = Math.round((Date.now() - startTime) / 1000);
@@ -586,16 +559,15 @@ async function sendPromptToAntigravity(
                     // sanitizeActivityLines is NOT applied because it would strip the very
                     // content we want to display (activity messages, tool names, etc.)
                     const finalLogText = lastActivityLogText || '';
-                    logger.info(
-                        `[sendPromptToAntigravity:${monitorTraceId}] finalize payload ` +
-                        `outputLen=${finalOutputText?.length ?? 0} logLen=${finalLogText?.length ?? 0}`,
-                    );
-                    if (finalOutputText && finalOutputText.trim().length > 0) {
-                        logger.done(`[Output]\n${finalOutputText}`);
-                    }
                     if (finalLogText && finalLogText.trim().length > 0) {
-                        logger.phase(`[ProcessLog]\n${finalLogText}`);
+                        logger.divider('Process Log');
+                        console.info(finalLogText);
                     }
+                    if (finalOutputText && finalOutputText.trim().length > 0) {
+                        logger.divider(`Output (${finalOutputText.length} chars)`);
+                        console.info(finalOutputText);
+                    }
+                    logger.divider();
 
                     liveActivityUpdateVersion += 1;
                     const activityVersion = liveActivityUpdateVersion;
@@ -671,17 +643,11 @@ async function sendPromptToAntigravity(
                     await message.react(finalOutputText && finalOutputText.trim().length > 0 ? '✅' : '⚠️').catch(() => { });
                 } catch (error) {
                     logger.error(`[sendPromptToAntigravity:${monitorTraceId}] onComplete failed:`, error);
-                } finally {
-                    logger.info(`[sendPromptToAntigravity:${monitorTraceId}] onComplete end`);
                 }
             },
 
             onTimeout: async (lastText) => {
                 isFinalized = true;
-                logger.info(
-                    `[sendPromptToAntigravity:${monitorTraceId}] onTimeout start ` +
-                    `lastTextLen=${lastText?.length ?? 0} lastProgressLen=${lastProgressText.length}`,
-                );
                 try {
                     const elapsed = Math.round((Date.now() - startTime) / 1000);
 
@@ -723,8 +689,6 @@ async function sendPromptToAntigravity(
                     await message.react('⚠️').catch(() => { });
                 } catch (error) {
                     logger.error(`[sendPromptToAntigravity:${monitorTraceId}] onTimeout failed:`, error);
-                } finally {
-                    logger.info(`[sendPromptToAntigravity:${monitorTraceId}] onTimeout end`);
                 }
             },
         });

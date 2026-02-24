@@ -245,53 +245,55 @@ stale renders from overwriting newer content.
 | Level | ANSI Color | Use Case |
 |-------|------------|----------|
 | `logger.error` | Red | Failures, exceptions |
-| `logger.warn` | Yellow | Quota detection, degraded states |
-| `logger.info` | Cyan | State changes, text changes, process log updates |
-| `logger.phase` | Magenta | Phase transitions (thinking, generating, complete) |
-| `logger.done` | Green | Completion events |
-| `logger.debug` | Dim | Verbose diagnostic (disabled in production log review) |
+| `logger.warn` | Yellow | Quota detection, timeout |
+| `logger.info` | Cyan | Monitoring start |
+| `logger.phase` | Magenta | Phase transitions (Thinking, Generating) |
+| `logger.done` | Green | Completion event |
+| `logger.divider` | Green+Dim | Section separators for finalize content blocks |
+| `logger.debug` | Dim | Verbose diagnostic (not output in production) |
 
 ### 6.2 Log Output During Normal Operation
 
-A typical successful run produces approximately these log lines:
+A typical successful run produces this structured output:
 
 ```
-[INFO]  start — pollInterval=2000ms ... baselineLen=236
-[PHASE] waiting -> thinking textLen=0
-[INFO]  processLog updated entries=3 len=558 latest="jina-mcp-server / search_web..."
-[INFO]  processLog updated entries=4 len=859 latest="title: 東京都の天気..."
-[INFO]  text changed len=0->186 "2026年2月24日の東京の天気は..."
-[PHASE] thinking -> generating textLen=186
-[INFO]  text changed len=186->236 "2026年2月24日の東京の天気は、以下のようになって..."
-[INFO]  stopGone 1/3 — 2 more to complete
-[INFO]  stopGone 2/3 — 1 more to complete
-[INFO]  stopGone 3/3 — 0 more to complete
-[DONE]  complete! stopGone=3/3 finalTextLen=236
-[PHASE] generating -> complete textLen=236
-[INFO]  finalize payload outputLen=236 logLen=859
-[DONE]  [Output]       <-- green: full output text
-[PHASE] [ProcessLog]   <-- magenta: full process log text
+[INFO]  ── Monitoring started | poll=2000ms timeout=300s baseline=236ch
+[PHASE] Thinking
+[PHASE] Generating (186 chars)
+[DONE]  Complete (236 chars)
+[DONE]  ── Process Log ──────────────────────────────────
+jina-mcp-server / search_web
+title: 東京都の天気 url: ... snippet: ...
+[DONE]  ── Output (236 chars) ──────────────────────────
+2026年2月24日の東京の天気は、以下のようになっています...
+[DONE]  ──────────────────────────────────────────────────
 ```
 
-### 6.3 Finalize Content Logging
+**Design principles:**
+- **3 phases visible**: Monitoring started → Thinking → Generating → Complete
+- **Process Log before Output**: Chronological order (tool use happens before response)
+- **Full content in divider blocks**: Terminal reviewers see exactly what Discord displays
+- **No intermediate noise**: Text change diffs, partial previews, and stop-gone countdown are silent
 
-At completion, the bot logs both the output and process log with distinct colors:
+### 6.3 Finalize Content Blocks
 
-- `[DONE] [Output]\n<full text>` — Green, the same text shown in Discord's "complete" embed
-- `[PHASE] [ProcessLog]\n<full text>` — Magenta, the same text shown in Discord's "process log" embed
+At completion, `bot/index.ts` outputs structured divider blocks via `logger.divider()`:
 
-This allows terminal reviewers to see exactly what Discord displays without opening Discord.
+1. `── Process Log ──` block — Activity messages and tool output (same as Discord's process log embed)
+2. `── Output (N chars) ──` block — Final response text (same as Discord's complete embed)
+3. Closing `──────────` divider
 
 ### 6.4 What Is NOT Logged (by design)
 
 To keep logs clean, the following are intentionally omitted from production output:
 
-- Raw CDP stop button results (every poll)
-- Raw text extraction results (every poll)
-- Baseline suppression events (every poll during thinking)
-- Baseline text content (only length is shown; previous-turn text is not relevant)
-- DUMP diagnostic entries (removed from poll; selector retained for manual debug)
-- Queue enqueue/start/done/settle events (only errors logged)
+- Per-poll CDP results (stop button, text extraction, process logs)
+- Text change diffs and partial text previews
+- Stop-gone countdown (1/3, 2/3 — only completion is logged)
+- Baseline text content (only length is shown at start)
+- Process log intermediate updates (content only shown at finalize)
+- Queue version skips and stale render events
+- DUMP diagnostic entries (selector retained for manual debug only)
 
 ---
 

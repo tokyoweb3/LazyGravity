@@ -443,7 +443,7 @@ export class ResponseMonitor {
         }
 
         logger.info(
-            `[ResponseMonitor] start — pollInterval=${this.pollIntervalMs}ms maxDuration=${this.maxDurationMs}ms stopGoneConfirm=${this.stopGoneConfirmCount} baselineLen=${this.baselineText?.length ?? 0}`,
+            `── Monitoring started | poll=${this.pollIntervalMs}ms timeout=${this.maxDurationMs / 1000}s baseline=${this.baselineText?.length ?? 0}ch`,
         );
 
         // Start polling
@@ -504,9 +504,27 @@ export class ResponseMonitor {
 
     private setPhase(phase: ResponsePhase, text: string | null): void {
         if (this.currentPhase !== phase) {
-            const prev = this.currentPhase;
             this.currentPhase = phase;
-            logger.phase(`[ResponseMonitor] ${prev} → ${phase} textLen=${text?.length ?? 0}`);
+            const len = text?.length ?? 0;
+            switch (phase) {
+                case 'thinking':
+                    logger.phase('Thinking');
+                    break;
+                case 'generating':
+                    logger.phase(`Generating (${len} chars)`);
+                    break;
+                case 'complete':
+                    logger.done(`Complete (${len} chars)`);
+                    break;
+                case 'timeout':
+                    logger.warn(`Timeout (${len} chars captured)`);
+                    break;
+                case 'quotaReached':
+                    logger.warn('Quota Reached');
+                    break;
+                default:
+                    logger.phase(`${phase}`);
+            }
             this.onPhaseChange?.(phase, text);
         }
     }
@@ -580,10 +598,6 @@ export class ResponseMonitor {
                     const currentLog = newEntries.join('\n');
                     if (currentLog.length > 0 && currentLog !== this.lastProcessLog) {
                         this.lastProcessLog = currentLog;
-                        const latestEntry = newEntries[newEntries.length - 1] || '';
-                        logger.info(
-                            `[ResponseMonitor] processLog updated entries=${newEntries.length} len=${currentLog.length} latest="${latestEntry.slice(0, 80)}${latestEntry.length > 80 ? '...' : ''}"`,
-                        );
                         try {
                             this.onProcessLog?.(currentLog);
                         } catch {
@@ -630,8 +644,6 @@ export class ResponseMonitor {
             // Text change handling
             const textChanged = currentText !== null && currentText !== this.lastText;
             if (textChanged) {
-                logger.info(`[ResponseMonitor] text changed len=${this.lastText?.length ?? 0}→${currentText!.length} "${currentText!.slice(0, 80)}${currentText!.length > 80 ? '...' : ''}"`);
-
                 this.lastText = currentText;
 
                 if (this.currentPhase === 'waiting' || this.currentPhase === 'thinking') {
@@ -647,15 +659,8 @@ export class ResponseMonitor {
             // Completion: stop button gone N consecutive times
             if (!isGenerating && this.generationStarted) {
                 this.stopGoneCount++;
-                const remaining = this.stopGoneConfirmCount - this.stopGoneCount;
-                logger.info(
-                    `[ResponseMonitor] stopGone ${this.stopGoneCount}/${this.stopGoneConfirmCount} — ${remaining} more to complete`,
-                );
                 if (this.stopGoneCount >= this.stopGoneConfirmCount) {
                     const finalText = this.lastText ?? '';
-                    logger.done(
-                        `[ResponseMonitor] complete! stopGone=${this.stopGoneCount}/${this.stopGoneConfirmCount} finalTextLen=${finalText.length}`,
-                    );
                     this.setPhase('complete', finalText);
                     await this.stop();
                     try {
