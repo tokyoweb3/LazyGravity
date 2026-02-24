@@ -1,10 +1,10 @@
 {
   "name": "lazy-gravity",
-  "version": "0.0.1",
+  "version": "0.0.4",
   "description": "Control Antigravity from anywhere — a local, secure Discord Bot that lets you remotely operate Antigravity on your home PC from your smartphone's Discord app.",
   "main": "dist/index.js",
   "bin": {
-    "lazy-gravity": "./dist/bin/cli.js"
+    "lazy-gravity": "dist/bin/cli.js"
   },
   "files": [
     "dist/",
@@ -40,12 +40,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/yourusername/lazy-gravity.git"
+    "url": "git+https://github.com/tokyoweb3/LazyGravity.git"
   },
   "bugs": {
-    "url": "https://github.com/yourusername/lazy-gravity/issues"
+    "url": "https://github.com/tokyoweb3/LazyGravity/issues"
   },
-  "homepage": "https://github.com/yourusername/lazy-gravity#readme",
+  "homepage": "https://github.com/tokyoweb3/LazyGravity#readme",
   "dependencies": {
     "better-sqlite3": "^12.6.2",
     "commander": "^14.0.3",

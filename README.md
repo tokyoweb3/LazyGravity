@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/LazyGravityBanner.png" alt="LazyGravity Banner" width="100%" />
+  <img src="https://raw.githubusercontent.com/tokyoweb3/LazyGravity/main/docs/assets/LazyGravityBanner.png" alt="LazyGravity Banner" width="100%" />
 </p>
 
 <p align="center">
@@ -15,6 +15,13 @@
 **LazyGravity** is a local, secure Discord Bot that lets you remotely operate [Antigravity](https://antigravity.dev) on your home PC — from your smartphone's Discord app, anywhere.
 
 Send natural language instructions like "fix that bug" or "start designing the new feature" from your phone. Antigravity executes them locally on your home PC using its full resources, and reports results back to Discord.
+
+<p align="center">
+  <video src="https://github.com/user-attachments/assets/84eca973-59e8-4ffa-93e9-fba78ba72f74" width="100%" controls autoplay muted loop>
+    Your browser does not support the video tag.
+  </video>
+</p>
+
 
 ## Quick Setup
 
@@ -203,7 +210,7 @@ Run `lazy-gravity doctor` to diagnose configuration and connectivity issues.
 ## How CDP Connection Works
 
 <p align="center">
-  <img src="docs/images/architecture.svg" alt="LazyGravity Architecture" width="100%" />
+  <img src="https://raw.githubusercontent.com/tokyoweb3/LazyGravity/main/docs/images/architecture.svg" alt="LazyGravity Architecture" width="100%" />
 </p>
 
 1. The bot scans debug ports (default: 9222) and auto-detects the Antigravity target
