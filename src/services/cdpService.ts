@@ -1,4 +1,5 @@
 import { logger } from '../utils/logger';
+import { CDP_PORTS } from '../utils/cdpPorts';
 import { EventEmitter } from 'events';
 import * as http from 'http';
 import { spawn } from 'child_process';
@@ -79,7 +80,7 @@ export class CdpService extends EventEmitter {
 
     constructor(options: CdpServiceOptions = {}) {
         super();
-        this.ports = options.portsToScan || [9222, 9223, 9333, 9444, 9555, 9666];
+        this.ports = options.portsToScan || [...CDP_PORTS];
         if (options.cdpCallTimeout) this.cdpCallTimeout = options.cdpCallTimeout;
         this.maxReconnectAttempts = options.maxReconnectAttempts ?? 3;
         this.reconnectDelayMs = options.reconnectDelayMs ?? 2000;

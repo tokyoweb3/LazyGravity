@@ -1,8 +1,6 @@
 import { logger } from '../utils/logger';
+import { CDP_PORTS } from '../utils/cdpPorts';
 import * as http from 'http';
-
-/** CdpServiceと同じポートリスト */
-const CDP_PORTS = [9222, 9223, 9333, 9444, 9555, 9666];
 
 /**
  * 指定ポートのCDPが応答するか確認する。
