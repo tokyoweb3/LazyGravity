@@ -51,7 +51,7 @@ import {
     parseApprovalCustomId,
 } from '../services/cdpBridgeManager';
 import { buildModeModelLines, splitForEmbedDescription } from '../utils/streamMessageFormatter';
-import { formatForDiscord, sanitizeActivityLines, separateOutputForDelivery } from '../utils/discordFormatter';
+import { formatForDiscord, sanitizeActivityLines, splitOutputAndLogs } from '../utils/discordFormatter';
 import {
     buildPromptWithAttachmentUrls,
     cleanupInboundImageAttachments,
@@ -90,39 +90,6 @@ const PHASE_ICONS = {
 const MAX_OUTBOUND_GENERATED_IMAGES = 4;
 const RESPONSE_DELIVERY_MODE = resolveResponseDeliveryMode();
 export const getResponseDeliveryModeForTest = (): string => RESPONSE_DELIVERY_MODE;
-const ACTIVE_GENERATION_GRACE_MS = 4000;
-const LEGACY_PARTIAL_OUTPUT_MAX_LEN = 80;
-
-export function shouldDelayFinalizationForActiveGeneration(params: {
-    finalText: string;
-    lastProgressText: string;
-    lastActivityLogText: string;
-    lastActivitySignalAt: number;
-    now: number;
-    extractionSource: 'dom-structured' | 'legacy-fallback';
-}): boolean {
-    const finalText = (params.finalText || '').trim();
-    const progressText = (params.lastProgressText || '').trim();
-    const activityText = (params.lastActivityLogText || '').trim();
-    const activeSignalRecent = (params.now - params.lastActivitySignalAt) <= ACTIVE_GENERATION_GRACE_MS;
-    const hasNoOutput = finalText.length === 0 && progressText.length === 0;
-    const hasRecentActivity = activeSignalRecent && activityText.length > 0;
-    const looksLikePartialLegacy =
-        params.extractionSource === 'legacy-fallback' &&
-        progressText.length > 0 &&
-        progressText.length <= LEGACY_PARTIAL_OUTPUT_MAX_LEN &&
-        /^(initializing|starting|loading|thinking|analy[sz]ing|processing|preparing)/i.test(progressText);
-
-    if (hasNoOutput && hasRecentActivity) {
-        return true;
-    }
-
-    if (looksLikePartialLegacy && hasRecentActivity) {
-        return true;
-    }
-
-    return false;
-}
 
 export function createSerialTaskQueueForTest(queueName: string, traceId: string): (task: () => Promise<void>, label?: string) => Promise<void> {
     let queue: Promise<void> = Promise.resolve();
@@ -132,23 +99,15 @@ export function createSerialTaskQueueForTest(queueName: string, traceId: string)
     return (task: () => Promise<void>, label: string = 'queue-task'): Promise<void> => {
         taskSeq += 1;
         const seq = taskSeq;
-        const enqueuedAt = Date.now();
         queueDepth += 1;
-        logger.debug(`[sendQueue:${traceId}:${queueName}] enqueued #${seq} label=${label} depth=${queueDepth}`);
 
         queue = queue.then(async () => {
-            const waitMs = Date.now() - enqueuedAt;
-            logger.debug(
-                `[sendQueue:${traceId}:${queueName}] start #${seq} label=${label} wait=${waitMs}ms depth=${queueDepth}`,
-            );
             try {
                 await task();
-                logger.debug(`[sendQueue:${traceId}:${queueName}] done #${seq} label=${label}`);
             } catch (err: any) {
                 logger.error(`[sendQueue:${traceId}:${queueName}] error #${seq} label=${label}:`, err?.message || err);
             } finally {
                 queueDepth = Math.max(0, queueDepth - 1);
-                logger.debug(`[sendQueue:${traceId}:${queueName}] settle #${seq} label=${label} depth=${queueDepth}`);
             }
         });
 
@@ -340,7 +299,6 @@ async function sendPromptToAntigravity(
     let isFinalized = false;
     let lastProgressText = '';
     let lastActivityLogText = '';
-    let lastActivitySignalAt = Date.now();
     const LIVE_RESPONSE_MAX_LEN = 3800;
     const LIVE_ACTIVITY_MAX_LEN = 3800;
     const liveResponseMessages: any[] = [];
@@ -351,23 +309,6 @@ async function sendPromptToAntigravity(
     let liveActivityUpdateVersion = 0;
 
     const ACTIVITY_PLACEHOLDER = t('Collecting process logs...');
-    let domStructuredLogged = false;
-    let legacyFallbackLogged = false;
-
-    const logSeparationSource = (source: 'dom-structured' | 'legacy-fallback', context: string): void => {
-        if (source === 'dom-structured') {
-            if (!domStructuredLogged) {
-                domStructuredLogged = true;
-                logger.info(`[sendPromptToAntigravity:${monitorTraceId}] source=dom-structured context=${context}`);
-            }
-            return;
-        }
-
-        if (!legacyFallbackLogged) {
-            legacyFallbackLogged = true;
-            logger.warn(`[sendPromptToAntigravity:${monitorTraceId}] source=legacy-fallback context=${context}`);
-        }
-    };
 
     const buildLiveResponseDescriptions = (text: string): string[] => {
         const normalized = (text || '').trim();
@@ -394,17 +335,8 @@ async function sendPromptToAntigravity(
             skipWhenFinalized?: boolean;
         },
     ): Promise<void> => enqueueResponse(async () => {
-        if (opts?.skipWhenFinalized && isFinalized) {
-            logger.debug(`[sendPromptToAntigravity:${monitorTraceId}] skip response render after finalized source=${opts?.source ?? 'unknown'}`);
-            return;
-        }
-        if (opts?.expectedVersion !== undefined && opts.expectedVersion !== liveResponseUpdateVersion) {
-            logger.debug(
-                `[sendPromptToAntigravity:${monitorTraceId}] skip stale response render ` +
-                `source=${opts?.source ?? 'unknown'} expected=${opts.expectedVersion} current=${liveResponseUpdateVersion}`,
-            );
-            return;
-        }
+        if (opts?.skipWhenFinalized && isFinalized) return;
+        if (opts?.expectedVersion !== undefined && opts.expectedVersion !== liveResponseUpdateVersion) return;
         if (!channel) return;
         const descriptions = buildLiveResponseDescriptions(rawText);
         const renderKey = `${title}|${color}|${footerText}|${descriptions.join('\n<<<PAGE_BREAK>>>\n')}`;
@@ -450,17 +382,8 @@ async function sendPromptToAntigravity(
             skipWhenFinalized?: boolean;
         },
     ): Promise<void> => enqueueActivity(async () => {
-        if (opts?.skipWhenFinalized && isFinalized) {
-            logger.debug(`[sendPromptToAntigravity:${monitorTraceId}] skip activity render after finalized source=${opts?.source ?? 'unknown'}`);
-            return;
-        }
-        if (opts?.expectedVersion !== undefined && opts.expectedVersion !== liveActivityUpdateVersion) {
-            logger.debug(
-                `[sendPromptToAntigravity:${monitorTraceId}] skip stale activity render ` +
-                `source=${opts?.source ?? 'unknown'} expected=${opts.expectedVersion} current=${liveActivityUpdateVersion}`,
-            );
-            return;
-        }
+        if (opts?.skipWhenFinalized && isFinalized) return;
+        if (opts?.expectedVersion !== undefined && opts.expectedVersion !== liveActivityUpdateVersion) return;
         if (!channel) return;
 
         const descriptions = buildLiveActivityDescriptions(rawText);
@@ -495,7 +418,6 @@ async function sendPromptToAntigravity(
         }
     }, `upsert-activity:${opts?.source ?? 'unknown'}`);
 
-    logger.info(`[sendPromptToAntigravity:${monitorTraceId}] response mode=${RESPONSE_DELIVERY_MODE}`);
 
     try {
 
@@ -531,7 +453,6 @@ async function sendPromptToAntigravity(
         }
 
         const startTime = Date.now();
-        logger.info(`[sendPromptToAntigravity:${monitorTraceId}] monitor start`);
         await upsertLiveActivityEmbeds(
             `${PHASE_ICONS.thinking} 生成プロセスログ`,
             '',
@@ -549,32 +470,38 @@ async function sendPromptToAntigravity(
 
         const monitor = new ResponseMonitor({
             cdpService: cdp,
-            pollIntervalMs: 1000,
-            maxDurationMs: 300000, // 5分タイムアウト
-            stopButtonGoneConfirmCount: 2, // Stop消失は2回連続確認して誤判定耐性を上げる
-            completionStabilityMs: 10000, // GitHub版に合わせて10秒安定で完了
-            noUpdateTimeoutMs: 30000, // 30秒更新停止でフォールバック完了
-            noTextCompletionDelayMs: 8000, // 本文未取得時の待機（抽出失敗時の体感遅延を抑制）
-            textStabilityCompleteMs: 15000, // テキスト安定15秒で完了（ストップボタン非依存）
-            networkCompleteDelayMs: 3000, // ネットワーク完了後3秒安定で完了
+            pollIntervalMs: 2000,
+            maxDurationMs: 300000,
+            stopGoneConfirmCount: 3,
 
-            onPhaseChange: (phase, text) => {
-                logger.info(
-                    `[sendPromptToAntigravity:${monitorTraceId}] phase=${phase} ` +
-                    `textLen=${text?.length ?? 0}`,
-                );
+            onPhaseChange: (_phase, _text) => {
+                // Phase transitions are already logged inside ResponseMonitor.setPhase()
+            },
+
+            onProcessLog: (logText) => {
+                if (isFinalized) return;
+                if (logText && logText.trim().length > 0) {
+                    lastActivityLogText = logText;
+                }
+                const elapsed = Math.round((Date.now() - startTime) / 1000);
+                liveActivityUpdateVersion += 1;
+                const activityVersion = liveActivityUpdateVersion;
+                upsertLiveActivityEmbeds(
+                    `${PHASE_ICONS.thinking} 生成プロセスログ`,
+                    logText || lastActivityLogText || ACTIVITY_PLACEHOLDER,
+                    PHASE_COLORS.thinking,
+                    t(`⏱️ Elapsed: ${elapsed}s | Process log`),
+                    {
+                        source: 'process-log',
+                        expectedVersion: activityVersion,
+                        skipWhenFinalized: true,
+                    },
+                ).catch(() => { });
             },
 
             onProgress: (text) => {
                 if (isFinalized) return;
-                const source = monitor.getLastExtractionSource();
-                const separated = separateOutputForDelivery({
-                    rawText: text,
-                    domSource: source,
-                    domOutputText: source === 'dom-structured' ? text : undefined,
-                    domActivityLines: source === 'dom-structured' ? monitor.getLastDomActivityLines() : undefined,
-                });
-                logSeparationSource(separated.source, 'progress');
+                const separated = splitOutputAndLogs(text);
                 const sanitizedLogs = sanitizeActivityLines(separated.logs || '');
                 if (separated.output && separated.output.trim().length > 0) {
                     lastProgressText = separated.output;
@@ -582,7 +509,6 @@ async function sendPromptToAntigravity(
                 if (sanitizedLogs && sanitizedLogs.trim().length > 0) {
                     lastActivityLogText = sanitizedLogs;
                 }
-                lastActivitySignalAt = Date.now();
                 const elapsed = Math.round((Date.now() - startTime) / 1000);
                 liveResponseUpdateVersion += 1;
                 const responseVersion = liveResponseUpdateVersion;
@@ -613,54 +539,8 @@ async function sendPromptToAntigravity(
                 ).catch(() => { });
             },
 
-            onActivity: (activities) => {
-                if (isFinalized) return;
-                const elapsed = Math.round((Date.now() - startTime) / 1000);
-                const activityText = sanitizeActivityLines(activities
-                    .map((line) => (line || '').trim())
-                    .filter((line) => line.length > 0)
-                    .join('\n'));
-                if (!activityText) return;
-                lastActivityLogText = activityText;
-                lastActivitySignalAt = Date.now();
-                liveActivityUpdateVersion += 1;
-                const activityVersion = liveActivityUpdateVersion;
-                upsertLiveActivityEmbeds(
-                    `${PHASE_ICONS.thinking} 生成プロセスログ`,
-                    activityText,
-                    PHASE_COLORS.thinking,
-                    t(`⏱️ Elapsed: ${elapsed}s | Process log`),
-                    {
-                        source: 'activity',
-                        expectedVersion: activityVersion,
-                        skipWhenFinalized: true,
-                    },
-                ).catch(() => { });
-            },
-
             onComplete: async (finalText) => {
-                const extractionSourceAtComplete = monitor.getLastExtractionSource();
-                if (shouldDelayFinalizationForActiveGeneration({
-                    finalText,
-                    lastProgressText,
-                    lastActivityLogText,
-                    lastActivitySignalAt,
-                    now: Date.now(),
-                    extractionSource: extractionSourceAtComplete,
-                })) {
-                    logger.warn(
-                        `[sendPromptToAntigravity:${monitorTraceId}] onComplete deferred by active-generation guard ` +
-                        `source=${extractionSourceAtComplete} finalLen=${finalText?.length ?? 0} ` +
-                        `progressLen=${lastProgressText.length} activityAge=${Date.now() - lastActivitySignalAt}ms`,
-                    );
-                    await new Promise((resolve) => setTimeout(resolve, 2000));
-                }
-
                 isFinalized = true;
-                logger.info(
-                    `[sendPromptToAntigravity:${monitorTraceId}] onComplete start ` +
-                    `phase=${monitor.getPhase()} finalTextLen=${finalText?.length ?? 0} lastProgressLen=${lastProgressText.length}`,
-                );
 
                 try {
                     const elapsed = Math.round((Date.now() - startTime) / 1000);
@@ -673,22 +553,21 @@ async function sendPromptToAntigravity(
                     const finalResponseText = responseText && responseText.trim().length > 0
                         ? responseText
                         : emergencyText;
-                    const source = monitor.getLastExtractionSource();
-                    const separated = separateOutputForDelivery({
-                        rawText: finalResponseText,
-                        domSource: source,
-                        domOutputText: source === 'dom-structured' ? finalResponseText : undefined,
-                        domActivityLines: source === 'dom-structured' ? monitor.getLastDomActivityLines() : undefined,
-                    });
-                    logSeparationSource(separated.source, 'complete');
+                    const separated = splitOutputAndLogs(finalResponseText);
                     const finalOutputText = separated.output || finalResponseText;
-                    const finalLogText = sanitizeActivityLines(
-                        [separated.logs || '', lastActivityLogText].filter(Boolean).join('\n'),
-                    );
-                    logger.info(
-                        `[sendPromptToAntigravity:${monitorTraceId}] finalize payload ` +
-                        `outputLen=${finalOutputText?.length ?? 0} logLen=${finalLogText?.length ?? 0}`,
-                    );
+                    // Process logs are now collected by onProcessLog callback directly;
+                    // sanitizeActivityLines is NOT applied because it would strip the very
+                    // content we want to display (activity messages, tool names, etc.)
+                    const finalLogText = lastActivityLogText || '';
+                    if (finalLogText && finalLogText.trim().length > 0) {
+                        logger.divider('Process Log');
+                        console.info(finalLogText);
+                    }
+                    if (finalOutputText && finalOutputText.trim().length > 0) {
+                        logger.divider(`Output (${finalOutputText.length} chars)`);
+                        console.info(finalOutputText);
+                    }
+                    logger.divider();
 
                     liveActivityUpdateVersion += 1;
                     const activityVersion = liveActivityUpdateVersion;
@@ -764,34 +643,19 @@ async function sendPromptToAntigravity(
                     await message.react(finalOutputText && finalOutputText.trim().length > 0 ? '✅' : '⚠️').catch(() => { });
                 } catch (error) {
                     logger.error(`[sendPromptToAntigravity:${monitorTraceId}] onComplete failed:`, error);
-                } finally {
-                    logger.info(`[sendPromptToAntigravity:${monitorTraceId}] onComplete end`);
                 }
             },
 
             onTimeout: async (lastText) => {
                 isFinalized = true;
-                logger.info(
-                    `[sendPromptToAntigravity:${monitorTraceId}] onTimeout start ` +
-                    `lastTextLen=${lastText?.length ?? 0} lastProgressLen=${lastProgressText.length}`,
-                );
                 try {
                     const elapsed = Math.round((Date.now() - startTime) / 1000);
 
                     const timeoutText = (lastText && lastText.trim().length > 0)
                         ? lastText
                         : lastProgressText;
-                    const source = monitor.getLastExtractionSource();
-                    const separated = separateOutputForDelivery({
-                        rawText: timeoutText || '',
-                        domSource: source,
-                        domOutputText: source === 'dom-structured' ? (timeoutText || '') : undefined,
-                        domActivityLines: source === 'dom-structured' ? monitor.getLastDomActivityLines() : undefined,
-                    });
-                    logSeparationSource(separated.source, 'timeout');
-                    const sanitizedTimeoutLogs = sanitizeActivityLines(
-                        [separated.logs || '', lastActivityLogText].filter(Boolean).join('\n'),
-                    );
+                    const separated = splitOutputAndLogs(timeoutText || '');
+                    const sanitizedTimeoutLogs = lastActivityLogText || '';
                     const payload = separated.output && separated.output.trim().length > 0
                         ? t(`${separated.output}\n\n[Monitor Ended] Timeout after 5 minutes.`)
                         : '5分経過により監視を終了しました。テキストは取得できませんでした。';
@@ -825,8 +689,6 @@ async function sendPromptToAntigravity(
                     await message.react('⚠️').catch(() => { });
                 } catch (error) {
                     logger.error(`[sendPromptToAntigravity:${monitorTraceId}] onTimeout failed:`, error);
-                } finally {
-                    logger.info(`[sendPromptToAntigravity:${monitorTraceId}] onTimeout end`);
                 }
             },
         });
