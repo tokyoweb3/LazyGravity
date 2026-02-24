@@ -1,5 +1,18 @@
 import { loadConfig, resolveResponseDeliveryMode } from '../src/utils/config';
 
+// Prevent ~/.lazy-gravity/config.json from leaking real credentials into tests.
+// Override ConfigLoader.load to pass empty persisted config.
+jest.mock('../src/utils/configLoader', () => {
+    const actual = jest.requireActual('../src/utils/configLoader');
+    return {
+        ...actual,
+        ConfigLoader: {
+            ...actual.ConfigLoader,
+            load: () => actual.ConfigLoader.load({}),
+        },
+    };
+});
+
 describe('Config', () => {
     const originalEnv = process.env;
 

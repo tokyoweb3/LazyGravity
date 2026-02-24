@@ -1,29 +1,42 @@
-# Test files
+# Source (distributed as compiled JS in dist/)
+src/
 tests/
-coverage/
-jest.config.js
+
+# Development config
 tsconfig.json
+jest.config.*
+.eslintrc*
+.prettierrc*
 
-# Development & Documentation
+# Plans and docs (README included via files field)
 plans/
-docs/assets/
-.github/
+docs/
+scripts/
 
-# Logs & Environment
-*.log
-logs/
+# IDE and tool config
+.claude/
+.gemini/
+.github/
+.vscode/
+.idea/
+
+# Environment and secrets
 .env
 .env.*
-!.env.example
+.env.example
 
-# Local Data
-antigravity.db
-*.sqlite
-*.sqlite3
+# Runtime data
+*.db
+*.db-journal
+.bot.lock
+logs/
+coverage/
 
-# Scripts
-start_antigravity_mac.command
-start_antigravity_win.bat
+# OS files
+.DS_Store
+Thumbs.db
 
 # Misc
-.DS_Store
+empty-pkg/
+*.log
+npm-debug.log*

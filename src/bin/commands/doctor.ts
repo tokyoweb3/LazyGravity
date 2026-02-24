@@ -2,6 +2,7 @@ import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
 import { CDP_PORTS } from '../../utils/cdpPorts';
+import { ConfigLoader } from '../../utils/configLoader';
 
 function checkPort(port: number): Promise<boolean> {
     return new Promise((resolve) => {
@@ -42,18 +43,39 @@ export async function doctorAction(): Promise<void> {
     console.log('lazy-gravity doctor\n');
     let allOk = true;
 
-    // 1. .env file check
+    // 1. Config directory check
+    const configDir = ConfigLoader.getConfigDir();
+    if (fs.existsSync(configDir)) {
+        console.log(`  [OK] Config directory exists: ${configDir}`);
+    } else {
+        console.log(`  [--] Config directory not found: ${configDir}`);
+        console.log('       Run: lazy-gravity setup  (optional if using .env)');
+    }
+
+    // 2. Config file check
+    const configFilePath = ConfigLoader.getConfigFilePath();
+    if (ConfigLoader.configExists()) {
+        console.log(`  [OK] Config file found: ${configFilePath}`);
+    } else {
+        console.log(`  [--] Config file not found: ${configFilePath} (optional — .env fallback used)`);
+    }
+
+    // 3. .env file check
     const env = checkEnvFile();
     if (env.exists) {
         // Load .env so subsequent checks can see the variables
         require('dotenv').config({ path: env.path });
         console.log(`  [OK] .env file found: ${env.path}`);
     } else {
-        console.log(`  [!!] .env file not found: ${env.path}`);
-        allOk = false;
+        if (!ConfigLoader.configExists()) {
+            console.log(`  [!!] .env file not found: ${env.path}`);
+            allOk = false;
+        } else {
+            console.log(`  [--] .env file not found: ${env.path} (not needed — config.json used)`);
+        }
     }
 
-    // 2. Required environment variables
+    // 4. Required environment variables (check both env and config.json sources)
     const vars = checkRequiredEnvVars();
     for (const v of vars) {
         if (v.set) {
@@ -64,7 +86,7 @@ export async function doctorAction(): Promise<void> {
         }
     }
 
-    // 3. CDP port check
+    // 5. CDP port check
     console.log('\n  Checking CDP ports...');
     let cdpOk = false;
     for (const port of CDP_PORTS) {
@@ -80,7 +102,7 @@ export async function doctorAction(): Promise<void> {
         allOk = false;
     }
 
-    // 4. Node.js version check
+    // 6. Node.js version check
     const nodeVersion = process.versions.node;
     const major = parseInt(nodeVersion.split('.')[0], 10);
     if (major >= 18) {

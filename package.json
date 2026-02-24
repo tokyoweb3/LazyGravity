@@ -26,7 +26,8 @@
     "start": "ts-node src/index.ts",
     "start:built": "node dist/bin/cli.js",
     "dev": "ts-node-dev --respawn src/index.ts",
-    "docs:diagram": "mmdc -i docs/diagrams/architecture.mmd -o docs/images/architecture.svg -b transparent"
+    "docs:diagram": "mmdc -i docs/diagrams/architecture.mmd -o docs/images/architecture.svg -b transparent",
+    "prepublishOnly": "npm run build && npm run test"
   },
   "keywords": [
     "discord",
