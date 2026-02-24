@@ -6,6 +6,7 @@ import { version } from '../../package.json';
 import { startAction } from './commands/start';
 import { doctorAction } from './commands/doctor';
 import { setupAction } from './commands/setup';
+import { openAction } from './commands/open';
 import { ConfigLoader } from '../utils/configLoader';
 
 let commandRan = false;
@@ -32,6 +33,11 @@ program
     .command('setup')
     .description('Interactive setup wizard')
     .action(markRan(setupAction));
+
+program
+    .command('open')
+    .description('Open Antigravity with CDP enabled (auto-selects available port)')
+    .action(markRan(openAction));
 
 program.parse();
 

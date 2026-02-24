@@ -59,9 +59,9 @@ function readPersistedConfig(filePath: string): PersistedConfig {
  * Returns a fresh AppConfig object (immutable pattern).
  */
 function mergeConfig(persisted: PersistedConfig): AppConfig {
-    const token = process.env.DISCORD_TOKEN ?? persisted.discordToken;
+    const token = process.env.DISCORD_BOT_TOKEN ?? persisted.discordToken;
     if (!token) {
-        throw new Error('Missing required environment variable: DISCORD_TOKEN');
+        throw new Error('Missing required environment variable: DISCORD_BOT_TOKEN');
     }
 
     const clientId = process.env.CLIENT_ID ?? persisted.clientId;

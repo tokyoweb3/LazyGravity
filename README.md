@@ -109,7 +109,7 @@ Antigravity本体を再起動した場合は、Botが自動でCDPの再接続を
    cp .env.example .env
    ```
    `.env` を編集し、以下を設定してください。
-   - `DISCORD_TOKEN`
+   - `DISCORD_BOT_TOKEN`
    - `CLIENT_ID`
    - `ALLOWED_USER_IDS`
    - `WORKSPACE_BASE_DIR`（任意）
@@ -151,7 +151,7 @@ Antigravity本体を再起動した場合は、Botが自動でCDPの再接続を
    `.env` の設定例:
    ```env
    # .env
-   DISCORD_TOKEN=your_token_here
+   DISCORD_BOT_TOKEN=your_token_here
    CLIENT_ID=your_application_id_here
    ALLOWED_USER_IDS=123456789,987654321
    WORKSPACE_BASE_DIR=~/Code  # ワークスペースのベースディレクトリ（デフォルト: ~/Code）

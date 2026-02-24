@@ -32,7 +32,7 @@ function checkEnvFile(): { exists: boolean; path: string } {
 }
 
 function checkRequiredEnvVars(): { name: string; set: boolean }[] {
-    const required = ['DISCORD_TOKEN', 'CLIENT_ID', 'ALLOWED_USER_IDS'];
+    const required = ['DISCORD_BOT_TOKEN', 'CLIENT_ID', 'ALLOWED_USER_IDS'];
     return required.map((name) => ({
         name,
         set: Boolean(process.env[name]),
