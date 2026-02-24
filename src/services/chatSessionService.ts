@@ -40,6 +40,55 @@ const GET_CHAT_TITLE_SCRIPT = `(() => {
 })()`;
 
 /**
+ * Build a script that activates an existing chat in the side panel by its title.
+ * Uses broad selector fallbacks because Antigravity's DOM structure can vary across versions.
+ */
+function buildActivateChatByTitleScript(title: string): string {
+    const safeTitle = JSON.stringify(title);
+    return `(() => {
+        const wantedRaw = ${safeTitle};
+        const wanted = (wantedRaw || '').toLowerCase().replace(/\\s+/g, ' ').trim();
+        if (!wanted) return { ok: false, error: 'Empty target title' };
+
+        const panel = document.querySelector('.antigravity-agent-side-panel') || document;
+        const normalize = (text) => (text || '').toLowerCase().replace(/\\s+/g, ' ').trim();
+        const isVisible = (el) => !!el && el instanceof HTMLElement && el.offsetParent !== null;
+        const clickTarget = (el) => {
+            const clickable = el.closest('button, [role="button"], a, li, [data-testid*="conversation"]') || el;
+            if (!(clickable instanceof HTMLElement)) return false;
+            clickable.click();
+            return true;
+        };
+
+        const nodes = Array.from(panel.querySelectorAll('button, [role="button"], a, li, div, span'))
+            .filter(isVisible);
+
+        const exact = [];
+        const includes = [];
+        for (const node of nodes) {
+            const text = normalize(node.textContent || '');
+            if (!text) continue;
+            if (text === wanted) {
+                exact.push({ node, textLength: text.length });
+            } else if (text.includes(wanted)) {
+                includes.push({ node, textLength: text.length });
+            }
+        }
+
+        const pick = (list) => {
+            if (list.length === 0) return null;
+            list.sort((a, b) => a.textLength - b.textLength);
+            return list[0].node;
+        };
+
+        const target = pick(exact) || pick(includes);
+        if (!target) return { ok: false, error: 'Chat title not found in side panel' };
+        if (!clickTarget(target)) return { ok: false, error: 'Matched element is not clickable' };
+        return { ok: true };
+    })()`;
+}
+
+/**
  * Service for managing chat sessions on Antigravity via CDP.
  *
  * CDP dependencies are received as method arguments (connection pool compatible).
@@ -149,6 +198,61 @@ export class ChatSessionService {
         } catch (error) {
             return { title: '(Failed to retrieve)', hasActiveChat: false };
         }
+    }
+
+    /**
+     * Activate an existing chat by title.
+     * Returns ok:false if the target chat cannot be located or verified.
+     */
+    async activateSessionByTitle(
+        cdpService: CdpService,
+        title: string,
+    ): Promise<{ ok: boolean; error?: string }> {
+        if (!title || title.trim().length === 0) {
+            return { ok: false, error: 'Session title is empty' };
+        }
+
+        const current = await this.getCurrentSessionInfo(cdpService);
+        if (current.title.trim() === title.trim()) {
+            return { ok: true };
+        }
+
+        const contexts = cdpService.getContexts();
+        const script = buildActivateChatByTitleScript(title);
+        let clicked = false;
+
+        for (const ctx of contexts) {
+            try {
+                const result = await cdpService.call('Runtime.evaluate', {
+                    expression: script,
+                    returnByValue: true,
+                    contextId: ctx.id,
+                });
+                const value = result?.result?.value;
+                if (value?.ok) {
+                    clicked = true;
+                    break;
+                }
+            } catch {
+                // Try next context
+            }
+        }
+
+        if (!clicked) {
+            return { ok: false, error: `Failed to activate session "${title}"` };
+        }
+
+        // Wait briefly for DOM state transition and verify destination chat.
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        const after = await this.getCurrentSessionInfo(cdpService);
+        if (after.title.trim() === title.trim()) {
+            return { ok: true };
+        }
+
+        return {
+            ok: false,
+            error: `Activated chat did not match target title (expected="${title}", actual="${after.title}")`,
+        };
     }
 
     /**

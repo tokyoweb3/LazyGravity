@@ -15,16 +15,16 @@ describe('Message Parser', () => {
     });
 
     it('removes double quotes from command arguments with multiple parameters', () => {
-        const result = parseMessageContent('/schedule add "毎朝9時" "おはよう"');
+        const result = parseMessageContent('/template add "朝会" "おはよう"');
         expect(result.isCommand).toBe(true);
-        expect(result.commandName).toBe('schedule');
-        expect(result.args).toEqual(['add', '毎朝9時', 'おはよう']);
+        expect(result.commandName).toBe('template');
+        expect(result.args).toEqual(['add', '朝会', 'おはよう']);
     });
 
     it('correctly parses arguments without double quotes', () => {
-        const result = parseMessageContent('/templates PR作成');
+        const result = parseMessageContent('/template PR作成');
         expect(result.isCommand).toBe(true);
-        expect(result.commandName).toBe('templates');
+        expect(result.commandName).toBe('template');
         expect(result.args).toEqual(['PR作成']);
     });
 

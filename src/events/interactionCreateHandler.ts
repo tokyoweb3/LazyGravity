@@ -12,6 +12,11 @@ import {
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 import { TEMPLATE_BTN_PREFIX, parseTemplateButtonId } from '../ui/templateUi';
+import {
+    AUTOACCEPT_BTN_OFF,
+    AUTOACCEPT_BTN_ON,
+    AUTOACCEPT_BTN_REFRESH,
+} from '../ui/autoAcceptUi';
 import { ChatCommandHandler } from '../commands/chatCommandHandler';
 import {
     CleanupCommandHandler,
@@ -42,9 +47,13 @@ export interface InteractionCreateHandlerDeps {
         target: { editReply: (opts: any) => Promise<any> },
         deps: { getCurrentCdp: () => CdpService | null; fetchQuota: () => Promise<any[]> },
     ) => Promise<void>;
+    sendAutoAcceptUI: (
+        target: { editReply: (opts: any) => Promise<any> },
+        autoAcceptService: AutoAcceptService,
+    ) => Promise<void>;
     handleScreenshot?: (...args: any[]) => Promise<void>;
     getCurrentCdp: (bridge: CdpBridge) => CdpService | null;
-    parseApprovalCustomId: (customId: string) => { action: 'approve' | 'always_allow' | 'deny'; workspaceDirName: string | null } | null;
+    parseApprovalCustomId: (customId: string) => { action: 'approve' | 'always_allow' | 'deny'; workspaceDirName: string | null; channelId: string | null } | null;
     handleSlashInteraction: (
         interaction: ChatInputCommandInteraction,
         handler: SlashCommandHandler,
@@ -71,6 +80,14 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
             try {
                 const approvalAction = deps.parseApprovalCustomId(interaction.customId);
                 if (approvalAction) {
+                    if (approvalAction.channelId && approvalAction.channelId !== interaction.channelId) {
+                        await interaction.reply({
+                            content: t('This approval action is linked to a different session channel.'),
+                            flags: MessageFlags.Ephemeral,
+                        }).catch(logger.error);
+                        return;
+                    }
+
                     const workspaceDirName = approvalAction.workspaceDirName ?? deps.bridge.lastActiveWorkspace;
                     const detector = workspaceDirName
                         ? deps.bridge.pool.getApprovalDetector(workspaceDirName)
@@ -203,6 +220,33 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                         );
                         await interaction.followUp({ content: `Model changed to **${res.model}**!`, flags: MessageFlags.Ephemeral });
                     }
+                    return;
+                }
+
+                if (interaction.customId === AUTOACCEPT_BTN_REFRESH) {
+                    await interaction.deferUpdate();
+                    await deps.sendAutoAcceptUI(
+                        { editReply: async (data: any) => await interaction.editReply(data) },
+                        deps.bridge.autoAccept,
+                    );
+                    return;
+                }
+
+                if (interaction.customId === AUTOACCEPT_BTN_ON || interaction.customId === AUTOACCEPT_BTN_OFF) {
+                    await interaction.deferUpdate();
+
+                    const action = interaction.customId === AUTOACCEPT_BTN_ON ? 'on' : 'off';
+                    const result = deps.bridge.autoAccept.handle(action);
+
+                    await deps.sendAutoAcceptUI(
+                        { editReply: async (data: any) => await interaction.editReply(data) },
+                        deps.bridge.autoAccept,
+                    );
+
+                    await interaction.followUp({
+                        content: result.message,
+                        flags: MessageFlags.Ephemeral,
+                    });
                     return;
                 }
 

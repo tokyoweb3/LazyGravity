@@ -33,6 +33,8 @@ export class CdpConnectionPool {
         // Return existing connection if available
         const existing = this.connections.get(dirName);
         if (existing && existing.isConnected()) {
+            // Re-validate that the still-open window is actually bound to this workspace.
+            await existing.discoverAndConnectForWorkspace(workspacePath);
             return existing;
         }
 

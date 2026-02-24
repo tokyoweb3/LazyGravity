@@ -60,8 +60,8 @@ describe('CdpConnectionPool', () => {
             const cdp2 = await pool.getOrConnect('/path/to/ProjectA');
 
             expect(cdp1).toBe(cdp2);
-            // discoverAndConnectForWorkspace should be called only once
-            expect(mockCdp.discoverAndConnectForWorkspace).toHaveBeenCalledTimes(1);
+            // Existing connection is also revalidated against the requested workspace.
+            expect(mockCdp.discoverAndConnectForWorkspace).toHaveBeenCalledTimes(2);
         });
 
         it('creates separate instances for different workspaces', async () => {

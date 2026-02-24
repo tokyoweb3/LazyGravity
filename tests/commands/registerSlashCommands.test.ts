@@ -88,8 +88,13 @@ describe('registerSlashCommands', () => {
         await registerSlashCommands('token', 'client-id', 'guild-id');
 
         expect(Routes.applicationGuildCommands).toHaveBeenCalledWith('client-id', 'guild-id');
-        expect(mockPut).toHaveBeenCalledWith('/guild-commands', {
+        expect(Routes.applicationCommands).toHaveBeenCalledWith('client-id');
+        expect(mockPut).toHaveBeenCalledTimes(2);
+        expect(mockPut).toHaveBeenNthCalledWith(1, '/guild-commands', {
             body: expect.any(Array),
+        });
+        expect(mockPut).toHaveBeenNthCalledWith(2, '/global-commands', {
+            body: [],
         });
 
         const body = mockPut.mock.calls[0][1].body as unknown[];

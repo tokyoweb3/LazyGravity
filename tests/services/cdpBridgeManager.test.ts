@@ -3,6 +3,8 @@ import {
     getCurrentCdp,
     initCdpBridge,
     parseApprovalCustomId,
+    registerApprovalSessionChannel,
+    resolveApprovalChannelForCurrentChat,
 } from '../../src/services/cdpBridgeManager';
 
 describe('cdpBridgeManager', () => {
@@ -19,8 +21,22 @@ describe('cdpBridgeManager', () => {
     });
 
     it('round-trips build/parse of approval action ID', () => {
-        const customId = buildApprovalCustomId('approve', 'my-workspace');
+        const customId = buildApprovalCustomId('approve', 'my-workspace', '123456');
         const parsed = parseApprovalCustomId(customId);
-        expect(parsed).toEqual({ action: 'approve', workspaceDirName: 'my-workspace' });
+        expect(parsed).toEqual({ action: 'approve', workspaceDirName: 'my-workspace', channelId: '123456' });
+    });
+
+    it('supports legacy approval action IDs without channelId', () => {
+        const parsed = parseApprovalCustomId('approve_action:legacy-workspace');
+        expect(parsed).toEqual({ action: 'approve', workspaceDirName: 'legacy-workspace', channelId: null });
+    });
+
+    it('routes approval notifications only when session title is explicitly linked', () => {
+        const bridge = initCdpBridge(false);
+        const channel = { id: 'ch-1', send: jest.fn() } as any;
+        registerApprovalSessionChannel(bridge, 'ws-a', 'Session Alpha', channel);
+
+        expect(resolveApprovalChannelForCurrentChat(bridge, 'ws-a', 'Session Alpha')).toBe(channel);
+        expect(resolveApprovalChannelForCurrentChat(bridge, 'ws-a', 'Unknown Session')).toBeNull();
     });
 });

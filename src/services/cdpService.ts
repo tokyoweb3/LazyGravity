@@ -75,6 +75,8 @@ export class CdpService extends EventEmitter {
     private isReconnecting: boolean = false;
     /** Currently connected workspace name */
     private currentWorkspaceName: string | null = null;
+    /** Last requested workspace path (used for deterministic reconnect) */
+    private currentWorkspacePath: string | null = null;
     /** Workspace switching flag (suppresses disconnected event) */
     private isSwitchingWorkspace: boolean = false;
 
@@ -245,6 +247,8 @@ export class CdpService extends EventEmitter {
         }
         this.isConnectedFlag = false;
         this.contexts = [];
+        this.currentWorkspacePath = null;
+        this.currentWorkspaceName = null;
         this.clearPendingCalls(new Error('disconnect() was called'));
     }
 
@@ -264,10 +268,17 @@ export class CdpService extends EventEmitter {
      */
     async discoverAndConnectForWorkspace(workspacePath: string): Promise<boolean> {
         const workspaceDirName = workspacePath.split('/').filter(Boolean).pop() || '';
+        this.currentWorkspacePath = workspacePath;
 
-        // Do nothing if already connected to the correct workspace
+        // Re-validate existing connection before skipping reconnect.
         if (this.isConnectedFlag && this.currentWorkspaceName === workspaceDirName) {
-            return true;
+            const stillMatched = await this.verifyCurrentWorkspace(workspaceDirName, workspacePath);
+            if (stillMatched) {
+                return true;
+            }
+            logger.warn(
+                `[CdpService] Workspace mismatch detected while reusing connection (expected="${workspaceDirName}"). Reconnecting...`,
+            );
         }
 
         this.isSwitchingWorkspace = true;
@@ -276,6 +287,31 @@ export class CdpService extends EventEmitter {
         } finally {
             this.isSwitchingWorkspace = false;
         }
+    }
+
+    /**
+     * Verify whether the currently attached page still represents the expected workspace.
+     */
+    private async verifyCurrentWorkspace(workspaceDirName: string, workspacePath: string): Promise<boolean> {
+        if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isConnectedFlag) {
+            return false;
+        }
+
+        try {
+            const titleResult = await this.call('Runtime.evaluate', {
+                expression: 'document.title',
+                returnByValue: true,
+            });
+            const liveTitle = String(titleResult?.result?.value || '');
+            if (liveTitle.includes(workspaceDirName)) {
+                this.currentWorkspaceName = workspaceDirName;
+                return true;
+            }
+        } catch {
+            // Fall through to folder-path probe.
+        }
+
+        return this.probeWorkspaceFolderPath(workspaceDirName, workspacePath);
     }
 
     private async _discoverAndConnectForWorkspaceImpl(
@@ -657,8 +693,12 @@ export class CdpService extends EventEmitter {
 
             try {
                 this.contexts = [];
-                await this.discoverTarget();
-                await this.connect();
+                if (this.currentWorkspacePath) {
+                    await this.discoverAndConnectForWorkspace(this.currentWorkspacePath);
+                } else {
+                    await this.discoverTarget();
+                    await this.connect();
+                }
                 logger.error('[CdpService] Reconnect succeeded.');
                 this.reconnectAttemptCount = 0;
                 this.isReconnecting = false;

@@ -15,16 +15,16 @@ describe('ModelService', () => {
 
     describe('setModel - switch model', () => {
         it('switches the model when a valid model name is specified', () => {
-            const result = modelService.setModel('claude-3.5-sonnet');
+            const result = modelService.setModel('claude-sonnet-4.6-thinking');
             expect(result.success).toBe(true);
-            expect(result.model).toBe('claude-3.5-sonnet');
-            expect(modelService.getCurrentModel()).toBe('claude-3.5-sonnet');
+            expect(result.model).toBe('claude-sonnet-4.6-thinking');
+            expect(modelService.getCurrentModel()).toBe('claude-sonnet-4.6-thinking');
         });
 
         it('retains the last set model after multiple switches', () => {
-            modelService.setModel('claude-3.5-sonnet');
-            modelService.setModel('gemini-2.5-pro');
-            expect(modelService.getCurrentModel()).toBe('gemini-2.5-pro');
+            modelService.setModel('claude-sonnet-4.6-thinking');
+            modelService.setModel('gemini-3.1-pro-high');
+            expect(modelService.getCurrentModel()).toBe('gemini-3.1-pro-high');
         });
 
         it('returns an error and does not change the model for an invalid model name', () => {
@@ -35,9 +35,9 @@ describe('ModelService', () => {
         });
 
         it('sets the model case-insensitively', () => {
-            const result = modelService.setModel('GPT-4O');
+            const result = modelService.setModel('GEMINI-3-FLASH');
             expect(result.success).toBe(true);
-            expect(result.model).toBe('gpt-4o');
+            expect(result.model).toBe('gemini-3-flash');
         });
 
         it('returns an error when an empty string is specified', () => {
@@ -46,16 +46,16 @@ describe('ModelService', () => {
             expect(result.error).toBeDefined();
         });
 
-        it('can set the o3-mini model', () => {
-            const result = modelService.setModel('o3-mini');
+        it('can set the claude-opus-4.6-thinking model', () => {
+            const result = modelService.setModel('claude-opus-4.6-thinking');
             expect(result.success).toBe(true);
-            expect(result.model).toBe('o3-mini');
+            expect(result.model).toBe('claude-opus-4.6-thinking');
         });
 
-        it('can set the gemini-2.5-flash model', () => {
-            const result = modelService.setModel('gemini-2.5-flash');
+        it('can set the gpt-oss-120b-medium model', () => {
+            const result = modelService.setModel('gpt-oss-120b-medium');
             expect(result.success).toBe(true);
-            expect(result.model).toBe('gemini-2.5-flash');
+            expect(result.model).toBe('gpt-oss-120b-medium');
         });
     });
 
@@ -66,17 +66,17 @@ describe('ModelService', () => {
             expect(models.length).toBeGreaterThan(0);
         });
 
-        it('includes claude-3.5-sonnet, gpt-4o, and gemini-2.5-pro in the list', () => {
+        it('includes claude-sonnet-4.6-thinking, gpt-oss-120b-medium, and gemini-3.1-pro-high in the list', () => {
             const models = modelService.getAvailableModels();
-            expect(models).toContain('claude-3.5-sonnet');
-            expect(models).toContain('gpt-4o');
-            expect(models).toContain('gemini-2.5-pro');
+            expect(models).toContain('claude-sonnet-4.6-thinking');
+            expect(models).toContain('gpt-oss-120b-medium');
+            expect(models).toContain('gemini-3.1-pro-high');
         });
 
-        it('includes o3-mini and gemini-2.5-flash in the list', () => {
+        it('includes claude-opus-4.6-thinking and gemini-3-flash in the list', () => {
             const models = modelService.getAvailableModels();
-            expect(models).toContain('o3-mini');
-            expect(models).toContain('gemini-2.5-flash');
+            expect(models).toContain('claude-opus-4.6-thinking');
+            expect(models).toContain('gemini-3-flash');
         });
     });
 });

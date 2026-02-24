@@ -99,6 +99,35 @@ describe('CdpService - error handling and timeout processing (Step 12)', () => {
     // ========== Auto-reconnection ==========
 
     describe('auto-reconnection feature', () => {
+        it('reconnects to the same workspace when workspace path is known', async () => {
+            cdpService = new CdpService({
+                cdpCallTimeout: 1000,
+                maxReconnectAttempts: 1,
+                reconnectDelayMs: 10,
+            });
+
+            (cdpService as any).currentWorkspacePath = '/tmp/my-workspace';
+
+            const connectWorkspaceSpy = jest
+                .spyOn(cdpService, 'discoverAndConnectForWorkspace')
+                .mockResolvedValue(true);
+            const discoverTargetSpy = jest
+                .spyOn(cdpService, 'discoverTarget')
+                .mockResolvedValue('ws://dummy-target');
+            const connectSpy = jest
+                .spyOn(cdpService, 'connect')
+                .mockResolvedValue(undefined);
+
+            await new Promise<void>((resolve) => {
+                cdpService.on('reconnected', () => resolve());
+                (cdpService as any).tryReconnect();
+            });
+
+            expect(connectWorkspaceSpy).toHaveBeenCalledWith('/tmp/my-workspace');
+            expect(discoverTargetSpy).not.toHaveBeenCalled();
+            expect(connectSpy).not.toHaveBeenCalled();
+        });
+
         it('does not reconnect when maxReconnectAttempts is 0', (done) => {
             cdpService = new CdpService({
                 cdpCallTimeout: 1000,

@@ -49,6 +49,8 @@ import {
     getCurrentCdp,
     initCdpBridge,
     parseApprovalCustomId,
+    registerApprovalSessionChannel,
+    registerApprovalWorkspaceChannel,
 } from '../services/cdpBridgeManager';
 import { buildModeModelLines, fitForSingleEmbedDescription, splitForEmbedDescription } from '../utils/streamMessageFormatter';
 import { formatForDiscord, splitOutputAndLogs } from '../utils/discordFormatter';
@@ -64,6 +66,7 @@ import {
 import { sendModeUI } from '../ui/modeUi';
 import { sendModelsUI } from '../ui/modelsUi';
 import { sendTemplateUI } from '../ui/templateUi';
+import { sendAutoAcceptUI } from '../ui/autoAcceptUi';
 import { handleScreenshot } from '../ui/screenshotUi';
 import { createInteractionCreateHandler } from '../events/interactionCreateHandler';
 import { createMessageCreateHandler } from '../events/messageCreateHandler';
@@ -588,8 +591,15 @@ async function sendPromptToAntigravity(
                         try {
                             const sessionInfo = await options.chatSessionService.getCurrentSessionInfo(cdp);
                             if (sessionInfo && sessionInfo.hasActiveChat && sessionInfo.title && sessionInfo.title !== t('(Untitled)')) {
-                                const newName = options.titleGenerator.sanitizeForChannelName(sessionInfo.title);
                                 const session = options.chatSessionRepo.findByChannelId(message.channelId);
+                                const workspaceDirName = session
+                                    ? bridge.pool.extractDirName(session.workspacePath)
+                                    : cdp.getCurrentWorkspaceName();
+                                if (workspaceDirName) {
+                                    registerApprovalSessionChannel(bridge, workspaceDirName, sessionInfo.title, message.channel);
+                                }
+
+                                const newName = options.titleGenerator.sanitizeForChannelName(sessionInfo.title);
                                 if (session && session.displayName !== sessionInfo.title) {
                                     const formattedName = `${session.sessionNumber}-${newName}`;
                                     await options.channelManager.renameChannel(message.guild, message.channelId, formattedName);
@@ -721,7 +731,7 @@ export const startBot = async () => {
     const chatHandler = new ChatCommandHandler(chatSessionService, chatSessionRepo, workspaceBindingRepo, channelManager, workspaceService, bridge.pool);
     const cleanupHandler = new CleanupCommandHandler(chatSessionRepo, workspaceBindingRepo);
 
-    const slashCommandHandler = new SlashCommandHandler(modeService, modelService, templateRepo);
+    const slashCommandHandler = new SlashCommandHandler(templateRepo);
 
     const client = new Client({
         intents: [
@@ -754,6 +764,7 @@ export const startBot = async () => {
         client,
         sendModeUI,
         sendModelsUI,
+        sendAutoAcceptUI,
         getCurrentCdp,
         parseApprovalCustomId,
         handleSlashInteraction: async (
@@ -802,6 +813,11 @@ export const startBot = async () => {
                     const dirName = bridge.pool.extractDirName(workspacePath);
                     bridge.lastActiveWorkspace = dirName;
                     bridge.lastActiveChannel = interaction.channel;
+                    registerApprovalWorkspaceChannel(bridge, dirName, interaction.channel as any);
+                    const session = chatSessionRepo.findByChannelId(channelId);
+                    if (session?.displayName) {
+                        registerApprovalSessionChannel(bridge, dirName, session.displayName, interaction.channel as any);
+                    }
                     ensureApprovalDetector(bridge, cdp, dirName, client);
                 } catch (e: any) {
                     await interaction.followUp({
@@ -965,7 +981,7 @@ async function handleSlashInteraction(
                     {
                         name: '🔧 System', value: [
                             '`/status` — Display overall bot status',
-                            '`/autoaccept [on|off|status]` — Toggle auto-approve mode for approval dialogs',
+                            '`/autoaccept` — Toggle auto-approve mode for approval dialogs via buttons',
                             '`/cleanup [days]` — Clean up unused channels/categories',
                             '`/help` — Show this help',
                         ].join('\n')
@@ -1071,7 +1087,12 @@ async function handleSlashInteraction(
         }
 
         case 'autoaccept': {
-            const requestedMode = interaction.options.getString('mode') ?? 'status';
+            const requestedMode = interaction.options.getString('mode');
+            if (!requestedMode) {
+                await sendAutoAcceptUI(interaction, autoAcceptService);
+                break;
+            }
+
             const result = autoAcceptService.handle(requestedMode);
             await interaction.editReply({ content: result.message });
             break;

@@ -5,8 +5,6 @@ import {
     Routes,
 } from 'discord.js';
 import { t } from "../utils/i18n";
-import { AVAILABLE_MODELS } from '../services/modelService';
-import { AVAILABLE_MODES } from '../services/modeService';
 
 /**
  * Slash command definitions for the Discord Interactions API.
@@ -85,11 +83,11 @@ const statusCommand = new SlashCommandBuilder()
 /** /autoaccept command definition */
 const autoAcceptCommand = new SlashCommandBuilder()
     .setName('autoaccept')
-    .setDescription(t('Toggle auto-allow mode for approval dialogs'))
+    .setDescription(t('Display and toggle auto-allow mode for approval dialogs'))
     .addStringOption((option) =>
         option
             .setName('mode')
-            .setDescription(t('on / off / status (default: status)'))
+            .setDescription(t('on / off (optional direct switch)'))
             .setRequired(false)
     );
 
@@ -181,6 +179,14 @@ export async function registerSlashCommands(
                 { body: commandData }
             );
             logger.info(`Registered ${commandData.length} slash commands to guild ${guildId}.`);
+
+            // Clear global commands to avoid duplicate suggestions such as old legacy commands.
+            // This bot is expected to run primarily in guild scope when guildId is provided.
+            await rest.put(
+                Routes.applicationCommands(clientId),
+                { body: [] }
+            );
+            logger.info('Cleared global slash commands to prevent duplicate command listings.');
         } else {
             // Global registration (may take up to 1 hour to take effect)
             await rest.put(

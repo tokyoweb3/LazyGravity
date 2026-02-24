@@ -4,7 +4,13 @@ import { parseMessageContent } from '../commands/messageParser';
 import { SlashCommandHandler } from '../commands/slashCommandHandler';
 import { WorkspaceCommandHandler } from '../commands/workspaceCommandHandler';
 import { ChatSessionRepository } from '../database/chatSessionRepository';
-import { CdpBridge, ensureApprovalDetector as ensureApprovalDetectorFn, getCurrentCdp as getCurrentCdpFn } from '../services/cdpBridgeManager';
+import {
+    CdpBridge,
+    ensureApprovalDetector as ensureApprovalDetectorFn,
+    getCurrentCdp as getCurrentCdpFn,
+    registerApprovalSessionChannel as registerApprovalSessionChannelFn,
+    registerApprovalWorkspaceChannel as registerApprovalWorkspaceChannelFn,
+} from '../services/cdpBridgeManager';
 import { ChatSessionService } from '../services/chatSessionService';
 import { CdpService } from '../services/cdpService';
 import { ChannelManager } from '../services/channelManager';
@@ -51,6 +57,8 @@ export interface MessageCreateHandlerDeps {
     handleScreenshot: (target: Message, cdp: CdpService | null) => Promise<void>;
     getCurrentCdp?: (bridge: CdpBridge) => CdpService | null;
     ensureApprovalDetector?: (bridge: CdpBridge, cdp: CdpService, workspaceDirName: string, client: any) => void;
+    registerApprovalWorkspaceChannel?: (bridge: CdpBridge, workspaceDirName: string, channel: Message['channel']) => void;
+    registerApprovalSessionChannel?: (bridge: CdpBridge, workspaceDirName: string, sessionTitle: string, channel: Message['channel']) => void;
     downloadInboundImageAttachments?: (message: Message) => Promise<InboundImageAttachment[]>;
     cleanupInboundImageAttachments?: (attachments: InboundImageAttachment[]) => Promise<void>;
     isImageAttachment?: (contentType: string | null | undefined, fileName: string | null | undefined) => boolean;
@@ -59,6 +67,8 @@ export interface MessageCreateHandlerDeps {
 export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
     const getCurrentCdp = deps.getCurrentCdp ?? getCurrentCdpFn;
     const ensureApprovalDetector = deps.ensureApprovalDetector ?? ensureApprovalDetectorFn;
+    const registerApprovalWorkspaceChannel = deps.registerApprovalWorkspaceChannel ?? registerApprovalWorkspaceChannelFn;
+    const registerApprovalSessionChannel = deps.registerApprovalSessionChannel ?? registerApprovalSessionChannelFn;
     const downloadInboundImageAttachments = deps.downloadInboundImageAttachments ?? downloadInboundImageAttachmentsFn;
     const cleanupInboundImageAttachments = deps.cleanupInboundImageAttachments ?? cleanupInboundImageAttachmentsFn;
     const isImageAttachment = deps.isImageAttachment ?? isImageAttachmentFn;
@@ -167,11 +177,25 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
 
                         deps.bridge.lastActiveWorkspace = dirName;
                         deps.bridge.lastActiveChannel = message.channel;
+                        registerApprovalWorkspaceChannel(deps.bridge, dirName, message.channel);
 
                         ensureApprovalDetector(deps.bridge, cdp, dirName, deps.client);
 
                         const session = deps.chatSessionRepo.findByChannelId(message.channelId);
-                        if (session && !session.isRenamed) {
+                        if (session?.displayName) {
+                            registerApprovalSessionChannel(deps.bridge, dirName, session.displayName, message.channel);
+                        }
+
+                        if (session?.isRenamed && session.displayName) {
+                            const activationResult = await deps.chatSessionService.activateSessionByTitle(cdp, session.displayName);
+                            if (!activationResult.ok) {
+                                await message.reply(
+                                    `⚠️ Could not route this message to the bound session (${session.displayName}). ` +
+                                    'Please open `/chat` and verify the session.',
+                                ).catch(() => { });
+                                return;
+                            }
+                        } else if (session && !session.isRenamed) {
                             try {
                                 const chatResult = await deps.chatSessionService.startNewChat(cdp);
                                 if (!chatResult.ok) {
@@ -197,34 +221,7 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                         return;
                     }
                 } else {
-                    const cdp = getCurrentCdp(deps.bridge);
-                    if (cdp) {
-                        deps.bridge.lastActiveChannel = message.channel;
-
-                        const session = deps.chatSessionRepo.findByChannelId(message.channelId);
-                        if (session && !session.isRenamed) {
-                            try {
-                                const chatResult = await deps.chatSessionService.startNewChat(cdp);
-                                if (!chatResult.ok) {
-                                    logger.warn('[MessageCreate|Fallback] Failed to start new chat in Antigravity:', chatResult.error);
-                                    (message.channel as any).send(`⚠️ Could not open a new chat in Antigravity. Sending to existing chat.`).catch(() => { });
-                                }
-                            } catch (err) {
-                                logger.error('[MessageCreate|Fallback] startNewChat error:', err);
-                                (message.channel as any).send(`⚠️ Could not open a new chat in Antigravity. Sending to existing chat.`).catch(() => { });
-                            }
-                        }
-
-                        await deps.autoRenameChannel(message, deps.chatSessionRepo, deps.titleGenerator, deps.channelManager, cdp);
-                        await deps.sendPromptToAntigravity(deps.bridge, message, promptText, cdp, deps.modeService, deps.modelService, inboundImages, {
-                            chatSessionService: deps.chatSessionService,
-                            chatSessionRepo: deps.chatSessionRepo,
-                            channelManager: deps.channelManager,
-                            titleGenerator: deps.titleGenerator,
-                        });
-                    } else {
-                        await message.reply('No project is configured. Please create a project with `/project`.');
-                    }
+                    await message.reply('No project is configured for this channel. Please create or select one with `/project`.');
                 }
             } finally {
                 await cleanupInboundImageAttachments(inboundImages);

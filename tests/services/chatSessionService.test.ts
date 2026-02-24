@@ -148,4 +148,34 @@ describe('ChatSessionService', () => {
             expect(info.hasActiveChat).toBe(false);
         });
     });
+
+    describe('activateSessionByTitle()', () => {
+        it('returns ok when already on the target session title', async () => {
+            mockCdpService.call.mockResolvedValue({
+                result: { value: { title: 'target-session', hasActiveChat: true } }
+            });
+
+            const result = await service.activateSessionByTitle(mockCdpService, 'target-session');
+            expect(result).toEqual({ ok: true });
+        });
+
+        it('returns ok:false when switching succeeded but verification title mismatches', async () => {
+            let evaluateCallCount = 0;
+            mockCdpService.call.mockImplementation(async (method: string, params: any) => {
+                if (method !== 'Runtime.evaluate') return {};
+                evaluateCallCount++;
+                if (evaluateCallCount === 1) {
+                    return { result: { value: { title: 'old-session', hasActiveChat: true } } };
+                }
+                if (params?.expression?.includes('Chat title not found in side panel')) {
+                    return { result: { value: { ok: true } } };
+                }
+                return { result: { value: { title: 'different-session', hasActiveChat: true } } };
+            });
+
+            const result = await service.activateSessionByTitle(mockCdpService, 'target-session');
+            expect(result.ok).toBe(false);
+            expect(result.error).toContain('did not match target title');
+        });
+    });
 });

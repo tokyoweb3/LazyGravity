@@ -1,6 +1,4 @@
 import { t } from "../utils/i18n";
-import { ModeService } from '../services/modeService';
-import { ModelService } from '../services/modelService';
 import { TemplateRepository } from '../database/templateRepository';
 
 /**
@@ -11,22 +9,14 @@ export interface CommandResult {
     success: boolean;
     /** Message content to display to the user */
     message: string;
-    /** Prompt retrieved from `/templates` (for subsequent task execution, if present) */
+    /** Prompt retrieved from `/template` (for subsequent task execution, if present) */
     prompt?: string;
 }
 
 export class SlashCommandHandler {
-    private modeService: ModeService;
-    private modelService: ModelService;
     private templateRepo: TemplateRepository;
 
-    constructor(
-        modeService: ModeService,
-        modelService: ModelService,
-        templateRepo: TemplateRepository
-    ) {
-        this.modeService = modeService;
-        this.modelService = modelService;
+    constructor(templateRepo: TemplateRepository) {
         this.templateRepo = templateRepo;
     }
 
@@ -35,14 +25,8 @@ export class SlashCommandHandler {
      */
     public async handleCommand(commandName: string, args: string[]): Promise<CommandResult> {
         switch (commandName.toLowerCase()) {
-            case 'mode':
-                return this.handleModeCommand(args);
-            case 'model':
-            case 'models': // backward compatibility
-                return this.handleModelsCommand(args);
             case 'template':
-            case 'templates': // backward compatibility
-                return this.handleTemplatesCommand(args);
+                return this.handleTemplateCommand(args);
             default:
                 return {
                     success: false,
@@ -51,38 +35,7 @@ export class SlashCommandHandler {
         }
     }
 
-    private handleModeCommand(args: string[]): CommandResult {
-        if (args.length === 0) {
-            const current = this.modeService.getCurrentMode();
-            const available = this.modeService.getAvailableModes().join(', ');
-            return {
-                success: true,
-                message: t(`⚙️ Current mode: **${current}**\nAvailable modes: ${available}\nTo change: \`/mode [mode_name]\``),
-            };
-        }
-
-        const newMode = args[0];
-        const result = this.modeService.setMode(newMode);
-
-        if (result.success) {
-            return {
-                success: true,
-                message: t(`✅ Mode changed to **${result.mode}**.`),
-            };
-        } else {
-            return {
-                success: false,
-                message: result.error || t('⚠️ Invalid mode.'),
-            };
-        }
-    }
-
-    private handleModelsCommand(args: string[]): CommandResult {
-        // Now handled by index.ts directly to use CDP
-        return { success: false, message: 'This should not be reached.' };
-    }
-
-    private handleTemplatesCommand(args: string[]): CommandResult {
+    private handleTemplateCommand(args: string[]): CommandResult {
         if (args.length === 0) {
             const templates = this.templateRepo.findAll();
             if (templates.length === 0) {
@@ -95,7 +48,7 @@ export class SlashCommandHandler {
             const list = templates.map((t) => `- **${t.name}**`).join('\n');
             return {
                 success: true,
-                message: t(`📝 Registered Templates:\n${list}\n\nTo use: \`/templates [name]\``),
+                message: t(`📝 Registered Templates:\n${list}\n\nTo use: \`/template [name]\``),
             };
         }
 
@@ -106,7 +59,7 @@ export class SlashCommandHandler {
             if (args.length < 3) {
                 return {
                     success: false,
-                    message: t('⚠️ Missing arguments.\nUsage: `/templates add "name" "prompt"`'),
+                    message: t('⚠️ Missing arguments.\nUsage: `/template add "name" "prompt"`'),
                 };
             }
             const name = args[1];
@@ -132,7 +85,7 @@ export class SlashCommandHandler {
             if (args.length < 2) {
                 return {
                     success: false,
-                    message: t('⚠️ Specify a template name to delete.\nUsage: `/templates delete "name"`'),
+                    message: t('⚠️ Specify a template name to delete.\nUsage: `/template delete "name"`'),
                 };
             }
             const name = args[1];

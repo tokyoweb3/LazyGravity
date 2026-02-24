@@ -1,9 +1,4 @@
-import {
-    SlashCommandHandler,
-    CommandResult,
-} from '../../src/commands/slashCommandHandler';
-import { ModeService } from '../../src/services/modeService';
-import { ModelService } from '../../src/services/modelService';
+import { SlashCommandHandler } from '../../src/commands/slashCommandHandler';
 
 /**
  * Mock type definition for TemplateRepository
@@ -18,14 +13,10 @@ const mockTemplateRepo = {
 
 describe('SlashCommandHandler', () => {
     let handler: SlashCommandHandler;
-    let modeService: ModeService;
-    let modelService: ModelService;
 
     beforeEach(() => {
-        modeService = new ModeService();
-        modelService = new ModelService();
         jest.clearAllMocks();
-        handler = new SlashCommandHandler(modeService, modelService, mockTemplateRepo as any);
+        handler = new SlashCommandHandler(mockTemplateRepo as any);
     });
 
     describe('handleCommand - command routing', () => {
@@ -33,41 +24,6 @@ describe('SlashCommandHandler', () => {
             const result = await handler.handleCommand('unknown', []);
             expect(result.success).toBe(false);
             expect(result.message).toContain('Unknown command');
-        });
-    });
-
-    describe('/mode command', () => {
-        it('displays the current mode when called without arguments', async () => {
-            const result = await handler.handleCommand('mode', []);
-            expect(result.success).toBe(true);
-            expect(result.message).toContain('fast');
-        });
-
-        it('successfully switches mode with a valid mode name', async () => {
-            const result = await handler.handleCommand('mode', ['plan']);
-            expect(result.success).toBe(true);
-            expect(result.message).toContain('plan');
-        });
-
-        it('returns an error for an invalid mode name', async () => {
-            const result = await handler.handleCommand('mode', ['invalid']);
-            expect(result.success).toBe(false);
-            expect(result.message).toContain('Invalid mode');
-        });
-    });
-
-    // NOTE: The /model command is handled directly via CDP in index.ts,
-    // so in the SlashCommandHandler tests we only verify routing
-    describe('/model command (routing verification)', () => {
-        it('routes the model command', async () => {
-            const result = await handler.handleCommand('model', []);
-            // handleModelsCommand returns a stub since it depends on CDP
-            expect(result).toBeDefined();
-        });
-
-        it('backward compatibility: also routes via "models"', async () => {
-            const result = await handler.handleCommand('models', []);
-            expect(result).toBeDefined();
         });
     });
 
@@ -141,10 +97,10 @@ describe('SlashCommandHandler', () => {
             expect(result.success).toBe(false);
         });
 
-        it('backward compatibility: also works via "templates"', async () => {
-            mockTemplateRepo.findAll.mockReturnValue([]);
+        it('rejects old plural alias "templates"', async () => {
             const result = await handler.handleCommand('templates', []);
-            expect(result.success).toBe(true);
+            expect(result.success).toBe(false);
+            expect(result.message).toContain('Unknown command');
         });
     });
 });
