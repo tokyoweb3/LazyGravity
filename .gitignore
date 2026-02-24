@@ -42,6 +42,7 @@ inspect_dom.ts
 scripts/
 
 # Logs
+logs/
 *.log
 npm-debug.log*
 
