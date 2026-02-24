@@ -182,6 +182,44 @@ function buildActivateViaPastConversationsScript(title: string): string {
             }
             return false;
         };
+        const clickIconHistoryButton = () => {
+            const iconTargets = asArray(document.querySelectorAll('svg, i, span, div'));
+            const patterns = ['history', 'clock', 'conversation', 'past'];
+            for (const icon of iconTargets) {
+                const descriptor = normalize([
+                    icon.getAttribute?.('class') || '',
+                    icon.getAttribute?.('data-testid') || '',
+                    icon.getAttribute?.('data-icon') || '',
+                    icon.getAttribute?.('aria-label') || '',
+                    icon.getAttribute?.('title') || '',
+                    icon.getAttribute?.('data-tooltip-id') || '',
+                ].join(' '));
+                if (!descriptor) continue;
+                if (!patterns.some((p) => descriptor.includes(p))) continue;
+                const clickable = getClickable(icon);
+                if (clickable && isVisible(clickable)) {
+                    clickable.click();
+                    return true;
+                }
+            }
+            return false;
+        };
+        const openMenuThenClickPast = async () => {
+            const openedMenu = clickByPatterns(
+                ['more', 'options', 'menu', 'actions', '...', 'ellipsis', '設定', '操作'],
+                'button[aria-haspopup], [role="button"][aria-haspopup], button, [role="button"]',
+            );
+            if (!openedMenu) return false;
+            await wait(180);
+            return clickByPatterns([
+                'past conversations',
+                'past conversation',
+                'conversation history',
+                'past chats',
+                '過去の会話',
+                'chat history',
+            ], '[role="menuitem"], [role="option"], button, [role="button"], li, div, span');
+        };
         const pressEnter = (el) => {
             if (!(el instanceof HTMLElement)) return;
             el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
@@ -207,7 +245,7 @@ function buildActivateViaPastConversationsScript(title: string): string {
         };
 
         return (async () => {
-            const opened = clickByPatterns([
+            let opened = clickByPatterns([
                 'past conversations',
                 'past conversation',
                 'conversation history',
@@ -215,6 +253,12 @@ function buildActivateViaPastConversationsScript(title: string): string {
                 '過去の会話',
                 'chat history',
             ]);
+            if (!opened) {
+                opened = clickIconHistoryButton();
+            }
+            if (!opened) {
+                opened = await openMenuThenClickPast();
+            }
             if (!opened) {
                 return { ok: false, error: 'Past Conversations button not found' };
             }
@@ -377,15 +421,22 @@ export class ChatSessionService {
         let usedPastConversations = false;
         const directResult = await this.tryActivateByDirectSidePanel(cdpService, title);
         let clicked = directResult.ok;
+        let pastResult: { ok: boolean; error?: string } | null = null;
 
         if (!clicked) {
-            const pastResult = await this.tryActivateByPastConversations(cdpService, title);
+            pastResult = await this.tryActivateByPastConversations(cdpService, title);
             clicked = pastResult.ok;
             usedPastConversations = pastResult.ok;
         }
 
         if (!clicked) {
-            return { ok: false, error: `Failed to activate session "${title}" (${directResult.error || 'direct search failed'})` };
+            return {
+                ok: false,
+                error:
+                    `Failed to activate session "${title}" ` +
+                    `(direct: ${directResult.error || 'direct search failed'}; ` +
+                    `past: ${pastResult?.error || 'past conversations search failed'})`,
+            };
         }
 
         // Wait briefly for DOM state transition and verify destination chat.
@@ -409,6 +460,12 @@ export class ChatSessionService {
                     error: `Past Conversations selected a different chat (expected="${title}", actual="${afterPast.title}")`,
                 };
             }
+            return {
+                ok: false,
+                error:
+                    `Activated chat did not match target title (expected="${title}", actual="${after.title}") ` +
+                    `and Past Conversations fallback failed (${viaPast.error || 'unknown'})`,
+            };
         }
 
         return {

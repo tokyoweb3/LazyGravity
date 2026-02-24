@@ -205,5 +205,27 @@ describe('ChatSessionService', () => {
             const result = await service.activateSessionByTitle(mockCdpService, 'target-session');
             expect(result).toEqual({ ok: true });
         });
+
+        it('returns direct and past errors when both activation paths fail', async () => {
+            mockCdpService.call.mockImplementation(async (_method: string, params: any) => {
+                const expression = String(params?.expression || '');
+
+                if (expression.includes('const panel = document.querySelector(\'.antigravity-agent-side-panel\')')) {
+                    return { result: { value: { title: 'current-session', hasActiveChat: true } } };
+                }
+                if (expression.includes('Chat title not found in side panel')) {
+                    return { result: { value: { ok: false, error: 'direct miss' } } };
+                }
+                if (expression.includes('Past Conversations button not found')) {
+                    return { result: { value: { ok: false, error: 'past miss' } } };
+                }
+                return { result: { value: null } };
+            });
+
+            const result = await service.activateSessionByTitle(mockCdpService, 'target-session');
+            expect(result.ok).toBe(false);
+            expect(result.error).toContain('direct:');
+            expect(result.error).toContain('past: past miss');
+        });
     });
 });
