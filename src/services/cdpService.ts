@@ -689,6 +689,29 @@ export class CdpService extends EventEmitter {
         return [...this.contexts];
     }
 
+    /**
+     * cascade-panel コンテキストが利用可能になるまでポーリングで待機する。
+     * Antigravity起動直後は Runtime.enable 後もコンテキストが非同期で作成されるため、
+     * DOM操作を行う前にこのメソッドで準備完了を確認する。
+     *
+     * @param timeoutMs 最大待機時間（ミリ秒）。デフォルト: 10000
+     * @param pollIntervalMs ポーリング間隔（ミリ秒）。デフォルト: 500
+     * @returns cascade-panel コンテキストが見つかった場合 true
+     */
+    async waitForCascadePanelReady(timeoutMs = 10000, pollIntervalMs = 500): Promise<boolean> {
+        const start = Date.now();
+        while (Date.now() - start < timeoutMs) {
+            const cascadeCtx = this.contexts.find(
+                c => c.url && c.url.includes(SELECTORS.CONTEXT_URL_KEYWORD),
+            );
+            if (cascadeCtx) {
+                return true;
+            }
+            await new Promise(r => setTimeout(r, pollIntervalMs));
+        }
+        return false;
+    }
+
     getPrimaryContextId(): number | null {
         // Find cascade-panel context
         const context = this.contexts.find(c => c.url && c.url.includes('cascade-panel'));

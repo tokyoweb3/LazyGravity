@@ -13,6 +13,7 @@ describe('ChatSessionService', () => {
         mockCdpService.getContexts = jest.fn().mockReturnValue([
             { id: 42, name: 'Electron Isolated Context', url: '' },
         ]);
+        mockCdpService.waitForCascadePanelReady = jest.fn().mockResolvedValue(false);
         service = new ChatSessionService();
     });
 
@@ -67,10 +68,11 @@ describe('ChatSessionService', () => {
 
             expect(result.ok).toBe(false);
             expect(result.error).toContain('見つかりませんでした');
-        });
+        }, 15000);
 
         it('コンテキストが空の場合 ok: false を返すこと', async () => {
             mockCdpService.getContexts = jest.fn().mockReturnValue([]);
+            mockCdpService.waitForCascadePanelReady = jest.fn().mockResolvedValue(false);
 
             const result = await service.startNewChat(mockCdpService);
 
@@ -85,7 +87,7 @@ describe('ChatSessionService', () => {
 
             expect(result.ok).toBe(false);
             expect(result.error).toBeDefined();
-        });
+        }, 15000);
 
         it('クリック後にボタン状態が変化しない場合 ok: false を返すこと', async () => {
             // ボタンはずっと enabled のまま

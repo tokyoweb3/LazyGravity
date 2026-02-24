@@ -59,13 +59,28 @@ export class ChatSessionService {
      */
     async startNewChat(cdpService: CdpService): Promise<{ ok: boolean; error?: string }> {
         try {
-            const contexts = cdpService.getContexts();
+            // Antigravity起動直後はコンテキストが空の場合がある。
+            // cascade-panel が準備完了するまで最大10秒待機する。
+            let contexts = cdpService.getContexts();
             if (contexts.length === 0) {
-                return { ok: false, error: 'コンテキストがありません' };
+                const ready = await cdpService.waitForCascadePanelReady(10000, 500);
+                if (!ready) {
+                    return { ok: false, error: 'コンテキストがありません（タイムアウト）' };
+                }
+                contexts = cdpService.getContexts();
             }
 
-            // 任意のコンテキストでボタン状態を取得
-            const btnState = await this.getNewChatButtonState(cdpService, contexts);
+            // ボタン状態を取得（DOMロード待ちリトライ: 最大5回、1秒間隔）
+            let btnState = await this.getNewChatButtonState(cdpService, contexts);
+
+            if (!btnState.found) {
+                const maxRetries = 5;
+                for (let i = 0; i < maxRetries && !btnState.found; i++) {
+                    await new Promise(r => setTimeout(r, 1000));
+                    contexts = cdpService.getContexts();
+                    btnState = await this.getNewChatButtonState(cdpService, contexts);
+                }
+            }
 
             if (!btnState.found) {
                 return { ok: false, error: '新規チャットボタンが見つかりませんでした' };
