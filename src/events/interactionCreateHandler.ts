@@ -1,14 +1,17 @@
 import {
     ActionRowBuilder,
     ButtonBuilder,
+    ButtonInteraction,
     ChatInputCommandInteraction,
     EmbedBuilder,
     Interaction,
+    Message,
     MessageFlags,
 } from 'discord.js';
 
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
+import { TEMPLATE_BTN_PREFIX, parseTemplateButtonId } from '../ui/templateUi';
 import { ChatCommandHandler } from '../commands/chatCommandHandler';
 import {
     CleanupCommandHandler,
@@ -54,6 +57,7 @@ export interface InteractionCreateHandlerDeps {
         autoAcceptService: AutoAcceptService,
         client: any,
     ) => Promise<void>;
+    handleTemplateUse?: (interaction: ButtonInteraction, templateId: number) => Promise<void>;
 }
 
 export function createInteractionCreateHandler(deps: InteractionCreateHandlerDeps) {
@@ -198,6 +202,15 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                             },
                         );
                         await interaction.followUp({ content: `モデルを **${res.model}** に変更しました！`, flags: MessageFlags.Ephemeral });
+                    }
+                    return;
+                }
+
+                if (interaction.customId.startsWith(TEMPLATE_BTN_PREFIX)) {
+                    await interaction.deferUpdate();
+                    const templateId = parseTemplateButtonId(interaction.customId);
+                    if (!isNaN(templateId) && deps.handleTemplateUse) {
+                        await deps.handleTemplateUse(interaction, templateId);
                     }
                     return;
                 }

@@ -82,6 +82,15 @@ export class TemplateRepository {
     }
 
     /**
+     * IDで検索する
+     */
+    public findById(id: number): TemplateRecord | undefined {
+        const row = this.db.prepare('SELECT * FROM templates WHERE id = ?').get(id) as any;
+        if (!row) return undefined;
+        return this.mapRow(row);
+    }
+
+    /**
      * テンプレート名で検索する
      */
     public findByName(name: string): TemplateRecord | undefined {

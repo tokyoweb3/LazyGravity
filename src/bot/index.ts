@@ -62,6 +62,7 @@ import {
 } from '../utils/imageHandler';
 import { sendModeUI } from '../ui/modeUi';
 import { sendModelsUI } from '../ui/modelsUi';
+import { sendTemplateUI } from '../ui/templateUi';
 import { handleScreenshot } from '../ui/screenshotUi';
 import { createInteractionCreateHandler } from '../events/interactionCreateHandler';
 import { createMessageCreateHandler } from '../events/messageCreateHandler';
@@ -803,7 +804,68 @@ export const startBot = async () => {
             autoAcceptServiceArg,
             clientArg,
             promptDispatcher,
+            templateRepo,
         ),
+        handleTemplateUse: async (interaction, templateId) => {
+            const template = templateRepo.findById(templateId);
+            if (!template) {
+                await interaction.followUp({
+                    content: 'テンプレートが見つかりません。削除された可能性があります。',
+                    flags: MessageFlags.Ephemeral,
+                });
+                return;
+            }
+
+            // Resolve CDP via workspace binding (same flow as text messages)
+            const channelId = interaction.channelId;
+            const workspacePath = wsHandler.getWorkspaceForChannel(channelId);
+
+            let cdp: CdpService | null = null;
+            if (workspacePath) {
+                try {
+                    cdp = await bridge.pool.getOrConnect(workspacePath);
+                    const dirName = bridge.pool.extractDirName(workspacePath);
+                    bridge.lastActiveWorkspace = dirName;
+                    bridge.lastActiveChannel = interaction.channel;
+                    ensureApprovalDetector(bridge, cdp, dirName, client);
+                } catch (e: any) {
+                    await interaction.followUp({
+                        content: `ワークスペース接続に失敗しました: ${e.message}`,
+                        flags: MessageFlags.Ephemeral,
+                    });
+                    return;
+                }
+            } else {
+                cdp = getCurrentCdp(bridge);
+            }
+
+            if (!cdp) {
+                await interaction.followUp({
+                    content: 'CDPに未接続です。先にプロジェクトに接続してください。',
+                    flags: MessageFlags.Ephemeral,
+                });
+                return;
+            }
+
+            const followUp = await interaction.followUp({
+                content: `テンプレート **${template.name}** を実行中...`,
+            });
+
+            if (followUp instanceof Message) {
+                await promptDispatcher.send({
+                    message: followUp,
+                    prompt: template.prompt,
+                    cdp,
+                    inboundImages: [],
+                    options: {
+                        chatSessionService,
+                        chatSessionRepo,
+                        channelManager,
+                        titleGenerator,
+                    },
+                });
+            }
+        },
     }));
 
     // 【テキストメッセージ処理】
@@ -883,6 +945,7 @@ async function handleSlashInteraction(
     autoAcceptService: AutoAcceptService,
     _client: Client,
     promptDispatcher: PromptDispatcher,
+    templateRepo: TemplateRepository,
 ): Promise<void> {
     const commandName = interaction.commandName;
 
@@ -919,8 +982,7 @@ async function handleSlashInteraction(
                     },
                     {
                         name: '📝 テンプレート', value: [
-                            '`/template list` — テンプレート一覧を表示',
-                            '`/template use <name>` — テンプレートを実行',
+                            '`/template list` — テンプレート一覧をボタン表示（クリックで即実行）',
                             '`/template add <name> <prompt>` — テンプレートを登録',
                             '`/template delete <name>` — テンプレートを削除',
                         ].join('\n')
@@ -970,17 +1032,15 @@ async function handleSlashInteraction(
 
         case 'template': {
             const subcommand = interaction.options.getSubcommand();
-            let args: string[];
 
+            if (subcommand === 'list') {
+                const templates = templateRepo.findAll();
+                await sendTemplateUI(interaction, templates);
+                break;
+            }
+
+            let args: string[];
             switch (subcommand) {
-                case 'list':
-                    args = [];
-                    break;
-                case 'use': {
-                    const name = interaction.options.getString('name', true);
-                    args = [name];
-                    break;
-                }
                 case 'add': {
                     const name = interaction.options.getString('name', true);
                     const prompt = interaction.options.getString('prompt', true);
@@ -998,29 +1058,6 @@ async function handleSlashInteraction(
 
             const result = await handler.handleCommand('template', args);
             await interaction.editReply({ content: result.message });
-
-            if (result.prompt && interaction.channel) {
-                const followUp = await interaction.followUp({
-                    content: 'テンプレートのプロンプトをAntigravityに送信中...',
-                });
-                if (followUp instanceof Message) {
-                    const cdp = getCurrentCdp(bridge);
-                    if (cdp) {
-                        await promptDispatcher.send({
-                            message: followUp,
-                            prompt: result.prompt,
-                            cdp,
-                            inboundImages: [],
-                            options: {
-                                chatSessionService: (chatHandler as any).chatSessionService,
-                                chatSessionRepo: (chatHandler as any).chatSessionRepo,
-                                channelManager: (chatHandler as any).channelManager,
-                                titleGenerator: new TitleGeneratorService(),
-                            },
-                        });
-                    }
-                }
-            }
             break;
         }
 

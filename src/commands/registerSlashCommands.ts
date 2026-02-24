@@ -32,22 +32,11 @@ const modelCommand = new SlashCommandBuilder()
 /** /template コマンド定義（旧 /templates → 単数形に統一） */
 const templateCommand = new SlashCommandBuilder()
     .setName('template')
-    .setDescription(t('List, invoke, register, or delete templates'))
+    .setDescription(t('List, register, or delete templates'))
     .addSubcommand((sub) =>
         sub
             .setName('list')
-            .setDescription(t('Display registered template list'))
-    )
-    .addSubcommand((sub) =>
-        sub
-            .setName('use')
-            .setDescription(t('Invoke and execute a template'))
-            .addStringOption((option) =>
-                option
-                    .setName('name')
-                    .setDescription(t('Template name'))
-                    .setRequired(true)
-            )
+            .setDescription(t('Display registered template list with execute buttons'))
     )
     .addSubcommand((sub) =>
         sub
