@@ -19,7 +19,7 @@
   },
   "scripts": {
     "test": "npm run test:unit",
-    "test:unit": "jest --testPathIgnorePatterns=tests/e2e.bot.test.ts",
+    "test:unit": "jest",
     "test:integration": "jest tests/e2e.bot.test.ts",
     "test:watch": "jest --watch",
     "build": "tsc",
