@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as dotenv from 'dotenv';
-import type { AppConfig } from './config';
+import type { AppConfig, ExtractionMode } from './config';
 
 // Load .env at module init time (same as the original config.ts behavior).
 // dotenv will NOT override already-set env vars by default.
@@ -23,6 +23,7 @@ export interface PersistedConfig {
     allowedUserIds?: string[];
     workspaceBaseDir?: string;
     autoApproveFileEdits?: boolean;
+    extractionMode?: 'legacy' | 'structured';
 }
 
 // ---------------------------------------------------------------------------
@@ -86,6 +87,11 @@ function mergeConfig(persisted: PersistedConfig): AppConfig {
         false,
     );
 
+    const extractionMode = resolveExtractionMode(
+        process.env.EXTRACTION_MODE,
+        persisted.extractionMode,
+    );
+
     return {
         discordToken: token,
         clientId,
@@ -93,6 +99,7 @@ function mergeConfig(persisted: PersistedConfig): AppConfig {
         allowedUserIds,
         workspaceBaseDir,
         autoApproveFileEdits,
+        extractionMode,
     };
 }
 
@@ -108,6 +115,15 @@ function resolveAllowedUserIds(persisted: PersistedConfig): string[] {
         return [...persisted.allowedUserIds];
     }
     return [];
+}
+
+function resolveExtractionMode(
+    envValue: string | undefined,
+    persistedValue: 'legacy' | 'structured' | undefined,
+): ExtractionMode {
+    const raw = envValue ?? persistedValue;
+    if (raw === 'structured') return 'structured';
+    return 'legacy';
 }
 
 function resolveBoolean(

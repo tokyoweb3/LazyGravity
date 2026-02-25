@@ -1,5 +1,10 @@
 import { logger } from '../utils/logger';
+import type { ExtractionMode } from '../utils/config';
 import { CdpService } from './cdpService';
+import {
+    extractAssistantSegmentsPayloadScript,
+    classifyAssistantSegments,
+} from './assistantDomExtractor';
 
 /** Lean DOM selectors for response extraction */
 export const RESPONSE_SELECTORS = {
@@ -372,6 +377,8 @@ export const RESPONSE_SELECTORS = {
         }
         return false;
     })()`,
+    /** Structured DOM extraction — walks DOM to produce typed segment array */
+    RESPONSE_STRUCTURED: extractAssistantSegmentsPayloadScript(),
 };
 
 /** Response generation phases */
@@ -386,6 +393,8 @@ export interface ResponseMonitorOptions {
     maxDurationMs?: number;
     /** Consecutive stop-gone confirmations needed (default: 3) */
     stopGoneConfirmCount?: number;
+    /** Extraction mode: 'legacy' uses innerText, 'structured' uses DOM segment extraction */
+    extractionMode?: ExtractionMode;
     /** Text update callback */
     onProgress?: (text: string) => void;
     /** Generation complete callback */
@@ -411,6 +420,7 @@ export class ResponseMonitor {
     private readonly pollIntervalMs: number;
     private readonly maxDurationMs: number;
     private readonly stopGoneConfirmCount: number;
+    private readonly extractionMode: ExtractionMode;
     private readonly onProgress?: (text: string) => void;
     private readonly onComplete?: (finalText: string) => void;
     private readonly onTimeout?: (lastText: string) => void;
@@ -433,6 +443,8 @@ export class ResponseMonitor {
         this.pollIntervalMs = options.pollIntervalMs ?? 2000;
         this.maxDurationMs = options.maxDurationMs ?? 300000;
         this.stopGoneConfirmCount = options.stopGoneConfirmCount ?? 3;
+        this.extractionMode = options.extractionMode
+            ?? (process.env.EXTRACTION_MODE === 'structured' ? 'structured' : 'legacy');
         this.onProgress = options.onProgress;
         this.onComplete = options.onComplete;
         this.onTimeout = options.onTimeout;
@@ -611,11 +623,31 @@ export class ResponseMonitor {
     }
 
     /**
-     * Single poll: exactly 4 CDP calls.
-     * 1. Stop button check
-     * 2. Quota error check
-     * 3. Text extraction
-     * 4. Process log extraction
+     * Emit new process log entries, deduplicating against previously seen keys.
+     */
+    private emitNewProcessLogs(entries: string[]): void {
+        const newEntries: string[] = [];
+        for (const line of entries) {
+            const normalized = (line || '').replace(/\r/g, '').trim();
+            if (!normalized) continue;
+            const key = normalized.slice(0, 200);
+            if (this.seenProcessLogKeys.has(key)) continue;
+            this.seenProcessLogKeys.add(key);
+            newEntries.push(normalized.slice(0, 300));
+        }
+        if (newEntries.length > 0) {
+            try {
+                this.onProcessLog?.(newEntries.join('\n\n'));
+            } catch {
+                // callback error
+            }
+        }
+    }
+
+    /**
+     * Single poll cycle.
+     * - Legacy mode: 4 CDP calls (stop, quota, text, process logs).
+     * - Structured mode: 3-4 CDP calls (stop, quota, structured; legacy text on fallback).
      */
     private async poll(): Promise<void> {
         try {
@@ -634,46 +666,61 @@ export class ResponseMonitor {
             );
             const quotaDetected = quotaResult?.result?.value === true;
 
-            // 3. Text extraction
-            const textResult = await this.cdpService.call(
-                'Runtime.evaluate',
-                this.buildEvaluateParams(RESPONSE_SELECTORS.RESPONSE_TEXT),
-            );
-            const rawText = textResult?.result?.value;
-            const exceptionDetail = textResult?.result?.exceptionDetails ?? textResult?.exceptionDetails;
-            if (exceptionDetail) {
-                logger.warn('[ResponseMonitor:poll] RESPONSE_TEXT threw:', exceptionDetail.text ?? JSON.stringify(exceptionDetail).slice(0, 200));
-            }
-            const currentText = typeof rawText === 'string' ? rawText.trim() || null : null;
+            // 3. Text extraction (structured or legacy)
+            let currentText: string | null = null;
 
-            // 4. Process log extraction
-            try {
-                const logResult = await this.cdpService.call(
-                    'Runtime.evaluate',
-                    this.buildEvaluateParams(RESPONSE_SELECTORS.PROCESS_LOGS),
-                );
-                const logEntries = logResult?.result?.value;
-                if (Array.isArray(logEntries)) {
-                    const newEntries: string[] = [];
-                    for (const raw of logEntries) {
-                        const normalized = (raw || '').replace(/\r/g, '').trim();
-                        if (!normalized) continue;
-                        const key = normalized.slice(0, 200);
-                        if (this.seenProcessLogKeys.has(key)) continue;
-                        this.seenProcessLogKeys.add(key);
-                        newEntries.push(normalized.slice(0, 300));
-                    }
+            if (this.extractionMode === 'structured') {
+                // Structured: use DOM segment extraction with HTML-to-Markdown
+                try {
+                    const structuredResult = await this.cdpService.call(
+                        'Runtime.evaluate',
+                        this.buildEvaluateParams(RESPONSE_SELECTORS.RESPONSE_STRUCTURED),
+                    );
+                    const payload = structuredResult?.result?.value;
+                    const classified = classifyAssistantSegments(payload);
 
-                    if (newEntries.length > 0) {
-                        try {
-                            this.onProcessLog?.(newEntries.join('\n\n'));
-                        } catch {
-                            // callback error
+                    if (classified.diagnostics.source === 'dom-structured') {
+                        currentText = classified.finalOutputText.trim() || null;
+
+                        // Emit structured activity lines as process logs
+                        if (classified.activityLines.length > 0) {
+                            this.emitNewProcessLogs(classified.activityLines);
                         }
                     }
+                    // If structured extraction returned legacy-fallback, fall through to legacy
+                } catch (error) {
+                    logger.warn('[ResponseMonitor:poll] RESPONSE_STRUCTURED failed, falling back to legacy:', error);
                 }
-            } catch {
-                // process log extraction is best-effort
+            }
+
+            // Legacy path (or fallback from structured)
+            if (currentText === null) {
+                const textResult = await this.cdpService.call(
+                    'Runtime.evaluate',
+                    this.buildEvaluateParams(RESPONSE_SELECTORS.RESPONSE_TEXT),
+                );
+                const rawText = textResult?.result?.value;
+                const exceptionDetail = textResult?.result?.exceptionDetails ?? textResult?.exceptionDetails;
+                if (exceptionDetail) {
+                    logger.warn('[ResponseMonitor:poll] RESPONSE_TEXT threw:', exceptionDetail.text ?? JSON.stringify(exceptionDetail).slice(0, 200));
+                }
+                currentText = typeof rawText === 'string' ? rawText.trim() || null : null;
+            }
+
+            // 4. Process log extraction (legacy path — only if structured didn't already handle it)
+            if (this.extractionMode !== 'structured') {
+                try {
+                    const logResult = await this.cdpService.call(
+                        'Runtime.evaluate',
+                        this.buildEvaluateParams(RESPONSE_SELECTORS.PROCESS_LOGS),
+                    );
+                    const logEntries = logResult?.result?.value;
+                    if (Array.isArray(logEntries)) {
+                        this.emitNewProcessLogs(logEntries);
+                    }
+                } catch {
+                    // process log extraction is best-effort
+                }
             }
 
             // Handle stop button appearing
