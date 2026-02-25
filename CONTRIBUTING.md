@@ -1,42 +1,46 @@
 # Contributing to LazyGravity
 
-Thank you for your interest in contributing to LazyGravity! This guide will help you get started.
+First off, thank you for considering contributing to LazyGravity! It's people like you that make LazyGravity such a great tool.
 
 ## Development Setup
 
 ### Prerequisites
+- **Node.js**: Version 18.x or higher
+- **npm**: Version 8.x or higher
+- **Antigravity**: Installed and running on your local machine
 
-- **Node.js** >= 18
-- **npm** (comes with Node.js)
-- A Discord bot token ([Discord Developer Portal](https://discord.com/developers/applications))
-
-### Getting Started
-
+### Cloning the Repository
 ```bash
 git clone https://github.com/tokyoweb3/LazyGravity.git
 cd LazyGravity
+```
+
+### Installation
+```bash
 npm install
 ```
 
-Set up your environment:
+### Configuration
+1. Copy the example environment file:
+   ```bash
+   cp .env.example .env
+   ```
+2. Edit `.env` and fill in your Discord bot token, guild ID, and authorized user IDs.
 
-```bash
-cp .env.example .env
-# Edit .env with your Discord bot token and settings
-```
-
-Run the bot in development mode:
-
-```bash
-npm run dev
-```
-
-Or build and run:
-
-```bash
-npm run build
-npm run start:built
-```
+### Running the Bot
+- **Development mode** (with auto-reload):
+  ```bash
+  npm run dev
+  ```
+- **From source**:
+  ```bash
+  npm run start
+  ```
+- **Build and run**:
+  ```bash
+  npm run build
+  npm run start:built
+  ```
 
 ### Project Structure
 
@@ -54,90 +58,100 @@ tests/
 docs/
 ```
 
-## Code Style
+---
+
+## Code Style Guidelines
 
 ### TypeScript
+- We use **TypeScript** for all source code. Ensure your code passes type checking:
+  ```bash
+  npm run build # This triggers tsc
+  ```
+- Use descriptive names for variables, functions, and classes.
+- Prefer `interface` over `type` for object definitions where possible.
 
-- **Immutability**: Always create new objects instead of mutating. Use spread operators and `map`/`filter`/`reduce`.
-- **Small files**: Aim for 200-400 lines per file, 800 max. Extract utilities when files grow large.
-- **Small functions**: Keep functions under 50 lines.
-- **Error handling**: Always handle errors with try/catch and provide clear error messages.
-- **No hardcoded secrets**: Use environment variables for API keys, tokens, and sensitive data.
+### Immutability Patterns
+- Prefer `const` over `let`.
+- Avoid mutating objects and arrays directly; use the spread operator (`...`) or other non-mutating methods.
+- For state management (e.g., in services), use patterns that ensure predictability and easy debugging.
 
 ### Code Comments
-
 - Write code comments in **English**.
 - Only add comments where the logic isn't self-evident.
 
-## Commit Messages
+---
 
-We use [Conventional Commits](https://www.conventionalcommits.org/):
+## Commit Message Format
 
-```
-<type>: <description>
-```
+We follow the **Conventional Commits** specification. Each commit message should follow this format:
 
-### Types
+`<type>: <description>`
 
-| Type | Description |
-|------|-------------|
-| `feat` | A new feature |
-| `fix` | A bug fix |
-| `refactor` | Code change that neither fixes a bug nor adds a feature |
-| `docs` | Documentation only changes |
-| `test` | Adding or correcting tests |
-| `chore` | Maintenance tasks (deps, CI, etc.) |
-| `perf` | Performance improvement |
-| `ci` | CI/CD changes |
+### Allowed Types:
+- `feat`: A new feature
+- `fix`: A bug fix
+- `refactor`: A code change that neither fixes a bug nor adds a feature
+- `docs`: Documentation only changes
+- `test`: Adding missing tests or correcting existing tests
+- `chore`: Changes to the build process or auxiliary tools and libraries
+- `perf`: A code change that improves performance
+- `ci`: Changes to our CI configuration files and scripts
 
 ### Examples
 
 ```
-feat: add retry button on model error embeds
+feat: add support for custom message templates
 fix: prevent duplicate CDP connections on rapid reconnect
 docs: update README with new CLI commands
 refactor: extract color constants from doctor command
 ```
 
-## Pull Request Process
+---
+
+## PR Process and Review Expectations
 
 1. **Fork** the repository and create a feature branch from `main`.
-2. **Make your changes** following the code style guidelines above.
+2. **Self-Review**: Before submitting, ensure your code follows the style guidelines and passes tests.
 3. **Write tests** for new functionality (aim for 80%+ coverage).
-4. **Run the test suite** to ensure nothing is broken:
+4. **Run the test suite** and **build** before submitting:
    ```bash
    npm test
-   ```
-5. **Build** to verify there are no TypeScript errors:
-   ```bash
    npm run build
    ```
-6. **Push** your branch and open a Pull Request against `main`.
-7. Fill out the PR template with a summary, linked issues, and checklist.
+5. **Template**: Use the provided Pull Request template.
+6. **Atomic Commits**: Keep your commits focused on a single change.
+7. **Review**: At least one maintainer will review your PR. Address any feedback promptly.
+8. **Merging**: Once approved and all checks pass, your code will be merged into the `main` branch.
 
-### PR Review
+---
 
-- A maintainer will review your PR.
-- Address any feedback and push follow-up commits.
-- Once approved, a maintainer will merge your PR.
+## How to Run Tests
 
-## Running Tests
+Ensure all tests pass before submitting a PR.
 
+### Unit Tests
 ```bash
-# Unit tests
-npm test
+npm run test:unit
+```
 
-# Watch mode (re-runs on file changes)
-npm run test:watch
-
-# Integration tests
+### Integration Tests
+Note: Integration tests may require a configured environment.
+```bash
 npm run test:integration
 ```
 
-## Reporting Issues
+### Watch Mode
+```bash
+npm run test:watch
+```
 
-- **Bugs**: Use the [Bug Report](https://github.com/tokyoweb3/LazyGravity/issues/new?template=bug_report.md) template.
-- **Feature Requests**: Use the [Feature Request](https://github.com/tokyoweb3/LazyGravity/issues/new?template=feature_request.md) template.
+---
+
+## Reporting Issues
+Please use the provided [Issue Templates](https://github.com/tokyoweb3/LazyGravity/issues/new/choose) for bugs and feature requests.
+
+## GitHub Discussions
+For general questions or ideas, please visit our [Discussions](https://github.com/tokyoweb3/LazyGravity/discussions) page.
 
 ## License
 
