@@ -11,6 +11,7 @@ import {
 
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
+import { RETRY_BTN_PREFIX } from '../bot/index';
 import { TEMPLATE_BTN_PREFIX, parseTemplateButtonId } from '../ui/templateUi';
 import {
     AUTOACCEPT_BTN_OFF,
@@ -67,6 +68,7 @@ export interface InteractionCreateHandlerDeps {
         client: any,
     ) => Promise<void>;
     handleTemplateUse?: (interaction: ButtonInteraction, templateId: number) => Promise<void>;
+    handleRetry?: (interaction: ButtonInteraction, retryId: string) => Promise<void>;
 }
 
 export function createInteractionCreateHandler(deps: InteractionCreateHandlerDeps) {
@@ -247,6 +249,40 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                         content: result.message,
                         flags: MessageFlags.Ephemeral,
                     });
+                    return;
+                }
+
+                if (interaction.customId.startsWith(RETRY_BTN_PREFIX)) {
+                    await interaction.deferUpdate();
+                    const retryId = interaction.customId.slice(RETRY_BTN_PREFIX.length);
+
+                    // Disable the retry button after click
+                    const disabledRows = interaction.message.components
+                        .map((row) => {
+                            const rowAny = row as any;
+                            if (!Array.isArray(rowAny.components)) return null;
+                            const nextRow = new ActionRowBuilder<ButtonBuilder>();
+                            const disabledButtons = rowAny.components
+                                .map((component: any) => {
+                                    const componentType = component?.type ?? component?.data?.type;
+                                    if (componentType !== 2) return null;
+                                    const payload = typeof component?.toJSON === 'function'
+                                        ? component.toJSON()
+                                        : component;
+                                    return ButtonBuilder.from(payload).setDisabled(true);
+                                })
+                                .filter((btn: ButtonBuilder | null): btn is ButtonBuilder => btn !== null);
+                            if (disabledButtons.length === 0) return null;
+                            nextRow.addComponents(...disabledButtons);
+                            return nextRow;
+                        })
+                        .filter((row): row is ActionRowBuilder<ButtonBuilder> => row !== null);
+
+                    await interaction.editReply({ components: disabledRows }).catch(logger.error);
+
+                    if (deps.handleRetry) {
+                        await deps.handleRetry(interaction, retryId);
+                    }
                     return;
                 }
 

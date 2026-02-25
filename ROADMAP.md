@@ -7,7 +7,7 @@
 
 ## Known Issues
 
-- [ ] **Error Retry UI** — Display a Retry button in Discord on model errors ([#1](https://github.com/tokyoweb3/LazyGravity/issues/1))
+- [x] **Error Retry UI** — Display a Retry button in Discord on model errors ([#1](https://github.com/tokyoweb3/LazyGravity/issues/1))
 - [ ] **Planning Mode Flow** — Surface Open / Proceed decision points in Discord ([#2](https://github.com/tokyoweb3/LazyGravity/issues/2))
 - [ ] **Output Streaming** — Re-enable real-time streaming of final output ([#3](https://github.com/tokyoweb3/LazyGravity/issues/3))
 

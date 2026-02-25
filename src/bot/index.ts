@@ -96,6 +96,29 @@ const MAX_OUTBOUND_GENERATED_IMAGES = 4;
 const RESPONSE_DELIVERY_MODE = resolveResponseDeliveryMode();
 export const getResponseDeliveryModeForTest = (): string => RESPONSE_DELIVERY_MODE;
 
+// =============================================================================
+// Retry prompt store — keeps original prompts for the Retry button on errors
+// =============================================================================
+export const RETRY_BTN_PREFIX = 'retry_prompt_';
+const MAX_RETRY_STORE_SIZE = 100;
+const retryPromptStore = new Map<string, string>();
+
+function storeRetryPrompt(key: string, prompt: string): void {
+    if (retryPromptStore.size >= MAX_RETRY_STORE_SIZE) {
+        const firstKey = retryPromptStore.keys().next().value;
+        if (firstKey !== undefined) retryPromptStore.delete(firstKey);
+    }
+    retryPromptStore.set(key, prompt);
+}
+
+export function getRetryPrompt(key: string): string | undefined {
+    return retryPromptStore.get(key);
+}
+
+export function deleteRetryPrompt(key: string): void {
+    retryPromptStore.delete(key);
+}
+
 export function createSerialTaskQueueForTest(queueName: string, traceId: string): (task: () => Promise<void>, label?: string) => Promise<void> {
     let queue: Promise<void> = Promise.resolve();
     let queueDepth = 0;
@@ -172,6 +195,30 @@ async function sendPromptToAntigravity(
         }
         await channel.send({ embeds: [embed] }).catch(() => { });
     }, 'send-embed');
+
+    const sendErrorWithRetry = (
+        title: string,
+        description: string,
+    ): Promise<void> => enqueueGeneral(async () => {
+        if (!channel) return;
+        const retryId = message.id;
+        storeRetryPrompt(retryId, prompt);
+
+        const embed = new EmbedBuilder()
+            .setTitle(title)
+            .setDescription(description)
+            .setColor(PHASE_COLORS.error)
+            .setTimestamp();
+
+        const retryBtn = new ButtonBuilder()
+            .setCustomId(`${RETRY_BTN_PREFIX}${retryId}`)
+            .setLabel(t('Retry'))
+            .setStyle(ButtonStyle.Primary)
+            .setEmoji('🔄');
+
+        const row = new ActionRowBuilder<ButtonBuilder>().addComponents(retryBtn);
+        await channel.send({ embeds: [embed], components: [row] }).catch(() => { });
+    }, 'send-error-with-retry');
 
     const shouldTryGeneratedImages = (inputPrompt: string, responseText: string): boolean => {
         const prompt = (inputPrompt || '').toLowerCase();
@@ -279,10 +326,9 @@ async function sendPromptToAntigravity(
     };
 
     if (!cdp.isConnected()) {
-        await sendEmbed(
+        await sendErrorWithRetry(
             `${PHASE_ICONS.error} Connection Error`,
             'Not connected to Antigravity.\nStart with `open -a Antigravity --args --remote-debugging-port=9223`, then send a message to auto-connect.',
-            PHASE_COLORS.error,
         );
         await clearWatchingReaction();
         await message.react('❌').catch(() => { });
@@ -459,10 +505,9 @@ async function sendPromptToAntigravity(
 
         if (!injectResult.ok) {
             isFinalized = true;
-            await sendEmbed(
+            await sendErrorWithRetry(
                 `${PHASE_ICONS.error} Message Injection Failed`,
                 `Failed to send message: ${injectResult.error}`,
-                PHASE_COLORS.error,
             );
             await clearWatchingReaction();
             await message.react('❌').catch(() => { });
@@ -683,10 +728,9 @@ async function sendPromptToAntigravity(
 
     } catch (e: any) {
         isFinalized = true;
-        await sendEmbed(
+        await sendErrorWithRetry(
             `${PHASE_ICONS.error} Error`,
             t(`Error occurred during processing: ${e.message}`),
-            PHASE_COLORS.error,
         );
         await clearWatchingReaction();
         await message.react('❌').catch(() => { });
@@ -846,6 +890,73 @@ export const startBot = async () => {
                 await promptDispatcher.send({
                     message: followUp,
                     prompt: template.prompt,
+                    cdp,
+                    inboundImages: [],
+                    options: {
+                        chatSessionService,
+                        chatSessionRepo,
+                        channelManager,
+                        titleGenerator,
+                    },
+                });
+            }
+        },
+        handleRetry: async (interaction, retryId) => {
+            const storedPrompt = getRetryPrompt(retryId);
+            if (!storedPrompt) {
+                await interaction.followUp({
+                    content: t('Retry data not found. The prompt may have expired.'),
+                    flags: MessageFlags.Ephemeral,
+                });
+                return;
+            }
+
+            deleteRetryPrompt(retryId);
+
+            // Resolve CDP via workspace binding (same flow as template handler)
+            const channelId = interaction.channelId;
+            const workspacePath = wsHandler.getWorkspaceForChannel(channelId);
+
+            let cdp: CdpService | null = null;
+            if (workspacePath) {
+                try {
+                    cdp = await bridge.pool.getOrConnect(workspacePath);
+                    const dirName = bridge.pool.extractDirName(workspacePath);
+                    bridge.lastActiveWorkspace = dirName;
+                    bridge.lastActiveChannel = interaction.channel;
+                    registerApprovalWorkspaceChannel(bridge, dirName, interaction.channel as any);
+                    const session = chatSessionRepo.findByChannelId(channelId);
+                    if (session?.displayName) {
+                        registerApprovalSessionChannel(bridge, dirName, session.displayName, interaction.channel as any);
+                    }
+                    ensureApprovalDetector(bridge, cdp, dirName, client);
+                } catch (e: any) {
+                    await interaction.followUp({
+                        content: `Failed to connect to workspace: ${e.message}`,
+                        flags: MessageFlags.Ephemeral,
+                    });
+                    return;
+                }
+            } else {
+                cdp = getCurrentCdp(bridge);
+            }
+
+            if (!cdp) {
+                await interaction.followUp({
+                    content: t('Not connected to CDP. Please connect to a project first.'),
+                    flags: MessageFlags.Ephemeral,
+                });
+                return;
+            }
+
+            const followUp = await interaction.followUp({
+                content: t('🔄 Retrying...'),
+            });
+
+            if (followUp instanceof Message) {
+                await promptDispatcher.send({
+                    message: followUp,
+                    prompt: storedPrompt,
                     cdp,
                     inboundImages: [],
                     options: {
