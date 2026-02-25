@@ -1,10 +1,9 @@
 import { t } from "../utils/i18n";
 import fs from 'fs';
 import {
+    ButtonInteraction,
     ChatInputCommandInteraction,
-    StringSelectMenuBuilder,
     StringSelectMenuInteraction,
-    ActionRowBuilder,
     EmbedBuilder,
     Guild,
 } from 'discord.js';
@@ -12,11 +11,10 @@ import { WorkspaceBindingRepository } from '../database/workspaceBindingReposito
 import { ChatSessionRepository } from '../database/chatSessionRepository';
 import { WorkspaceService } from '../services/workspaceService';
 import { ChannelManager } from '../services/channelManager';
+import { buildProjectListUI } from '../ui/projectListUi';
 
-/** Select menu custom ID */
-export const PROJECT_SELECT_ID = 'project_select';
-/** Backward compatibility: also accept old ID */
-export const WORKSPACE_SELECT_ID = 'workspace_select';
+// Re-export for backward compatibility
+export { PROJECT_SELECT_ID, WORKSPACE_SELECT_ID } from '../ui/projectListUi';
 
 /**
  * Handler for the /project slash command.
@@ -46,39 +44,23 @@ export class WorkspaceCommandHandler {
      * /project list -- Display project list via select menu
      */
     public async handleShow(interaction: ChatInputCommandInteraction): Promise<void> {
-        const embed = new EmbedBuilder()
-            .setTitle('📁 Projects')
-            .setColor(0x5865F2)
-            .setDescription(t('Select a project to auto-create a category and session channel'))
-            .setTimestamp();
+        const workspaces = this.workspaceService.scanWorkspaces();
+        const { embeds, components } = buildProjectListUI(workspaces, 0);
 
-        const components: ActionRowBuilder<StringSelectMenuBuilder>[] = [];
+        await interaction.editReply({ embeds, components });
+    }
+
+    /**
+     * Handle page navigation button press.
+     * Re-scans workspaces and renders the requested page.
+     */
+    public async handlePageButton(interaction: ButtonInteraction, page: number): Promise<void> {
+        await interaction.deferUpdate();
 
         const workspaces = this.workspaceService.scanWorkspaces();
-        if (workspaces.length > 0) {
-            const options = workspaces.slice(0, 25).map((ws) => ({
-                label: ws,
-                value: ws,
-            }));
+        const { embeds, components } = buildProjectListUI(workspaces, page);
 
-            const selectMenu = new StringSelectMenuBuilder()
-                .setCustomId(PROJECT_SELECT_ID)
-                .setPlaceholder(t('Select a project...'))
-                .addOptions(options);
-
-            if (workspaces.length > 25) {
-                selectMenu.setPlaceholder(t(`Select a project... (Showing 25 of ${workspaces.length})`));
-            }
-
-            components.push(
-                new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu)
-            );
-        }
-
-        await interaction.editReply({
-            embeds: [embed],
-            components,
-        });
+        await interaction.editReply({ embeds, components });
     }
 
     /**

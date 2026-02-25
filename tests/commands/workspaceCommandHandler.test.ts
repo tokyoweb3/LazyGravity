@@ -10,6 +10,7 @@ import {
     WorkspaceCommandHandler,
     WORKSPACE_SELECT_ID,
 } from '../../src/commands/workspaceCommandHandler';
+import { ITEMS_PER_PAGE, PROJECT_SELECT_ID } from '../../src/ui/projectListUi';
 
 describe('WorkspaceCommandHandler', () => {
     let db: Database.Database;
@@ -121,6 +122,50 @@ describe('WorkspaceCommandHandler', () => {
 
             const call = interaction.update.mock.calls[0][0];
             expect(call.content).toContain('not found');
+        });
+    });
+
+    describe('handleShow pagination', () => {
+        it('shows pagination buttons when >25 projects exist', async () => {
+            for (let i = 0; i < 30; i++) {
+                fs.mkdirSync(path.join(tmpDir, `proj-${String(i).padStart(3, '0')}`));
+            }
+            const interaction = mockInteraction();
+
+            await handler.handleShow(interaction as any);
+
+            const call = interaction.editReply.mock.calls[0][0];
+            // 2 rows: select menu + button row
+            expect(call.components).toHaveLength(2);
+
+            const selectRow = call.components[0].toJSON();
+            expect(selectRow.components[0].options).toHaveLength(ITEMS_PER_PAGE);
+
+            const buttonRow = call.components[1].toJSON();
+            expect(buttonRow.components).toHaveLength(2);
+        });
+    });
+
+    describe('handlePageButton', () => {
+        it('renders the requested page of workspaces', async () => {
+            for (let i = 0; i < 30; i++) {
+                fs.mkdirSync(path.join(tmpDir, `proj-${String(i).padStart(3, '0')}`));
+            }
+
+            const interaction = {
+                deferUpdate: jest.fn().mockResolvedValue(undefined),
+                editReply: jest.fn().mockResolvedValue(undefined),
+            };
+
+            await handler.handlePageButton(interaction as any, 1);
+
+            expect(interaction.deferUpdate).toHaveBeenCalledTimes(1);
+            expect(interaction.editReply).toHaveBeenCalledTimes(1);
+
+            const call = interaction.editReply.mock.calls[0][0];
+            const selectRow = call.components[0].toJSON();
+            // Page 1 should have the remaining 5 projects
+            expect(selectRow.components[0].options).toHaveLength(5);
         });
     });
 
