@@ -7,26 +7,24 @@ export interface ModelsUiDeps {
     fetchQuota: () => Promise<any[]>;
 }
 
+export interface ModelsUiPayload {
+    embeds: EmbedBuilder[];
+    components: ActionRowBuilder<ButtonBuilder>[];
+}
+
 /**
- * Build and send the interactive UI for the /models command
+ * Build the embed + button components for the models UI.
+ * Returns null when CDP is unavailable or no models are found.
  */
-export async function sendModelsUI(
-    target: { editReply: (opts: any) => Promise<any> },
-    deps: ModelsUiDeps,
-): Promise<void> {
-    const cdp = deps.getCurrentCdp();
-    if (!cdp) {
-        await target.editReply({ content: 'Not connected to CDP.' });
-        return;
-    }
+export async function buildModelsUI(
+    cdp: CdpService,
+    fetchQuota: () => Promise<any[]>,
+): Promise<ModelsUiPayload | null> {
     const models = await cdp.getUiModels();
     const currentModel = await cdp.getCurrentModel();
-    const quotaData = await deps.fetchQuota();
+    const quotaData = await fetchQuota();
 
-    if (models.length === 0) {
-        await target.editReply({ content: 'Failed to retrieve model list from Antigravity.' });
-        return;
-    }
+    if (models.length === 0) return null;
 
     function formatQuota(mName: string, current: boolean) {
         if (!mName) return `${current ? '[x]' : '[ ]'} Unknown`;
@@ -111,5 +109,27 @@ export async function sendModelsUI(
         }
     }
 
-    await target.editReply({ content: '', embeds: [embed], components: rows });
+    return { embeds: [embed], components: rows };
+}
+
+/**
+ * Build and send the interactive UI for the /models command
+ */
+export async function sendModelsUI(
+    target: { editReply: (opts: any) => Promise<any> },
+    deps: ModelsUiDeps,
+): Promise<void> {
+    const cdp = deps.getCurrentCdp();
+    if (!cdp) {
+        await target.editReply({ content: 'Not connected to CDP.' });
+        return;
+    }
+
+    const payload = await buildModelsUI(cdp, deps.fetchQuota);
+    if (!payload) {
+        await target.editReply({ content: 'Failed to retrieve model list from Antigravity.' });
+        return;
+    }
+
+    await target.editReply({ content: '', ...payload });
 }

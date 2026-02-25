@@ -64,7 +64,7 @@ import {
     toDiscordAttachment,
 } from '../utils/imageHandler';
 import { sendModeUI } from '../ui/modeUi';
-import { sendModelsUI } from '../ui/modelsUi';
+import { sendModelsUI, buildModelsUI } from '../ui/modelsUi';
 import { sendTemplateUI } from '../ui/templateUi';
 import { sendAutoAcceptUI } from '../ui/autoAcceptUi';
 import { handleScreenshot } from '../ui/screenshotUi';
@@ -523,6 +523,56 @@ async function sendPromptToAntigravity(
 
                 try {
                     const elapsed = Math.round((Date.now() - startTime) / 1000);
+                    const isQuotaError = monitor.getPhase() === 'quotaReached' || monitor.getQuotaDetected();
+
+                    // Quota early exit — skip text extraction, output logging, and embed entirely
+                    if (isQuotaError) {
+                        const finalLogText = lastActivityLogText || processLogBuffer.snapshot();
+                        if (finalLogText && finalLogText.trim().length > 0) {
+                            logger.divider('Process Log');
+                            console.info(finalLogText);
+                        }
+                        logger.divider();
+
+                        liveActivityUpdateVersion += 1;
+                        await upsertLiveActivityEmbeds(
+                            `${PHASE_ICONS.thinking} Process Log`,
+                            finalLogText || ACTIVITY_PLACEHOLDER,
+                            PHASE_COLORS.thinking,
+                            t(`⏱️ Time: ${elapsed}s | Process log`),
+                            {
+                                source: 'complete',
+                                expectedVersion: liveActivityUpdateVersion,
+                            },
+                        );
+
+                        liveResponseUpdateVersion += 1;
+                        await upsertLiveResponseEmbeds(
+                            '⚠️ Model Quota Reached',
+                            'Model quota limit reached. Please wait or switch to a different model.',
+                            0xFF6B6B,
+                            t(`⏱️ Time: ${elapsed}s | Quota Reached`),
+                            {
+                                source: 'complete',
+                                expectedVersion: liveResponseUpdateVersion,
+                            },
+                        );
+
+                        try {
+                            const modelsPayload = await buildModelsUI(cdp, () => bridge.quota.fetchQuota());
+                            if (modelsPayload && channel) {
+                                await channel.send({ ...modelsPayload });
+                            }
+                        } catch (e) {
+                            logger.error('[Quota] Failed to send model selection UI:', e);
+                        }
+
+                        await clearWatchingReaction();
+                        await message.react('⚠️').catch(() => { });
+                        return;
+                    }
+
+                    // Normal path — extract final text
                     const responseText = (finalText && finalText.trim().length > 0)
                         ? finalText
                         : lastProgressText;
@@ -609,19 +659,6 @@ async function sendPromptToAntigravity(
                         } catch (e) {
                             logger.error('[Rename] Failed to get title from Antigravity and rename:', e);
                         }
-                    }
-
-                    if (monitor.getPhase() === 'quotaReached' || monitor.getQuotaDetected()) {
-                        await sendEmbed(
-                            '⚠️ Model Quota Reached',
-                            'Model quota limit reached. Please wait or switch to a different model with `/model`.',
-                            0xFF6B6B,
-                            undefined,
-                            'Quota Reached — consider switching models',
-                        );
-                        await clearWatchingReaction();
-                        await message.react('⚠️').catch(() => { });
-                        return;
                     }
 
                     await sendGeneratedImages(finalOutputText || '');
