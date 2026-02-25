@@ -117,7 +117,10 @@ lazy-gravity setup
 
 The wizard guides you through 4 steps:
 
-1. **Discord Bot Token** — create a bot at the [Discord Developer Portal](https://discord.com/developers/applications), enable Privileged Gateway Intents (PRESENCE, SERVER MEMBERS, MESSAGE CONTENT), and copy the token. Client ID is extracted from the token automatically.
+1. **Discord Bot Token** — create a bot at the [Discord Developer Portal](https://discord.com/developers/applications).
+   - Enable Privileged Gateway Intents: **PRESENCE, SERVER MEMBERS, MESSAGE CONTENT**.
+   - Generate an OAuth2 invite URL with the following bot permissions: **Manage Channels** (required for `/project`), **Send Messages**, **Embed Links**, **Attach Files**, **Read Message History**, and **Add Reactions**.
+   - Invite the bot to your server, then copy the bot token. Client ID is extracted from the token automatically.
 2. **Guild (Server) ID** — for instant slash command registration (optional; press Enter to skip).
 3. **Allowed User IDs** — Discord users authorized to interact with the bot.
 4. **Workspace Directory** — parent directory where your coding projects live.
