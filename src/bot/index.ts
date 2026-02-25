@@ -749,6 +749,49 @@ export const startBot = async () => {
         } catch (error) {
             logger.warn('Failed to register slash commands, but text commands remain available.');
         }
+
+        // Startup dashboard embed
+        try {
+            const os = await import('os');
+            const pkg = await import('../../package.json');
+            const version = pkg.default?.version ?? pkg.version ?? 'unknown';
+            const projects = workspaceService.scanWorkspaces();
+
+            // Check CDP connection status
+            const activeWorkspaces = bridge.pool.getActiveWorkspaceNames();
+            const cdpStatus = activeWorkspaces.length > 0
+                ? `Connected (${activeWorkspaces.join(', ')})`
+                : 'Not connected';
+
+            const dashboardEmbed = new EmbedBuilder()
+                .setTitle('LazyGravity Online')
+                .setColor(0x57F287)
+                .addFields(
+                    { name: 'Version', value: version, inline: true },
+                    { name: 'Node.js', value: process.versions.node, inline: true },
+                    { name: 'OS', value: `${os.platform()} ${os.release()}`, inline: true },
+                    { name: 'CDP', value: cdpStatus, inline: true },
+                    { name: 'Model', value: modelService.getCurrentModel(), inline: true },
+                    { name: 'Mode', value: modeService.getCurrentMode(), inline: true },
+                    { name: 'Projects', value: `${projects.length} registered`, inline: true },
+                )
+                .setFooter({ text: `Started at ${new Date().toLocaleString()}` })
+                .setTimestamp();
+
+            // Send to the first available text channel in the guild
+            const guild = readyClient.guilds.cache.first();
+            if (guild) {
+                const channel = guild.channels.cache.find(
+                    (ch) => ch.isTextBased() && !ch.isVoiceBased() && ch.permissionsFor(readyClient.user)?.has('SendMessages'),
+                );
+                if (channel && channel.isTextBased()) {
+                    await channel.send({ embeds: [dashboardEmbed] });
+                    logger.info('Startup dashboard embed sent.');
+                }
+            }
+        } catch (error) {
+            logger.warn('Failed to send startup dashboard embed:', error);
+        }
     });
 
     // [Discord Interactions API] Slash command interaction handler
