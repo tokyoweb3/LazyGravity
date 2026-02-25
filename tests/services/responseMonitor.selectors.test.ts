@@ -142,4 +142,99 @@ describe('Lean RESPONSE_SELECTORS', () => {
         // Should check for MCP server/tool format lines
         expect(script).toContain('looksliketooloutput');
     });
+
+    // ---------------------------------------------------------------
+    // Test 16: QUOTA_ERROR uses h3 span text-based detection
+    // ---------------------------------------------------------------
+    it('QUOTA_ERROR script uses h3 span text-based detection', () => {
+        const script = RESPONSE_SELECTORS.QUOTA_ERROR;
+        expect(script).toContain('h3 span');
+        expect(script).toContain('h3');
+    });
+
+    // ---------------------------------------------------------------
+    // Test 17: QUOTA_ERROR checks for quota keywords
+    // ---------------------------------------------------------------
+    it('QUOTA_ERROR script checks for model quota reached keyword', () => {
+        const script = RESPONSE_SELECTORS.QUOTA_ERROR.toLowerCase();
+        expect(script).toContain('model quota reached');
+        expect(script).toContain('rate limit');
+        expect(script).toContain('quota exceeded');
+    });
+
+    // ---------------------------------------------------------------
+    // Test 18: QUOTA_ERROR excludes rendered-markdown containers
+    // ---------------------------------------------------------------
+    it('QUOTA_ERROR script excludes rendered-markdown and prose containers', () => {
+        const script = RESPONSE_SELECTORS.QUOTA_ERROR;
+        expect(script).toContain('.rendered-markdown');
+        expect(script).toContain('.prose');
+    });
+
+    // ---------------------------------------------------------------
+    // Test 19: QUOTA_ERROR retains class-based fallback selectors
+    // ---------------------------------------------------------------
+    it('QUOTA_ERROR script retains class-based fallback selectors', () => {
+        const script = RESPONSE_SELECTORS.QUOTA_ERROR;
+        expect(script).toContain('[role="alert"]');
+        expect(script).toContain('[class*="error"]');
+    });
+
+    // ---------------------------------------------------------------
+    // Test 20: RESPONSE_TEXT contains looksLikeQuotaPopup filter
+    // ---------------------------------------------------------------
+    it('RESPONSE_TEXT script contains looksLikeQuotaPopup filter', () => {
+        const script = RESPONSE_SELECTORS.RESPONSE_TEXT.toLowerCase();
+        expect(script).toContain('lookslikequotapopup');
+    });
+
+    // ---------------------------------------------------------------
+    // Test 21: looksLikeQuotaPopup checks for dismiss/upgrade keywords
+    // ---------------------------------------------------------------
+    it('RESPONSE_TEXT quota popup filter checks for dismiss and upgrade', () => {
+        const script = RESPONSE_SELECTORS.RESPONSE_TEXT.toLowerCase();
+        expect(script).toContain('dismiss');
+        expect(script).toContain('upgrade');
+    });
+
+    // ---------------------------------------------------------------
+    // Test 22: DUMP_ALL_TEXTS classifies quota popup as skip
+    // ---------------------------------------------------------------
+    it('DUMP_ALL_TEXTS script classifies quota popup as quota-popup skip', () => {
+        const script = RESPONSE_SELECTORS.DUMP_ALL_TEXTS.toLowerCase();
+        expect(script).toContain('quota-popup');
+    });
+
+    // ---------------------------------------------------------------
+    // Test 23: QUOTA_ERROR detects inline "exhausted your quota" pattern
+    // ---------------------------------------------------------------
+    it('QUOTA_ERROR script detects inline exhausted quota pattern', () => {
+        const script = RESPONSE_SELECTORS.QUOTA_ERROR.toLowerCase();
+        expect(script).toContain('exhausted your quota');
+    });
+
+    // ---------------------------------------------------------------
+    // Test 24: QUOTA_ERROR scans span elements for inline errors
+    // ---------------------------------------------------------------
+    it('QUOTA_ERROR script queries span elements for inline error detection', () => {
+        const script = RESPONSE_SELECTORS.QUOTA_ERROR;
+        // Should query generic span elements (inline errors have no semantic class)
+        expect(script).toContain("querySelectorAll('span')");
+    });
+
+    // ---------------------------------------------------------------
+    // Test 25: RESPONSE_TEXT looksLikeQuotaPopup catches inline exhausted pattern
+    // ---------------------------------------------------------------
+    it('RESPONSE_TEXT quota filter catches inline exhausted quota without dismiss/upgrade', () => {
+        const script = RESPONSE_SELECTORS.RESPONSE_TEXT.toLowerCase();
+        expect(script).toContain('exhausted your quota');
+    });
+
+    // ---------------------------------------------------------------
+    // Test 26: DUMP_ALL_TEXTS catches inline exhausted quota pattern
+    // ---------------------------------------------------------------
+    it('DUMP_ALL_TEXTS catches inline exhausted quota as quota-popup skip', () => {
+        const script = RESPONSE_SELECTORS.DUMP_ALL_TEXTS.toLowerCase();
+        expect(script).toContain('exhausted your quota');
+    });
 });

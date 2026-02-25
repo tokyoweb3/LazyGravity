@@ -56,6 +56,15 @@ export const RESPONSE_SELECTORS = {
             return false;
         };
 
+        const looksLikeQuotaPopup = (text) => {
+            var lower = (text || '').trim().toLowerCase();
+            // Inline error: "Error You have exhausted your quota on this model."
+            if (lower.includes('exhausted your quota') || lower.includes('exhausted quota')) return true;
+            // Popup: quota keyword + dismiss/upgrade button text
+            if (!lower.includes('model quota reached') && !lower.includes('quota exceeded') && !lower.includes('rate limit')) return false;
+            return lower.includes('dismiss') || lower.includes('upgrade');
+        };
+
         const combinedSelector = selectors.map((s) => s.sel).join(', ');
         const seen = new Set();
 
@@ -71,6 +80,7 @@ export const RESPONSE_SELECTORS = {
                 if (looksLikeActivityLog(text)) continue;
                 if (looksLikeFeedbackFooter(text)) continue;
                 if (looksLikeToolOutput(text)) continue;
+                if (looksLikeQuotaPopup(text)) continue;
                 // Prefer recency first: return the newest acceptable node.
                 return text;
             }
@@ -228,6 +238,12 @@ export const RESPONSE_SELECTORS = {
                     else if (looksLikeActivityLog(text)) skip = 'activity-log';
                     else if (looksLikeFeedbackFooter(text)) skip = 'feedback-footer';
                     else if (looksLikeToolOutput(text)) skip = 'tool-output';
+                    else {
+                        var qlower = (text || '').trim().toLowerCase();
+                        if (qlower.includes('exhausted your quota') || qlower.includes('exhausted quota')) skip = 'quota-popup';
+                        else if ((qlower.includes('model quota reached') || qlower.includes('quota exceeded') || qlower.includes('rate limit'))
+                            && (qlower.includes('dismiss') || qlower.includes('upgrade'))) skip = 'quota-popup';
+                    }
                     const classes = (node.className || '').toString().slice(0, 80);
                     results.push({
                         sel,
@@ -308,11 +324,32 @@ export const RESPONSE_SELECTORS = {
 
         return results;
     })()`,
-    /** Quota error detection */
+    /** Quota error detection — text-based h3 span match first, class-based fallback second */
     QUOTA_ERROR: `(() => {
         const panel = document.querySelector('.antigravity-agent-side-panel');
         const scope = panel || document;
+        const QUOTA_KEYWORDS = ['model quota reached', 'rate limit', 'quota exceeded', 'exhausted your quota', 'exhausted quota'];
+        const isInsideResponse = (node) =>
+            node.closest('.rendered-markdown, .prose, pre, code, [data-message-author-role="assistant"], [data-message-role="assistant"], [class*="message-content"]');
 
+        // Primary: text-based detection via h3 span (Tailwind-only popup)
+        const headings = scope.querySelectorAll('h3 span, h3');
+        for (const el of headings) {
+            if (isInsideResponse(el)) continue;
+            const text = (el.textContent || '').trim().toLowerCase();
+            if (QUOTA_KEYWORDS.some(kw => text.includes(kw))) return true;
+        }
+
+        // Inline error: "Error You have exhausted your quota on this model."
+        // Appears in process log area as a span inside flex containers
+        const inlineSpans = scope.querySelectorAll('span');
+        for (const el of inlineSpans) {
+            if (isInsideResponse(el)) continue;
+            const text = (el.textContent || '').trim().toLowerCase();
+            if (text.includes('exhausted your quota') || text.includes('exhausted quota')) return true;
+        }
+
+        // Fallback: semantic class-based detection
         const errorSelectors = [
             '[role="alert"]',
             '[class*="error"]',
@@ -326,13 +363,9 @@ export const RESPONSE_SELECTORS = {
         ];
         const errorElements = scope.querySelectorAll(errorSelectors.join(', '));
         for (const el of errorElements) {
-            if (el.closest('.rendered-markdown, .prose, pre, code, [data-message-author-role="assistant"], [data-message-role="assistant"], [class*="message-content"]')) {
-                continue;
-            }
+            if (isInsideResponse(el)) continue;
             const text = (el.textContent || '').trim().toLowerCase();
-            if (text.includes('model quota reached') || text.includes('rate limit') || text.includes('quota exceeded')) {
-                return true;
-            }
+            if (QUOTA_KEYWORDS.some(kw => text.includes(kw))) return true;
         }
         return false;
     })()`,
