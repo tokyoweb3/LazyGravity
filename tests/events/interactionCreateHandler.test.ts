@@ -2,7 +2,7 @@ import { createInteractionCreateHandler } from '../../src/events/interactionCrea
 import {
     RETRY_BTN_PREFIX,
     RetryInfo,
-} from '../../src/bot/index';
+} from '../../src/services/retryStore';
 
 jest.mock('../../src/utils/logger', () => ({
     logger: { error: jest.fn(), warn: jest.fn(), info: jest.fn(), debug: jest.fn() },
@@ -12,8 +12,8 @@ jest.mock('../../src/utils/logger', () => ({
 const mockGetRetryInfo = jest.fn<RetryInfo | undefined, [string]>();
 const mockDeleteRetryInfo = jest.fn();
 
-jest.mock('../../src/bot/index', () => {
-    const actual = jest.requireActual('../../src/bot/index');
+jest.mock('../../src/services/retryStore', () => {
+    const actual = jest.requireActual('../../src/services/retryStore');
     return {
         ...actual,
         getRetryInfo: (key: string) => mockGetRetryInfo(key),
@@ -236,7 +236,7 @@ describe('interactionCreateHandler', () => {
         });
 
         it('deletes RetryInfo from store after successful lookup', async () => {
-            const retryInfo: RetryInfo = { type: 'resend', prompt: 'hello' };
+            const retryInfo: RetryInfo = { type: 'resend', prompt: 'hello', createdAt: Date.now() };
             mockGetRetryInfo.mockReturnValue(retryInfo);
 
             const handleRetry = jest.fn().mockResolvedValue(undefined);
@@ -249,7 +249,7 @@ describe('interactionCreateHandler', () => {
         });
 
         it('disables the retry button after click', async () => {
-            const retryInfo: RetryInfo = { type: 'click-retry' };
+            const retryInfo: RetryInfo = { type: 'click-retry', createdAt: Date.now() };
             mockGetRetryInfo.mockReturnValue(retryInfo);
 
             const handleRetry = jest.fn().mockResolvedValue(undefined);
@@ -266,7 +266,7 @@ describe('interactionCreateHandler', () => {
         });
 
         it('calls handleRetry with RetryInfo { type: "resend" } for pre-injection errors', async () => {
-            const retryInfo: RetryInfo = { type: 'resend', prompt: 'my prompt' };
+            const retryInfo: RetryInfo = { type: 'resend', prompt: 'my prompt', createdAt: Date.now() };
             mockGetRetryInfo.mockReturnValue(retryInfo);
 
             const handleRetry = jest.fn().mockResolvedValue(undefined);
@@ -281,7 +281,7 @@ describe('interactionCreateHandler', () => {
         });
 
         it('calls handleRetry with RetryInfo { type: "click-retry" } for post-injection errors', async () => {
-            const retryInfo: RetryInfo = { type: 'click-retry' };
+            const retryInfo: RetryInfo = { type: 'click-retry', createdAt: Date.now() };
             mockGetRetryInfo.mockReturnValue(retryInfo);
 
             const handleRetry = jest.fn().mockResolvedValue(undefined);
