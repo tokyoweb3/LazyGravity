@@ -336,6 +336,63 @@ export const RESPONSE_SELECTORS = {
         }
         return false;
     })()`,
+    /** Click the retry / try-again button that Antigravity shows after a model error */
+    CLICK_RETRY_BUTTON: `(() => {
+        const panel = document.querySelector('.antigravity-agent-side-panel');
+        const scopes = [panel, document].filter(Boolean);
+
+        // Method 1: tooltip-id (fast path)
+        const tooltipIds = [
+            'retry-tooltip',
+            'try-again-tooltip',
+            'regenerate-tooltip',
+            'input-send-button-retry-tooltip',
+        ];
+        for (const scope of scopes) {
+            for (const id of tooltipIds) {
+                const el = scope.querySelector('[data-tooltip-id="' + id + '"]');
+                if (el && typeof el.click === 'function') {
+                    el.click();
+                    return { ok: true, method: 'tooltip-id' };
+                }
+            }
+        }
+
+        // Method 2: text pattern fallback
+        const normalize = (value) => (value || '').toLowerCase().replace(/\\s+/g, ' ').trim();
+        const RETRY_PATTERNS = [
+            /^retry$/,
+            /^try again$/,
+            /^regenerate$/,
+            /^regenerate response$/,
+            /^再試行$/,
+            /^もう一度試す$/,
+            /^リトライ$/,
+            /^再生成$/,
+        ];
+        const isRetryLabel = (value) => {
+            const normalized = normalize(value);
+            if (!normalized) return false;
+            return RETRY_PATTERNS.some((re) => re.test(normalized));
+        };
+        for (const scope of scopes) {
+            const buttons = scope.querySelectorAll('button, [role="button"]');
+            for (let i = buttons.length - 1; i >= 0; i--) {
+                const btn = buttons[i];
+                const labels = [
+                    btn.textContent || '',
+                    btn.getAttribute('aria-label') || '',
+                    btn.getAttribute('title') || '',
+                ];
+                if (labels.some(isRetryLabel) && typeof btn.click === 'function') {
+                    btn.click();
+                    return { ok: true, method: 'text-fallback' };
+                }
+            }
+        }
+
+        return { ok: false, error: 'Retry button not found' };
+    })()`,
 };
 
 /** Response generation phases */

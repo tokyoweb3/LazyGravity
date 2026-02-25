@@ -97,26 +97,34 @@ const RESPONSE_DELIVERY_MODE = resolveResponseDeliveryMode();
 export const getResponseDeliveryModeForTest = (): string => RESPONSE_DELIVERY_MODE;
 
 // =============================================================================
-// Retry prompt store — keeps original prompts for the Retry button on errors
+// Retry store — keeps retry info for the Retry button on errors
 // =============================================================================
 export const RETRY_BTN_PREFIX = 'retry_prompt_';
 const MAX_RETRY_STORE_SIZE = 100;
-const retryPromptStore = new Map<string, string>();
 
-function storeRetryPrompt(key: string, prompt: string): void {
-    if (retryPromptStore.size >= MAX_RETRY_STORE_SIZE) {
-        const firstKey = retryPromptStore.keys().next().value;
-        if (firstKey !== undefined) retryPromptStore.delete(firstKey);
+export interface RetryInfo {
+    /** 'resend' = prompt was never sent, re-inject it; 'click-retry' = prompt already sent, click Antigravity retry button */
+    type: 'resend' | 'click-retry';
+    /** Original prompt text (only used for 'resend') */
+    prompt?: string;
+}
+
+const retryStore = new Map<string, RetryInfo>();
+
+function storeRetry(key: string, info: RetryInfo): void {
+    if (retryStore.size >= MAX_RETRY_STORE_SIZE) {
+        const firstKey = retryStore.keys().next().value;
+        if (firstKey !== undefined) retryStore.delete(firstKey);
     }
-    retryPromptStore.set(key, prompt);
+    retryStore.set(key, info);
 }
 
-export function getRetryPrompt(key: string): string | undefined {
-    return retryPromptStore.get(key);
+export function getRetryInfo(key: string): RetryInfo | undefined {
+    return retryStore.get(key);
 }
 
-export function deleteRetryPrompt(key: string): void {
-    retryPromptStore.delete(key);
+export function deleteRetryInfo(key: string): void {
+    retryStore.delete(key);
 }
 
 export function createSerialTaskQueueForTest(queueName: string, traceId: string): (task: () => Promise<void>, label?: string) => Promise<void> {
@@ -199,10 +207,11 @@ async function sendPromptToAntigravity(
     const sendErrorWithRetry = (
         title: string,
         description: string,
+        retryInfo: RetryInfo,
     ): Promise<void> => enqueueGeneral(async () => {
         if (!channel) return;
         const retryId = message.id;
-        storeRetryPrompt(retryId, prompt);
+        storeRetry(retryId, retryInfo);
 
         const embed = new EmbedBuilder()
             .setTitle(title)
@@ -329,6 +338,7 @@ async function sendPromptToAntigravity(
         await sendErrorWithRetry(
             `${PHASE_ICONS.error} Connection Error`,
             'Not connected to Antigravity.\nStart with `open -a Antigravity --args --remote-debugging-port=9223`, then send a message to auto-connect.',
+            { type: 'resend', prompt },
         );
         await clearWatchingReaction();
         await message.react('❌').catch(() => { });
@@ -508,6 +518,7 @@ async function sendPromptToAntigravity(
             await sendErrorWithRetry(
                 `${PHASE_ICONS.error} Message Injection Failed`,
                 `Failed to send message: ${injectResult.error}`,
+                { type: 'resend', prompt },
             );
             await clearWatchingReaction();
             await message.react('❌').catch(() => { });
@@ -731,6 +742,7 @@ async function sendPromptToAntigravity(
         await sendErrorWithRetry(
             `${PHASE_ICONS.error} Error`,
             t(`Error occurred during processing: ${e.message}`),
+            { type: 'click-retry' },
         );
         await clearWatchingReaction();
         await message.react('❌').catch(() => { });
@@ -901,18 +913,7 @@ export const startBot = async () => {
                 });
             }
         },
-        handleRetry: async (interaction, retryId) => {
-            const storedPrompt = getRetryPrompt(retryId);
-            if (!storedPrompt) {
-                await interaction.followUp({
-                    content: t('Retry data not found. The prompt may have expired.'),
-                    flags: MessageFlags.Ephemeral,
-                });
-                return;
-            }
-
-            deleteRetryPrompt(retryId);
-
+        handleRetry: async (interaction, retryInfo) => {
             // Resolve CDP via workspace binding (same flow as template handler)
             const channelId = interaction.channelId;
             const workspacePath = wsHandler.getWorkspaceForChannel(channelId);
@@ -949,23 +950,53 @@ export const startBot = async () => {
                 return;
             }
 
-            const followUp = await interaction.followUp({
-                content: t('🔄 Retrying...'),
-            });
+            if (retryInfo.type === 'click-retry') {
+                // Post-injection error: prompt already in Antigravity, click its retry button
+                const clickResult = await cdp.call('Runtime.evaluate', {
+                    expression: RESPONSE_SELECTORS.CLICK_RETRY_BUTTON,
+                    returnByValue: true,
+                    awaitPromise: false,
+                }).catch(() => null);
+                const value = clickResult?.result?.value;
 
-            if (followUp instanceof Message) {
-                await promptDispatcher.send({
-                    message: followUp,
-                    prompt: storedPrompt,
-                    cdp,
-                    inboundImages: [],
-                    options: {
-                        chatSessionService,
-                        chatSessionRepo,
-                        channelManager,
-                        titleGenerator,
-                    },
+                if (value?.ok) {
+                    await interaction.followUp({
+                        content: t('🔄 Clicked Antigravity retry button. Response will regenerate.'),
+                    }).catch(logger.error);
+                } else {
+                    await interaction.followUp({
+                        content: t('Antigravity retry button not found. Please retry manually from Antigravity.'),
+                        flags: MessageFlags.Ephemeral,
+                    }).catch(logger.error);
+                }
+            } else {
+                // Pre-injection error: prompt was never sent, re-inject it
+                if (!retryInfo.prompt) {
+                    await interaction.followUp({
+                        content: t('Retry data not found. The prompt may have expired.'),
+                        flags: MessageFlags.Ephemeral,
+                    });
+                    return;
+                }
+
+                const followUp = await interaction.followUp({
+                    content: t('🔄 Retrying...'),
                 });
+
+                if (followUp instanceof Message) {
+                    await promptDispatcher.send({
+                        message: followUp,
+                        prompt: retryInfo.prompt,
+                        cdp,
+                        inboundImages: [],
+                        options: {
+                            chatSessionService,
+                            chatSessionRepo,
+                            channelManager,
+                            titleGenerator,
+                        },
+                    });
+                }
             }
         },
     }));

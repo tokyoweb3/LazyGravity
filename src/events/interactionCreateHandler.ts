@@ -11,7 +11,7 @@ import {
 
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
-import { RETRY_BTN_PREFIX } from '../bot/index';
+import { RETRY_BTN_PREFIX, getRetryInfo, deleteRetryInfo, RetryInfo } from '../bot/index';
 import { TEMPLATE_BTN_PREFIX, parseTemplateButtonId } from '../ui/templateUi';
 import {
     AUTOACCEPT_BTN_OFF,
@@ -68,7 +68,7 @@ export interface InteractionCreateHandlerDeps {
         client: any,
     ) => Promise<void>;
     handleTemplateUse?: (interaction: ButtonInteraction, templateId: number) => Promise<void>;
-    handleRetry?: (interaction: ButtonInteraction, retryId: string) => Promise<void>;
+    handleRetry?: (interaction: ButtonInteraction, retryInfo: RetryInfo) => Promise<void>;
 }
 
 export function createInteractionCreateHandler(deps: InteractionCreateHandlerDeps) {
@@ -256,6 +256,16 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                     await interaction.deferUpdate();
                     const retryId = interaction.customId.slice(RETRY_BTN_PREFIX.length);
 
+                    const retryInfo = getRetryInfo(retryId);
+                    if (!retryInfo) {
+                        await interaction.followUp({
+                            content: t('Retry data not found. The prompt may have expired.'),
+                            flags: MessageFlags.Ephemeral,
+                        }).catch(logger.error);
+                        return;
+                    }
+                    deleteRetryInfo(retryId);
+
                     // Disable the retry button after click
                     const disabledRows = interaction.message.components
                         .map((row) => {
@@ -281,7 +291,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                     await interaction.editReply({ components: disabledRows }).catch(logger.error);
 
                     if (deps.handleRetry) {
-                        await deps.handleRetry(interaction, retryId);
+                        await deps.handleRetry(interaction, retryInfo);
                     }
                     return;
                 }
