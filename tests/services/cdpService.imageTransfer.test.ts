@@ -165,6 +165,29 @@ describe('CdpService - Image Transfer', () => {
         expect(domSetFilesCall.params.files).toEqual(['/tmp/agclaw-a.png', '/tmp/agclaw-b.jpg']);
     });
 
+    it('does not dispatch duplicate input/change events after DOM.setFileInputFiles', async () => {
+        await service.connect();
+        await new Promise(r => setTimeout(r, 100));
+
+        await service.injectMessageWithImageFiles(
+            'test prompt',
+            ['/tmp/test-image.png'],
+        );
+
+        // Collect all Runtime.evaluate calls and check their expressions
+        const evalCalls = receivedMessages.filter((m) => m.method === 'Runtime.evaluate');
+        const notifyScriptCalls = evalCalls.filter((m) =>
+            m.params.expression.includes('data-agclaw-upload-token'),
+        );
+
+        // The cleanup script should exist but must NOT dispatch events
+        // (DOM.setFileInputFiles already fires change internally)
+        expect(notifyScriptCalls.length).toBeGreaterThan(0);
+        for (const call of notifyScriptCalls) {
+            expect(call.params.expression).not.toContain('dispatchEvent');
+        }
+    });
+
     it('extracts image data from the latest response', async () => {
         await service.connect();
         await new Promise(r => setTimeout(r, 100));

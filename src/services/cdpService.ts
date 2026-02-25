@@ -916,8 +916,6 @@ export class CdpService extends EventEmitter {
         const notifyScript = `(() => {
             const input = document.querySelector('${selector}');
             if (!input) return { ok: false, error: 'Image input not found' };
-            input.dispatchEvent(new Event('input', { bubbles: true }));
-            input.dispatchEvent(new Event('change', { bubbles: true }));
             input.removeAttribute('data-agclaw-upload-token');
             return { ok: true };
         })()`;
