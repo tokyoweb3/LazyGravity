@@ -46,9 +46,11 @@ import {
     buildApprovalCustomId,
     CdpBridge,
     ensureApprovalDetector,
+    ensurePlanningDetector,
     getCurrentCdp,
     initCdpBridge,
     parseApprovalCustomId,
+    parsePlanningCustomId,
     registerApprovalSessionChannel,
     registerApprovalWorkspaceChannel,
 } from '../services/cdpBridgeManager';
@@ -847,6 +849,7 @@ export const startBot = async () => {
         sendAutoAcceptUI,
         getCurrentCdp,
         parseApprovalCustomId,
+        parsePlanningCustomId,
         handleSlashInteraction: async (
             interaction,
             handler,
@@ -899,6 +902,7 @@ export const startBot = async () => {
                         registerApprovalSessionChannel(bridge, dirName, session.displayName, interaction.channel as any);
                     }
                     ensureApprovalDetector(bridge, cdp, dirName, client);
+                    ensurePlanningDetector(bridge, cdp, dirName, client);
                 } catch (e: any) {
                     await interaction.followUp({
                         content: `Failed to connect to workspace: ${e.message}`,
@@ -1252,6 +1256,12 @@ async function handleSlashInteraction(
 
         case 'cleanup': {
             await cleanupHandler.handleCleanup(interaction);
+            break;
+        }
+
+        case 'ping': {
+            const apiLatency = interaction.client.ws.ping;
+            await interaction.editReply({ content: `🏓 Pong! API Latency is **${apiLatency}ms**.` });
             break;
         }
 

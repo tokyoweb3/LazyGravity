@@ -7,6 +7,7 @@ import { ChatSessionRepository } from '../database/chatSessionRepository';
 import {
     CdpBridge,
     ensureApprovalDetector as ensureApprovalDetectorFn,
+    ensurePlanningDetector as ensurePlanningDetectorFn,
     getCurrentCdp as getCurrentCdpFn,
     registerApprovalSessionChannel as registerApprovalSessionChannelFn,
     registerApprovalWorkspaceChannel as registerApprovalWorkspaceChannelFn,
@@ -57,6 +58,7 @@ export interface MessageCreateHandlerDeps {
     handleScreenshot: (target: Message, cdp: CdpService | null) => Promise<void>;
     getCurrentCdp?: (bridge: CdpBridge) => CdpService | null;
     ensureApprovalDetector?: (bridge: CdpBridge, cdp: CdpService, workspaceDirName: string, client: any) => void;
+    ensurePlanningDetector?: (bridge: CdpBridge, cdp: CdpService, workspaceDirName: string, client: any) => void;
     registerApprovalWorkspaceChannel?: (bridge: CdpBridge, workspaceDirName: string, channel: Message['channel']) => void;
     registerApprovalSessionChannel?: (bridge: CdpBridge, workspaceDirName: string, sessionTitle: string, channel: Message['channel']) => void;
     downloadInboundImageAttachments?: (message: Message) => Promise<InboundImageAttachment[]>;
@@ -67,6 +69,7 @@ export interface MessageCreateHandlerDeps {
 export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
     const getCurrentCdp = deps.getCurrentCdp ?? getCurrentCdpFn;
     const ensureApprovalDetector = deps.ensureApprovalDetector ?? ensureApprovalDetectorFn;
+    const ensurePlanningDetector = deps.ensurePlanningDetector ?? ensurePlanningDetectorFn;
     const registerApprovalWorkspaceChannel = deps.registerApprovalWorkspaceChannel ?? registerApprovalWorkspaceChannelFn;
     const registerApprovalSessionChannel = deps.registerApprovalSessionChannel ?? registerApprovalSessionChannelFn;
     const downloadInboundImageAttachments = deps.downloadInboundImageAttachments ?? downloadInboundImageAttachmentsFn;
@@ -180,6 +183,7 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                         registerApprovalWorkspaceChannel(deps.bridge, dirName, message.channel);
 
                         ensureApprovalDetector(deps.bridge, cdp, dirName, deps.client);
+                        ensurePlanningDetector(deps.bridge, cdp, dirName, deps.client);
 
                         const session = deps.chatSessionRepo.findByChannelId(message.channelId);
                         if (session?.displayName) {
@@ -210,6 +214,12 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                         }
 
                         await deps.autoRenameChannel(message, deps.chatSessionRepo, deps.titleGenerator, deps.channelManager, cdp);
+
+                        // Re-register session channel after autoRenameChannel sets displayName
+                        const updatedSession = deps.chatSessionRepo.findByChannelId(message.channelId);
+                        if (updatedSession?.displayName) {
+                            registerApprovalSessionChannel(deps.bridge, dirName, updatedSession.displayName, message.channel);
+                        }
 
                         await deps.sendPromptToAntigravity(deps.bridge, message, promptText, cdp, deps.modeService, deps.modelService, inboundImages, {
                             chatSessionService: deps.chatSessionService,

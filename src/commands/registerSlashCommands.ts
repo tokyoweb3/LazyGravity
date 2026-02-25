@@ -140,6 +140,11 @@ const helpCommand = new SlashCommandBuilder()
     .setName('help')
     .setDescription(t('Display list of available commands'));
 
+/** /ping command definition */
+const pingCommand = new SlashCommandBuilder()
+    .setName('ping')
+    .setDescription(t('Check bot latency'));
+
 /** Array of commands to register */
 export const slashCommands = [
     helpCommand,
@@ -154,6 +159,7 @@ export const slashCommands = [
     newCommand,
     chatCommand,
     cleanupCommand,
+    pingCommand,
 ];
 
 /**

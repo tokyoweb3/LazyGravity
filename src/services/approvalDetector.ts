@@ -196,7 +196,7 @@ const EXPAND_ALWAYS_ALLOW_MENU_SCRIPT = `(() => {
  *
  * @param buttonText Text of the button to click
  */
-function buildClickScript(buttonText: string): string {
+export function buildClickScript(buttonText: string): string {
     const safeText = JSON.stringify(buttonText);
     return `(() => {
         const normalize = (text) => (text || '').toLowerCase().replace(/\\s+/g, ' ').trim();

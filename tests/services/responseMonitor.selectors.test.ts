@@ -181,6 +181,30 @@ describe('Lean RESPONSE_SELECTORS', () => {
     });
 
     // ---------------------------------------------------------------
+    // Test 19b: RESPONSE_TEXT excludes .notify-user-container
+    // ---------------------------------------------------------------
+    it('RESPONSE_TEXT script excludes .notify-user-container via isInsideExcludedContainer', () => {
+        const script = RESPONSE_SELECTORS.RESPONSE_TEXT;
+        expect(script).toContain('.notify-user-container');
+    });
+
+    // ---------------------------------------------------------------
+    // Test 19c: DUMP_ALL_TEXTS excludes .notify-user-container
+    // ---------------------------------------------------------------
+    it('DUMP_ALL_TEXTS script excludes .notify-user-container', () => {
+        const script = RESPONSE_SELECTORS.DUMP_ALL_TEXTS;
+        expect(script).toContain('.notify-user-container');
+    });
+
+    // ---------------------------------------------------------------
+    // Test 19d: PROCESS_LOGS excludes .notify-user-container
+    // ---------------------------------------------------------------
+    it('PROCESS_LOGS script excludes .notify-user-container', () => {
+        const script = RESPONSE_SELECTORS.PROCESS_LOGS;
+        expect(script).toContain('.notify-user-container');
+    });
+
+    // ---------------------------------------------------------------
     // Test 20: RESPONSE_TEXT contains looksLikeQuotaPopup filter
     // ---------------------------------------------------------------
     it('RESPONSE_TEXT script contains looksLikeQuotaPopup filter', () => {
