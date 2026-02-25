@@ -25,7 +25,8 @@ import {
     CLEANUP_DELETE_BTN,
 } from '../commands/cleanupCommandHandler';
 import { SlashCommandHandler } from '../commands/slashCommandHandler';
-import { WorkspaceCommandHandler, PROJECT_SELECT_ID, WORKSPACE_SELECT_ID } from '../commands/workspaceCommandHandler';
+import { WorkspaceCommandHandler } from '../commands/workspaceCommandHandler';
+import { PROJECT_PAGE_PREFIX, parseProjectPageId, isProjectSelectId } from '../ui/projectListUi';
 import { CdpBridge } from '../services/cdpBridgeManager';
 import { CdpService } from '../services/cdpService';
 import { MODE_DISPLAY_NAMES, ModeService } from '../services/modeService';
@@ -250,6 +251,14 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                     return;
                 }
 
+                if (interaction.customId.startsWith(`${PROJECT_PAGE_PREFIX}:`)) {
+                    const page = parseProjectPageId(interaction.customId);
+                    if (!isNaN(page) && page >= 0) {
+                        await deps.wsHandler.handlePageButton(interaction, page);
+                    }
+                    return;
+                }
+
                 if (interaction.customId.startsWith(TEMPLATE_BTN_PREFIX)) {
                     await interaction.deferUpdate();
                     const templateId = parseTemplateButtonId(interaction.customId);
@@ -318,7 +327,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
             return;
         }
 
-        if (interaction.isStringSelectMenu() && (interaction.customId === PROJECT_SELECT_ID || interaction.customId === WORKSPACE_SELECT_ID)) {
+        if (interaction.isStringSelectMenu() && isProjectSelectId(interaction.customId)) {
             if (!deps.config.allowedUserIds.includes(interaction.user.id)) {
                 await interaction.reply({ content: t('You do not have permission.'), flags: MessageFlags.Ephemeral }).catch(logger.error);
                 return;
