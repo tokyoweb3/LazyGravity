@@ -67,6 +67,7 @@ describe('messageCreateHandler', () => {
             handleScreenshot: jest.fn(),
             getCurrentCdp: jest.fn(),
             ensureApprovalDetector: jest.fn(),
+            ensureErrorPopupDetector: jest.fn(),
             ensurePlanningDetector: jest.fn(),
             registerApprovalWorkspaceChannel: jest.fn(),
             registerApprovalSessionChannel,

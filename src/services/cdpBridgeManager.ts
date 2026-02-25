@@ -13,6 +13,7 @@ import { ApprovalDetector, ApprovalInfo } from './approvalDetector';
 import { AutoAcceptService } from './autoAcceptService';
 import { CdpConnectionPool } from './cdpConnectionPool';
 import { CdpService } from './cdpService';
+import { ErrorPopupDetector, ErrorPopupInfo } from './errorPopupDetector';
 import { PlanningDetector, PlanningInfo } from './planningDetector';
 import { QuotaService } from './quotaService';
 
@@ -36,6 +37,9 @@ const ALWAYS_ALLOW_ACTION_PREFIX = 'always_allow_action';
 const DENY_ACTION_PREFIX = 'deny_action';
 const PLANNING_OPEN_ACTION_PREFIX = 'planning_open_action';
 const PLANNING_PROCEED_ACTION_PREFIX = 'planning_proceed_action';
+const ERROR_POPUP_DISMISS_ACTION_PREFIX = 'error_popup_dismiss_action';
+const ERROR_POPUP_COPY_DEBUG_ACTION_PREFIX = 'error_popup_copy_debug_action';
+const ERROR_POPUP_RETRY_ACTION_PREFIX = 'error_popup_retry_action';
 
 function normalizeSessionTitle(title: string): string {
     return title.trim().toLowerCase();
@@ -184,6 +188,50 @@ export function parsePlanningCustomId(customId: string): { action: 'open' | 'pro
         const rest = customId.substring(`${PLANNING_PROCEED_ACTION_PREFIX}:`.length);
         const [workspaceDirName, channelId] = rest.split(':');
         return { action: 'proceed', workspaceDirName: workspaceDirName || null, channelId: channelId || null };
+    }
+    return null;
+}
+
+export function buildErrorPopupCustomId(
+    action: 'dismiss' | 'copy_debug' | 'retry',
+    workspaceDirName: string,
+    channelId?: string,
+): string {
+    const prefix = action === 'dismiss'
+        ? ERROR_POPUP_DISMISS_ACTION_PREFIX
+        : action === 'copy_debug'
+            ? ERROR_POPUP_COPY_DEBUG_ACTION_PREFIX
+            : ERROR_POPUP_RETRY_ACTION_PREFIX;
+    if (channelId && channelId.trim().length > 0) {
+        return `${prefix}:${workspaceDirName}:${channelId}`;
+    }
+    return `${prefix}:${workspaceDirName}`;
+}
+
+export function parseErrorPopupCustomId(customId: string): { action: 'dismiss' | 'copy_debug' | 'retry'; workspaceDirName: string | null; channelId: string | null } | null {
+    if (customId === ERROR_POPUP_DISMISS_ACTION_PREFIX) {
+        return { action: 'dismiss', workspaceDirName: null, channelId: null };
+    }
+    if (customId === ERROR_POPUP_COPY_DEBUG_ACTION_PREFIX) {
+        return { action: 'copy_debug', workspaceDirName: null, channelId: null };
+    }
+    if (customId === ERROR_POPUP_RETRY_ACTION_PREFIX) {
+        return { action: 'retry', workspaceDirName: null, channelId: null };
+    }
+    if (customId.startsWith(`${ERROR_POPUP_DISMISS_ACTION_PREFIX}:`)) {
+        const rest = customId.substring(`${ERROR_POPUP_DISMISS_ACTION_PREFIX}:`.length);
+        const [workspaceDirName, channelId] = rest.split(':');
+        return { action: 'dismiss', workspaceDirName: workspaceDirName || null, channelId: channelId || null };
+    }
+    if (customId.startsWith(`${ERROR_POPUP_COPY_DEBUG_ACTION_PREFIX}:`)) {
+        const rest = customId.substring(`${ERROR_POPUP_COPY_DEBUG_ACTION_PREFIX}:`.length);
+        const [workspaceDirName, channelId] = rest.split(':');
+        return { action: 'copy_debug', workspaceDirName: workspaceDirName || null, channelId: channelId || null };
+    }
+    if (customId.startsWith(`${ERROR_POPUP_RETRY_ACTION_PREFIX}:`)) {
+        const rest = customId.substring(`${ERROR_POPUP_RETRY_ACTION_PREFIX}:`.length);
+        const [workspaceDirName, channelId] = rest.split(':');
+        return { action: 'retry', workspaceDirName: workspaceDirName || null, channelId: channelId || null };
     }
     return null;
 }
@@ -383,4 +431,76 @@ export function ensurePlanningDetector(
     detector.start();
     bridge.pool.registerPlanningDetector(workspaceDirName, detector);
     logger.info(`[PlanningDetector:${workspaceDirName}] Started planning button detection`);
+}
+
+/**
+ * Helper to start an error popup detector for each workspace.
+ * Does nothing if a detector for the same workspace is already running.
+ */
+export function ensureErrorPopupDetector(
+    bridge: CdpBridge,
+    cdp: CdpService,
+    workspaceDirName: string,
+    _client: Client,
+): void {
+    const existing = bridge.pool.getErrorPopupDetector(workspaceDirName);
+    if (existing && existing.isActive()) return;
+
+    const detector = new ErrorPopupDetector({
+        cdpService: cdp,
+        pollIntervalMs: 3000,
+        onErrorPopup: async (info: ErrorPopupInfo) => {
+            logger.info(`[ErrorPopupDetector:${workspaceDirName}] Error popup detected (title="${info.title}")`);
+
+            const currentChatTitle = await getCurrentChatTitle(cdp);
+            const targetChannel = resolveApprovalChannelForCurrentChat(bridge, workspaceDirName, currentChatTitle);
+            const targetChannelId = targetChannel && 'id' in targetChannel ? String((targetChannel as any).id) : '';
+
+            if (!targetChannel || !targetChannelId || !('send' in targetChannel)) {
+                logger.warn(
+                    `[ErrorPopupDetector:${workspaceDirName}] Skipped error popup notification because chat is not linked to a Discord session` +
+                    `${currentChatTitle ? ` (title="${currentChatTitle}")` : ''}`,
+                );
+                return;
+            }
+
+            const bodyText = info.body || t('An error occurred in the Antigravity agent.');
+
+            const embed = new EmbedBuilder()
+                .setTitle(info.title || t('Agent Error'))
+                .setDescription(bodyText.substring(0, 4096))
+                .setColor(0xE74C3C)
+                .addFields(
+                    { name: t('Buttons'), value: info.buttons.join(', ') || t('(None)'), inline: true },
+                    { name: t('Workspace'), value: workspaceDirName, inline: true },
+                )
+                .setTimestamp();
+
+            const dismissBtn = new ButtonBuilder()
+                .setCustomId(buildErrorPopupCustomId('dismiss', workspaceDirName, targetChannelId))
+                .setLabel(t('Dismiss'))
+                .setStyle(ButtonStyle.Secondary);
+
+            const copyDebugBtn = new ButtonBuilder()
+                .setCustomId(buildErrorPopupCustomId('copy_debug', workspaceDirName, targetChannelId))
+                .setLabel(t('Copy debug info'))
+                .setStyle(ButtonStyle.Primary);
+
+            const retryBtn = new ButtonBuilder()
+                .setCustomId(buildErrorPopupCustomId('retry', workspaceDirName, targetChannelId))
+                .setLabel(t('Retry'))
+                .setStyle(ButtonStyle.Success);
+
+            const row = new ActionRowBuilder<ButtonBuilder>().addComponents(dismissBtn, copyDebugBtn, retryBtn);
+
+            (targetChannel as any).send({
+                embeds: [embed],
+                components: [row],
+            }).catch(logger.error);
+        },
+    });
+
+    detector.start();
+    bridge.pool.registerErrorPopupDetector(workspaceDirName, detector);
+    logger.info(`[ErrorPopupDetector:${workspaceDirName}] Started error popup detection`);
 }

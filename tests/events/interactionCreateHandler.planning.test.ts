@@ -32,6 +32,7 @@ describe('interactionCreateHandler - planning buttons', () => {
             handleScreenshot: jest.fn(),
             getCurrentCdp: jest.fn(),
             parseApprovalCustomId: jest.fn().mockReturnValue(null),
+            parseErrorPopupCustomId: jest.fn().mockReturnValue(null),
             parsePlanningCustomId: jest.fn().mockReturnValue(null),
             handleSlashInteraction: jest.fn(),
             ...overrides,

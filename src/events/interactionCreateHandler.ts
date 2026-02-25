@@ -56,6 +56,7 @@ export interface InteractionCreateHandlerDeps {
     getCurrentCdp: (bridge: CdpBridge) => CdpService | null;
     parseApprovalCustomId: (customId: string) => { action: 'approve' | 'always_allow' | 'deny'; workspaceDirName: string | null; channelId: string | null } | null;
     parsePlanningCustomId: (customId: string) => { action: 'open' | 'proceed'; workspaceDirName: string | null; channelId: string | null } | null;
+    parseErrorPopupCustomId: (customId: string) => { action: 'dismiss' | 'copy_debug' | 'retry'; workspaceDirName: string | null; channelId: string | null } | null;
     handleSlashInteraction: (
         interaction: ChatInputCommandInteraction,
         handler: SlashCommandHandler,
@@ -298,6 +299,160 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                                     await interaction.reply({ content: t('An error occurred while processing the planning action.'), flags: MessageFlags.Ephemeral });
                                 } else {
                                     await interaction.followUp({ content: t('An error occurred while processing the planning action.'), flags: MessageFlags.Ephemeral }).catch(logger.error);
+                                }
+                            } catch { /* ignore */ }
+                        }
+                    }
+                    return;
+                }
+
+                const errorPopupAction = deps.parseErrorPopupCustomId(interaction.customId);
+                if (errorPopupAction) {
+                    if (errorPopupAction.channelId && errorPopupAction.channelId !== interaction.channelId) {
+                        await interaction.reply({
+                            content: t('This error popup action is linked to a different session channel.'),
+                            flags: MessageFlags.Ephemeral,
+                        }).catch(logger.error);
+                        return;
+                    }
+
+                    const errorWorkspaceDirName = errorPopupAction.workspaceDirName ?? deps.bridge.lastActiveWorkspace;
+                    const errorDetector = errorWorkspaceDirName
+                        ? deps.bridge.pool.getErrorPopupDetector(errorWorkspaceDirName)
+                        : undefined;
+
+                    if (!errorDetector) {
+                        try {
+                            await interaction.reply({ content: t('Error popup detector not found.'), flags: MessageFlags.Ephemeral });
+                        } catch { /* ignore */ }
+                        return;
+                    }
+
+                    try {
+                        if (errorPopupAction.action === 'dismiss') {
+                            const clicked = await errorDetector.clickDismissButton();
+
+                            const originalEmbed = interaction.message.embeds[0];
+                            const updatedEmbed = originalEmbed
+                                ? EmbedBuilder.from(originalEmbed)
+                                : new EmbedBuilder().setTitle('Agent Error');
+                            const historyText = `Dismiss by <@${interaction.user.id}> (${new Date().toLocaleString('ja-JP')})`;
+                            updatedEmbed
+                                .setColor(clicked ? 0x95A5A6 : 0xE74C3C)
+                                .addFields({ name: 'Action History', value: historyText, inline: false })
+                                .setTimestamp();
+
+                            try {
+                                await interaction.update({
+                                    embeds: [updatedEmbed],
+                                    components: disableAllButtons(interaction.message.components),
+                                });
+                            } catch (interactionError: any) {
+                                if (interactionError?.code === 10062 || interactionError?.code === 40060) {
+                                    logger.warn('[ErrorPopup] Interaction expired. Responding directly in the channel.');
+                                    if (interaction.channel && 'send' in interaction.channel) {
+                                        const fallbackMessage = clicked
+                                            ? t('Error popup dismissed.')
+                                            : t('Dismiss button not found.');
+                                        await (interaction.channel as any).send(fallbackMessage).catch(logger.error);
+                                    }
+                                } else {
+                                    throw interactionError;
+                                }
+                            }
+                        } else if (errorPopupAction.action === 'copy_debug') {
+                            await interaction.deferUpdate();
+
+                            const clicked = await errorDetector.clickCopyDebugInfoButton();
+                            if (!clicked) {
+                                await interaction.followUp({ content: t('Copy debug info button not found.'), flags: MessageFlags.Ephemeral });
+                                return;
+                            }
+
+                            // Wait for clipboard to be populated
+                            await new Promise((resolve) => setTimeout(resolve, 300));
+
+                            const clipboardContent = await errorDetector.readClipboard();
+
+                            // Update original embed with action history
+                            const originalEmbed = interaction.message.embeds[0];
+                            const updatedEmbed = originalEmbed
+                                ? EmbedBuilder.from(originalEmbed)
+                                : new EmbedBuilder().setTitle('Agent Error');
+                            const historyText = `Copy debug info by <@${interaction.user.id}> (${new Date().toLocaleString('ja-JP')})`;
+                            updatedEmbed
+                                .setColor(0x3498DB)
+                                .addFields({ name: 'Action History', value: historyText, inline: false })
+                                .setTimestamp();
+
+                            await interaction.editReply({
+                                embeds: [updatedEmbed],
+                                components: interaction.message.components,
+                            });
+
+                            // Send debug info as a new message
+                            if (clipboardContent && interaction.channel && 'send' in interaction.channel) {
+                                const MAX_DEBUG_CONTENT = 4096;
+                                const truncated = clipboardContent.length > MAX_DEBUG_CONTENT
+                                    ? clipboardContent.substring(0, MAX_DEBUG_CONTENT - 15) + '\n\n(truncated)'
+                                    : clipboardContent;
+
+                                const debugEmbed = new EmbedBuilder()
+                                    .setTitle(t('Debug Info'))
+                                    .setDescription(`\`\`\`\n${truncated}\n\`\`\``)
+                                    .setColor(0x3498DB)
+                                    .setTimestamp();
+
+                                await (interaction.channel as any).send({ embeds: [debugEmbed] }).catch(logger.error);
+                            } else if (!clipboardContent) {
+                                await interaction.followUp({
+                                    content: t('Could not read debug info from clipboard.'),
+                                    flags: MessageFlags.Ephemeral,
+                                }).catch(logger.error);
+                            }
+                        } else {
+                            // Retry action
+                            const clicked = await errorDetector.clickRetryButton();
+
+                            const originalEmbed = interaction.message.embeds[0];
+                            const updatedEmbed = originalEmbed
+                                ? EmbedBuilder.from(originalEmbed)
+                                : new EmbedBuilder().setTitle('Agent Error');
+                            const historyText = `Retry by <@${interaction.user.id}> (${new Date().toLocaleString('ja-JP')})`;
+                            updatedEmbed
+                                .setColor(clicked ? 0x2ECC71 : 0xE74C3C)
+                                .addFields({ name: 'Action History', value: historyText, inline: false })
+                                .setTimestamp();
+
+                            try {
+                                await interaction.update({
+                                    embeds: [updatedEmbed],
+                                    components: disableAllButtons(interaction.message.components),
+                                });
+                            } catch (interactionError: any) {
+                                if (interactionError?.code === 10062 || interactionError?.code === 40060) {
+                                    logger.warn('[ErrorPopup] Interaction expired. Responding directly in the channel.');
+                                    if (interaction.channel && 'send' in interaction.channel) {
+                                        const fallbackMessage = clicked
+                                            ? t('Retry initiated.')
+                                            : t('Retry button not found.');
+                                        await (interaction.channel as any).send(fallbackMessage).catch(logger.error);
+                                    }
+                                } else {
+                                    throw interactionError;
+                                }
+                            }
+                        }
+                    } catch (errorPopupError: any) {
+                        if (errorPopupError?.code === 10062 || errorPopupError?.code === 40060) {
+                            logger.warn('[ErrorPopup] Interaction expired.');
+                        } else {
+                            logger.error('[ErrorPopup] Error handling error popup button:', errorPopupError);
+                            try {
+                                if (!(interaction as any).replied && !(interaction as any).deferred) {
+                                    await interaction.reply({ content: t('An error occurred while processing the error popup action.'), flags: MessageFlags.Ephemeral });
+                                } else {
+                                    await interaction.followUp({ content: t('An error occurred while processing the error popup action.'), flags: MessageFlags.Ephemeral }).catch(logger.error);
                                 }
                             } catch { /* ignore */ }
                         }

@@ -1,6 +1,7 @@
 import { logger } from '../utils/logger';
 import { CdpService, CdpServiceOptions } from './cdpService';
 import { ApprovalDetector } from './approvalDetector';
+import { ErrorPopupDetector } from './errorPopupDetector';
 import { PlanningDetector } from './planningDetector';
 
 /**
@@ -13,6 +14,7 @@ import { PlanningDetector } from './planningDetector';
 export class CdpConnectionPool {
     private readonly connections = new Map<string, CdpService>();
     private readonly approvalDetectors = new Map<string, ApprovalDetector>();
+    private readonly errorPopupDetectors = new Map<string, ErrorPopupDetector>();
     private readonly planningDetectors = new Map<string, PlanningDetector>();
     private readonly connectingPromises = new Map<string, Promise<CdpService>>();
     private readonly cdpOptions: CdpServiceOptions;
@@ -88,6 +90,12 @@ export class CdpConnectionPool {
             this.approvalDetectors.delete(workspaceDirName);
         }
 
+        const errorPopupDetector = this.errorPopupDetectors.get(workspaceDirName);
+        if (errorPopupDetector) {
+            errorPopupDetector.stop();
+            this.errorPopupDetectors.delete(workspaceDirName);
+        }
+
         const planningDetector = this.planningDetectors.get(workspaceDirName);
         if (planningDetector) {
             planningDetector.stop();
@@ -121,6 +129,25 @@ export class CdpConnectionPool {
      */
     getApprovalDetector(workspaceDirName: string): ApprovalDetector | undefined {
         return this.approvalDetectors.get(workspaceDirName);
+    }
+
+    /**
+     * Register an error popup detector for a workspace.
+     */
+    registerErrorPopupDetector(workspaceDirName: string, detector: ErrorPopupDetector): void {
+        // Stop existing detector
+        const existing = this.errorPopupDetectors.get(workspaceDirName);
+        if (existing && existing.isActive()) {
+            existing.stop();
+        }
+        this.errorPopupDetectors.set(workspaceDirName, detector);
+    }
+
+    /**
+     * Get the error popup detector for a workspace.
+     */
+    getErrorPopupDetector(workspaceDirName: string): ErrorPopupDetector | undefined {
+        return this.errorPopupDetectors.get(workspaceDirName);
     }
 
     /**
@@ -189,6 +216,11 @@ export class CdpConnectionPool {
             if (detector) {
                 detector.stop();
                 this.approvalDetectors.delete(dirName);
+            }
+            const errorDetector = this.errorPopupDetectors.get(dirName);
+            if (errorDetector) {
+                errorDetector.stop();
+                this.errorPopupDetectors.delete(dirName);
             }
             const planDetector = this.planningDetectors.get(dirName);
             if (planDetector) {
