@@ -68,7 +68,10 @@ describe('ensureAntigravityRunning', () => {
         await ensureAntigravityRunning();
 
         expect(http.get).toHaveBeenCalledTimes(1);
-        expect(consoleSpy).toHaveBeenCalledWith('\x1b[36m[INFO]\x1b[0m', '[AntigravityLauncher] OK — Port 9222 responding');
+        expect(consoleSpy).toHaveBeenCalledWith(
+            expect.stringContaining('\x1b[36m[INFO]\x1b[0m'),
+            expect.stringContaining('[AntigravityLauncher] OK — Port 9222 responding')
+        );
     });
 
     it('outputs a warning log when all ports fail', async () => {
@@ -77,6 +80,9 @@ describe('ensureAntigravityRunning', () => {
         await ensureAntigravityRunning();
 
         expect(http.get).toHaveBeenCalledTimes(6);
-        expect(consoleWarnSpy).toHaveBeenCalledWith('\x1b[33m[WARN]\x1b[0m', '  Antigravity CDP ports are not responding');
+        expect(consoleWarnSpy).toHaveBeenCalledWith(
+            expect.stringContaining('\x1b[33m[WARN]\x1b[0m'),
+            expect.stringContaining('  Antigravity CDP ports are not responding')
+        );
     });
 });

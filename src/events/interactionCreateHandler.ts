@@ -55,6 +55,7 @@ export interface InteractionCreateHandlerDeps {
     handleScreenshot?: (...args: any[]) => Promise<void>;
     getCurrentCdp: (bridge: CdpBridge) => CdpService | null;
     parseApprovalCustomId: (customId: string) => { action: 'approve' | 'always_allow' | 'deny'; workspaceDirName: string | null; channelId: string | null } | null;
+    parsePlanningCustomId: (customId: string) => { action: 'open' | 'proceed'; workspaceDirName: string | null; channelId: string | null } | null;
     handleSlashInteraction: (
         interaction: ChatInputCommandInteraction,
         handler: SlashCommandHandler,
@@ -68,6 +69,31 @@ export interface InteractionCreateHandlerDeps {
         client: any,
     ) => Promise<void>;
     handleTemplateUse?: (interaction: ButtonInteraction, templateId: number) => Promise<void>;
+}
+
+/** Disable all buttons in message component rows. */
+function disableAllButtons(components: readonly any[]): ActionRowBuilder<ButtonBuilder>[] {
+    return components
+        .map((row) => {
+            const rowAny = row as any;
+            if (!Array.isArray(rowAny.components)) return null;
+
+            const nextRow = new ActionRowBuilder<ButtonBuilder>();
+            const disabledButtons = rowAny.components
+                .map((component: any) => {
+                    const componentType = component?.type ?? component?.data?.type;
+                    if (componentType !== 2) return null;
+                    const payload = typeof component?.toJSON === 'function'
+                        ? component.toJSON()
+                        : component;
+                    return ButtonBuilder.from(payload).setDisabled(true);
+                })
+                .filter((button: ButtonBuilder | null): button is ButtonBuilder => button !== null);
+            if (disabledButtons.length === 0) return null;
+            nextRow.addComponents(...disabledButtons);
+            return nextRow;
+        })
+        .filter((row): row is ActionRowBuilder<ButtonBuilder> => row !== null);
 }
 
 export function createInteractionCreateHandler(deps: InteractionCreateHandlerDeps) {
@@ -126,31 +152,9 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                                 .addFields({ name: 'Action History', value: historyText, inline: false })
                                 .setTimestamp();
 
-                            const disabledRows = interaction.message.components
-                                .map((row) => {
-                                    const rowAny = row as any;
-                                    if (!Array.isArray(rowAny.components)) return null;
-
-                                    const nextRow = new ActionRowBuilder<ButtonBuilder>();
-                                    const disabledButtons = rowAny.components
-                                        .map((component: any) => {
-                                            const componentType = component?.type ?? component?.data?.type;
-                                            if (componentType !== 2) return null;
-                                            const payload = typeof component?.toJSON === 'function'
-                                                ? component.toJSON()
-                                                : component;
-                                            return ButtonBuilder.from(payload).setDisabled(true);
-                                        })
-                                        .filter((button: ButtonBuilder | null): button is ButtonBuilder => button !== null);
-                                    if (disabledButtons.length === 0) return null;
-                                    nextRow.addComponents(...disabledButtons);
-                                    return nextRow;
-                                })
-                                .filter((row): row is ActionRowBuilder<ButtonBuilder> => row !== null);
-
                             await interaction.update({
                                 embeds: [updatedEmbed],
-                                components: disabledRows,
+                                components: disableAllButtons(interaction.message.components),
                             });
                         } else {
                             await interaction.reply({ content: 'Approval button not found.', flags: MessageFlags.Ephemeral });
@@ -166,6 +170,136 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                             }
                         } else {
                             throw interactionError;
+                        }
+                    }
+                    return;
+                }
+
+                const planningAction = deps.parsePlanningCustomId(interaction.customId);
+                if (planningAction) {
+                    if (planningAction.channelId && planningAction.channelId !== interaction.channelId) {
+                        await interaction.reply({
+                            content: t('This planning action is linked to a different session channel.'),
+                            flags: MessageFlags.Ephemeral,
+                        }).catch(logger.error);
+                        return;
+                    }
+
+                    const planWorkspaceDirName = planningAction.workspaceDirName ?? deps.bridge.lastActiveWorkspace;
+                    const planDetector = planWorkspaceDirName
+                        ? deps.bridge.pool.getPlanningDetector(planWorkspaceDirName)
+                        : undefined;
+
+                    if (!planDetector) {
+                        try {
+                            await interaction.reply({ content: t('Planning detector not found.'), flags: MessageFlags.Ephemeral });
+                        } catch { /* ignore */ }
+                        return;
+                    }
+
+                    try {
+                        if (planningAction.action === 'open') {
+                            await interaction.deferUpdate();
+
+                            const clicked = await planDetector.clickOpenButton();
+                            if (!clicked) {
+                                await interaction.followUp({ content: t('Open button not found.'), flags: MessageFlags.Ephemeral });
+                                return;
+                            }
+
+                            // Wait for DOM to update after Open click
+                            await new Promise((resolve) => setTimeout(resolve, 500));
+
+                            // Extract plan content with retry
+                            let planContent: string | null = null;
+                            for (let attempt = 0; attempt < 3; attempt++) {
+                                planContent = await planDetector.extractPlanContent();
+                                if (planContent) break;
+                                await new Promise((resolve) => setTimeout(resolve, 500));
+                            }
+
+                            // Update original embed with action history
+                            const originalEmbed = interaction.message.embeds[0];
+                            const updatedEmbed = originalEmbed
+                                ? EmbedBuilder.from(originalEmbed)
+                                : new EmbedBuilder().setTitle('Planning Mode');
+                            const historyText = `Open by <@${interaction.user.id}> (${new Date().toLocaleString('ja-JP')})`;
+                            updatedEmbed
+                                .setColor(0x3498DB)
+                                .addFields({ name: 'Action History', value: historyText, inline: false })
+                                .setTimestamp();
+
+                            await interaction.editReply({
+                                embeds: [updatedEmbed],
+                                components: interaction.message.components,
+                            });
+
+                            // Send plan content as a new message in the same channel
+                            if (planContent && interaction.channel && 'send' in interaction.channel) {
+                                // Discord embed description limit is 4096 chars
+                                const MAX_PLAN_CONTENT = 4096;
+                                const truncated = planContent.length > MAX_PLAN_CONTENT
+                                    ? planContent.substring(0, MAX_PLAN_CONTENT - 15) + '\n\n(truncated)'
+                                    : planContent;
+
+                                const planEmbed = new EmbedBuilder()
+                                    .setTitle(t('Plan Content'))
+                                    .setDescription(truncated)
+                                    .setColor(0x3498DB)
+                                    .setTimestamp();
+
+                                await (interaction.channel as any).send({ embeds: [planEmbed] }).catch(logger.error);
+                            } else if (!planContent) {
+                                await interaction.followUp({
+                                    content: t('Could not extract plan content from the editor.'),
+                                    flags: MessageFlags.Ephemeral,
+                                }).catch(logger.error);
+                            }
+                        } else {
+                            // Proceed action
+                            const clicked = await planDetector.clickProceedButton();
+
+                            const originalEmbed = interaction.message.embeds[0];
+                            const updatedEmbed = originalEmbed
+                                ? EmbedBuilder.from(originalEmbed)
+                                : new EmbedBuilder().setTitle('Planning Mode');
+                            const historyText = `Proceed by <@${interaction.user.id}> (${new Date().toLocaleString('ja-JP')})`;
+                            updatedEmbed
+                                .setColor(clicked ? 0x2ECC71 : 0xE74C3C)
+                                .addFields({ name: 'Action History', value: historyText, inline: false })
+                                .setTimestamp();
+
+                            try {
+                                await interaction.update({
+                                    embeds: [updatedEmbed],
+                                    components: disableAllButtons(interaction.message.components),
+                                });
+                            } catch (interactionError: any) {
+                                if (interactionError?.code === 10062 || interactionError?.code === 40060) {
+                                    logger.warn('[Planning] Interaction expired. Responding directly in the channel.');
+                                    if (interaction.channel && 'send' in interaction.channel) {
+                                        const fallbackMessage = clicked
+                                            ? t('Proceed completed. Implementation started.')
+                                            : t('Proceed button not found.');
+                                        await (interaction.channel as any).send(fallbackMessage).catch(logger.error);
+                                    }
+                                } else {
+                                    throw interactionError;
+                                }
+                            }
+                        }
+                    } catch (planError: any) {
+                        if (planError?.code === 10062 || planError?.code === 40060) {
+                            logger.warn('[Planning] Interaction expired.');
+                        } else {
+                            logger.error('[Planning] Error handling planning button:', planError);
+                            try {
+                                if (!(interaction as any).replied && !(interaction as any).deferred) {
+                                    await interaction.reply({ content: t('An error occurred while processing the planning action.'), flags: MessageFlags.Ephemeral });
+                                } else {
+                                    await interaction.followUp({ content: t('An error occurred while processing the planning action.'), flags: MessageFlags.Ephemeral }).catch(logger.error);
+                                }
+                            } catch { /* ignore */ }
                         }
                     }
                     return;

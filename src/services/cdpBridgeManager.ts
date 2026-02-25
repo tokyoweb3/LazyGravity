@@ -13,6 +13,7 @@ import { ApprovalDetector, ApprovalInfo } from './approvalDetector';
 import { AutoAcceptService } from './autoAcceptService';
 import { CdpConnectionPool } from './cdpConnectionPool';
 import { CdpService } from './cdpService';
+import { PlanningDetector, PlanningInfo } from './planningDetector';
 import { QuotaService } from './quotaService';
 
 /** CDP connection state management */
@@ -33,6 +34,8 @@ export interface CdpBridge {
 const APPROVE_ACTION_PREFIX = 'approve_action';
 const ALWAYS_ALLOW_ACTION_PREFIX = 'always_allow_action';
 const DENY_ACTION_PREFIX = 'deny_action';
+const PLANNING_OPEN_ACTION_PREFIX = 'planning_open_action';
+const PLANNING_PROCEED_ACTION_PREFIX = 'planning_proceed_action';
 
 function normalizeSessionTitle(title: string): string {
     return title.trim().toLowerCase();
@@ -97,11 +100,14 @@ export function resolveApprovalChannelForCurrentChat(
     workspaceDirName: string,
     currentChatTitle: string | null,
 ): Message['channel'] | null {
-    if (!currentChatTitle || currentChatTitle.trim().length === 0) {
-        return null;
+    // Try session-level match first (most precise routing)
+    if (currentChatTitle && currentChatTitle.trim().length > 0) {
+        const key = buildSessionRouteKey(workspaceDirName, currentChatTitle);
+        const sessionChannel = bridge.approvalChannelBySession.get(key);
+        if (sessionChannel) return sessionChannel;
     }
-    const key = buildSessionRouteKey(workspaceDirName, currentChatTitle);
-    return bridge.approvalChannelBySession.get(key) ?? null;
+    // Fall back to workspace-level routing
+    return bridge.approvalChannelByWorkspace.get(workspaceDirName) ?? null;
 }
 
 export function buildApprovalCustomId(
@@ -144,6 +150,40 @@ export function parseApprovalCustomId(customId: string): { action: 'approve' | '
         const rest = customId.substring(`${DENY_ACTION_PREFIX}:`.length);
         const [workspaceDirName, channelId] = rest.split(':');
         return { action: 'deny', workspaceDirName: workspaceDirName || null, channelId: channelId || null };
+    }
+    return null;
+}
+
+export function buildPlanningCustomId(
+    action: 'open' | 'proceed',
+    workspaceDirName: string,
+    channelId?: string,
+): string {
+    const prefix = action === 'open'
+        ? PLANNING_OPEN_ACTION_PREFIX
+        : PLANNING_PROCEED_ACTION_PREFIX;
+    if (channelId && channelId.trim().length > 0) {
+        return `${prefix}:${workspaceDirName}:${channelId}`;
+    }
+    return `${prefix}:${workspaceDirName}`;
+}
+
+export function parsePlanningCustomId(customId: string): { action: 'open' | 'proceed'; workspaceDirName: string | null; channelId: string | null } | null {
+    if (customId === PLANNING_OPEN_ACTION_PREFIX) {
+        return { action: 'open', workspaceDirName: null, channelId: null };
+    }
+    if (customId === PLANNING_PROCEED_ACTION_PREFIX) {
+        return { action: 'proceed', workspaceDirName: null, channelId: null };
+    }
+    if (customId.startsWith(`${PLANNING_OPEN_ACTION_PREFIX}:`)) {
+        const rest = customId.substring(`${PLANNING_OPEN_ACTION_PREFIX}:`.length);
+        const [workspaceDirName, channelId] = rest.split(':');
+        return { action: 'open', workspaceDirName: workspaceDirName || null, channelId: channelId || null };
+    }
+    if (customId.startsWith(`${PLANNING_PROCEED_ACTION_PREFIX}:`)) {
+        const rest = customId.substring(`${PLANNING_PROCEED_ACTION_PREFIX}:`.length);
+        const [workspaceDirName, channelId] = rest.split(':');
+        return { action: 'proceed', workspaceDirName: workspaceDirName || null, channelId: channelId || null };
     }
     return null;
 }
@@ -272,4 +312,75 @@ export function ensureApprovalDetector(
     detector.start();
     bridge.pool.registerApprovalDetector(workspaceDirName, detector);
     logger.info(`[ApprovalDetector:${workspaceDirName}] Started approval button detection`);
+}
+
+/**
+ * Helper to start a planning detector for each workspace.
+ * Does nothing if a detector for the same workspace is already running.
+ */
+export function ensurePlanningDetector(
+    bridge: CdpBridge,
+    cdp: CdpService,
+    workspaceDirName: string,
+    _client: Client, // Unused, kept for signature consistency with ensureApprovalDetector
+): void {
+    const existing = bridge.pool.getPlanningDetector(workspaceDirName);
+    if (existing && existing.isActive()) return;
+
+    const detector = new PlanningDetector({
+        cdpService: cdp,
+        pollIntervalMs: 2000,
+        onPlanningRequired: async (info: PlanningInfo) => {
+            logger.info(`[PlanningDetector:${workspaceDirName}] Planning buttons detected (title="${info.planTitle}")`);
+
+            const currentChatTitle = await getCurrentChatTitle(cdp);
+            const targetChannel = resolveApprovalChannelForCurrentChat(bridge, workspaceDirName, currentChatTitle);
+            const targetChannelId = targetChannel && 'id' in targetChannel ? String((targetChannel as any).id) : '';
+
+            if (!targetChannel || !targetChannelId || !('send' in targetChannel)) {
+                logger.warn(
+                    `[PlanningDetector:${workspaceDirName}] Skipped planning notification because chat is not linked to a Discord session` +
+                    `${currentChatTitle ? ` (title="${currentChatTitle}")` : ''}`,
+                );
+                return;
+            }
+
+            const descriptionText = info.description || info.planSummary || t('A plan has been generated and is awaiting your review.');
+
+            const embed = new EmbedBuilder()
+                .setTitle(t('Planning Mode'))
+                .setDescription(descriptionText)
+                .setColor(0x3498DB)
+                .addFields(
+                    { name: t('Plan'), value: info.planTitle || t('Implementation Plan'), inline: true },
+                    { name: t('Workspace'), value: workspaceDirName, inline: true },
+                )
+                .setTimestamp();
+
+            if (info.planSummary && info.description) {
+                embed.addFields({ name: t('Summary'), value: info.planSummary.substring(0, 1024), inline: false });
+            }
+
+            const openBtn = new ButtonBuilder()
+                .setCustomId(buildPlanningCustomId('open', workspaceDirName, targetChannelId))
+                .setLabel(t('Open'))
+                .setStyle(ButtonStyle.Secondary);
+
+            const proceedBtn = new ButtonBuilder()
+                .setCustomId(buildPlanningCustomId('proceed', workspaceDirName, targetChannelId))
+                .setLabel(t('Proceed'))
+                .setStyle(ButtonStyle.Primary);
+
+            const row = new ActionRowBuilder<ButtonBuilder>().addComponents(openBtn, proceedBtn);
+
+            (targetChannel as any).send({
+                embeds: [embed],
+                components: [row],
+            }).catch(logger.error);
+        },
+    });
+
+    detector.start();
+    bridge.pool.registerPlanningDetector(workspaceDirName, detector);
+    logger.info(`[PlanningDetector:${workspaceDirName}] Started planning button detection`);
 }

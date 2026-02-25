@@ -1,6 +1,7 @@
 import { logger } from '../utils/logger';
 import { CdpService, CdpServiceOptions } from './cdpService';
 import { ApprovalDetector } from './approvalDetector';
+import { PlanningDetector } from './planningDetector';
 
 /**
  * Pool that manages independent CdpService instances per workspace.
@@ -12,6 +13,7 @@ import { ApprovalDetector } from './approvalDetector';
 export class CdpConnectionPool {
     private readonly connections = new Map<string, CdpService>();
     private readonly approvalDetectors = new Map<string, ApprovalDetector>();
+    private readonly planningDetectors = new Map<string, PlanningDetector>();
     private readonly connectingPromises = new Map<string, Promise<CdpService>>();
     private readonly cdpOptions: CdpServiceOptions;
 
@@ -85,6 +87,12 @@ export class CdpConnectionPool {
             detector.stop();
             this.approvalDetectors.delete(workspaceDirName);
         }
+
+        const planningDetector = this.planningDetectors.get(workspaceDirName);
+        if (planningDetector) {
+            planningDetector.stop();
+            this.planningDetectors.delete(workspaceDirName);
+        }
     }
 
     /**
@@ -113,6 +121,25 @@ export class CdpConnectionPool {
      */
     getApprovalDetector(workspaceDirName: string): ApprovalDetector | undefined {
         return this.approvalDetectors.get(workspaceDirName);
+    }
+
+    /**
+     * Register a planning detector for a workspace.
+     */
+    registerPlanningDetector(workspaceDirName: string, detector: PlanningDetector): void {
+        // Stop existing detector
+        const existing = this.planningDetectors.get(workspaceDirName);
+        if (existing && existing.isActive()) {
+            existing.stop();
+        }
+        this.planningDetectors.set(workspaceDirName, detector);
+    }
+
+    /**
+     * Get the planning detector for a workspace.
+     */
+    getPlanningDetector(workspaceDirName: string): PlanningDetector | undefined {
+        return this.planningDetectors.get(workspaceDirName);
     }
 
     /**
@@ -162,6 +189,11 @@ export class CdpConnectionPool {
             if (detector) {
                 detector.stop();
                 this.approvalDetectors.delete(dirName);
+            }
+            const planDetector = this.planningDetectors.get(dirName);
+            if (planDetector) {
+                planDetector.stop();
+                this.planningDetectors.delete(dirName);
             }
         });
 

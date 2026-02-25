@@ -8,15 +8,21 @@ export const COLORS = {
     reset: '\x1b[0m',
 } as const;
 
+const getTimestamp = () => {
+    const now = new Date();
+    const timeString = now.toLocaleTimeString('ja-JP', { hour12: false });
+    return `${COLORS.dim}[${timeString}]${COLORS.reset}`;
+};
+
 export const logger = {
-    info: (...args: any[]) => console.info(`${COLORS.cyan}[INFO]${COLORS.reset}`, ...args),
-    warn: (...args: any[]) => console.warn(`${COLORS.yellow}[WARN]${COLORS.reset}`, ...args),
-    error: (...args: any[]) => console.error(`${COLORS.red}[ERROR]${COLORS.reset}`, ...args),
-    debug: (...args: any[]) => console.debug(`${COLORS.dim}[DEBUG]${COLORS.reset}`, ...args),
+    info: (...args: any[]) => console.info(`${getTimestamp()} ${COLORS.cyan}[INFO]${COLORS.reset}`, ...args),
+    warn: (...args: any[]) => console.warn(`${getTimestamp()} ${COLORS.yellow}[WARN]${COLORS.reset}`, ...args),
+    error: (...args: any[]) => console.error(`${getTimestamp()} ${COLORS.red}[ERROR]${COLORS.reset}`, ...args),
+    debug: (...args: any[]) => console.debug(`${getTimestamp()} ${COLORS.dim}[DEBUG]${COLORS.reset}`, ...args),
     /** Important state transitions — stands out in logs */
-    phase: (...args: any[]) => console.info(`${COLORS.magenta}[PHASE]${COLORS.reset}`, ...args),
+    phase: (...args: any[]) => console.info(`${getTimestamp()} ${COLORS.magenta}[PHASE]${COLORS.reset}`, ...args),
     /** Completion-related events — green for success */
-    done: (...args: any[]) => console.info(`${COLORS.green}[DONE]${COLORS.reset}`, ...args),
+    done: (...args: any[]) => console.info(`${getTimestamp()} ${COLORS.green}[DONE]${COLORS.reset}`, ...args),
     /** Section divider with optional label for structured output */
     divider: (label?: string) => {
         if (label) {

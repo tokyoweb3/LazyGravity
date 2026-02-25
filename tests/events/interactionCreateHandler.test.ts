@@ -25,6 +25,7 @@ describe('interactionCreateHandler', () => {
             handleScreenshot: jest.fn(),
             getCurrentCdp: jest.fn(),
             parseApprovalCustomId: jest.fn(),
+            parsePlanningCustomId: jest.fn().mockReturnValue(null),
             handleSlashInteraction: jest.fn(),
         });
 
@@ -75,6 +76,7 @@ describe('interactionCreateHandler', () => {
                 workspaceDirName: 'ws-a',
                 channelId: 'channel-a',
             }),
+            parsePlanningCustomId: jest.fn().mockReturnValue(null),
             handleSlashInteraction: jest.fn(),
         });
 
@@ -121,6 +123,7 @@ describe('interactionCreateHandler', () => {
             handleScreenshot: jest.fn(),
             getCurrentCdp: jest.fn(),
             parseApprovalCustomId: jest.fn().mockReturnValue(null),
+            parsePlanningCustomId: jest.fn().mockReturnValue(null),
             handleSlashInteraction: jest.fn(),
         });
 
