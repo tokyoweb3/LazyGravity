@@ -7,6 +7,7 @@ import { ChatSessionRepository } from '../database/chatSessionRepository';
 import {
     CdpBridge,
     ensureApprovalDetector as ensureApprovalDetectorFn,
+    ensureErrorPopupDetector as ensureErrorPopupDetectorFn,
     ensurePlanningDetector as ensurePlanningDetectorFn,
     getCurrentCdp as getCurrentCdpFn,
     registerApprovalSessionChannel as registerApprovalSessionChannelFn,
@@ -58,6 +59,7 @@ export interface MessageCreateHandlerDeps {
     handleScreenshot: (target: Message, cdp: CdpService | null) => Promise<void>;
     getCurrentCdp?: (bridge: CdpBridge) => CdpService | null;
     ensureApprovalDetector?: (bridge: CdpBridge, cdp: CdpService, workspaceDirName: string, client: any) => void;
+    ensureErrorPopupDetector?: (bridge: CdpBridge, cdp: CdpService, workspaceDirName: string, client: any) => void;
     ensurePlanningDetector?: (bridge: CdpBridge, cdp: CdpService, workspaceDirName: string, client: any) => void;
     registerApprovalWorkspaceChannel?: (bridge: CdpBridge, workspaceDirName: string, channel: Message['channel']) => void;
     registerApprovalSessionChannel?: (bridge: CdpBridge, workspaceDirName: string, sessionTitle: string, channel: Message['channel']) => void;
@@ -69,6 +71,7 @@ export interface MessageCreateHandlerDeps {
 export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
     const getCurrentCdp = deps.getCurrentCdp ?? getCurrentCdpFn;
     const ensureApprovalDetector = deps.ensureApprovalDetector ?? ensureApprovalDetectorFn;
+    const ensureErrorPopupDetector = deps.ensureErrorPopupDetector ?? ensureErrorPopupDetectorFn;
     const ensurePlanningDetector = deps.ensurePlanningDetector ?? ensurePlanningDetectorFn;
     const registerApprovalWorkspaceChannel = deps.registerApprovalWorkspaceChannel ?? registerApprovalWorkspaceChannelFn;
     const registerApprovalSessionChannel = deps.registerApprovalSessionChannel ?? registerApprovalSessionChannelFn;
@@ -183,6 +186,7 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                         registerApprovalWorkspaceChannel(deps.bridge, dirName, message.channel);
 
                         ensureApprovalDetector(deps.bridge, cdp, dirName, deps.client);
+                        ensureErrorPopupDetector(deps.bridge, cdp, dirName, deps.client);
                         ensurePlanningDetector(deps.bridge, cdp, dirName, deps.client);
 
                         const session = deps.chatSessionRepo.findByChannelId(message.channelId);

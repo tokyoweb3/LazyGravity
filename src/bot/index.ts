@@ -46,10 +46,12 @@ import {
     buildApprovalCustomId,
     CdpBridge,
     ensureApprovalDetector,
+    ensureErrorPopupDetector,
     ensurePlanningDetector,
     getCurrentCdp,
     initCdpBridge,
     parseApprovalCustomId,
+    parseErrorPopupCustomId,
     parsePlanningCustomId,
     registerApprovalSessionChannel,
     registerApprovalWorkspaceChannel,
@@ -96,6 +98,9 @@ const PHASE_ICONS = {
 
 const MAX_OUTBOUND_GENERATED_IMAGES = 4;
 const RESPONSE_DELIVERY_MODE = resolveResponseDeliveryMode();
+
+/** Tracks channel IDs where /stop was explicitly invoked by the user */
+const userStopRequestedChannels = new Set<string>();
 export const getResponseDeliveryModeForTest = (): string => RESPONSE_DELIVERY_MODE;
 
 export function createSerialTaskQueueForTest(queueName: string, traceId: string): (task: () => Promise<void>, label?: string) => Promise<void> {
@@ -523,6 +528,15 @@ async function sendPromptToAntigravity(
             onComplete: async (finalText) => {
                 isFinalized = true;
 
+                // If the user explicitly pressed /stop, skip output display entirely
+                const wasStoppedByUser = userStopRequestedChannels.delete(message.channelId);
+                if (wasStoppedByUser) {
+                    logger.info(`[sendPromptToAntigravity:${monitorTraceId}] Stopped by user — skipping output`);
+                    await clearWatchingReaction();
+                    await message.react('⏹️').catch(() => { });
+                    return;
+                }
+
                 try {
                     const elapsed = Math.round((Date.now() - startTime) / 1000);
                     const isQuotaError = monitor.getPhase() === 'quotaReached' || monitor.getQuotaDetected();
@@ -849,6 +863,7 @@ export const startBot = async () => {
         sendAutoAcceptUI,
         getCurrentCdp,
         parseApprovalCustomId,
+        parseErrorPopupCustomId,
         parsePlanningCustomId,
         handleSlashInteraction: async (
             interaction,
@@ -902,6 +917,7 @@ export const startBot = async () => {
                         registerApprovalSessionChannel(bridge, dirName, session.displayName, interaction.channel as any);
                     }
                     ensureApprovalDetector(bridge, cdp, dirName, client);
+                    ensureErrorPopupDetector(bridge, cdp, dirName, client);
                     ensurePlanningDetector(bridge, cdp, dirName, client);
                 } catch (e: any) {
                     await interaction.followUp({
@@ -1209,6 +1225,7 @@ async function handleSlashInteraction(
                 const value = result?.result?.value;
 
                 if (value?.ok) {
+                    userStopRequestedChannels.add(interaction.channelId);
                     const embed = new EmbedBuilder()
                         .setTitle('⏹️ Generation Interrupted')
                         .setDescription('AI response generation was safely stopped.')
