@@ -142,4 +142,62 @@ describe('Lean RESPONSE_SELECTORS', () => {
         // Should check for MCP server/tool format lines
         expect(script).toContain('looksliketooloutput');
     });
+
+    // ---------------------------------------------------------------
+    // CLICK_RETRY_BUTTON selector tests
+    // ---------------------------------------------------------------
+    describe('CLICK_RETRY_BUTTON', () => {
+        it('exists as a property', () => {
+            expect(RESPONSE_SELECTORS.CLICK_RETRY_BUTTON).toBeDefined();
+            expect(typeof RESPONSE_SELECTORS.CLICK_RETRY_BUTTON).toBe('string');
+        });
+
+        it('uses same DOM scoping pattern as other selectors', () => {
+            expect(RESPONSE_SELECTORS.CLICK_RETRY_BUTTON).toContain('antigravity-agent-side-panel');
+        });
+
+        it('does NOT contain SVG analysis', () => {
+            expect(RESPONSE_SELECTORS.CLICK_RETRY_BUTTON.toLowerCase()).not.toContain('svg');
+        });
+
+        it('does NOT contain getBoundingClientRect', () => {
+            expect(RESPONSE_SELECTORS.CLICK_RETRY_BUTTON).not.toContain('getBoundingClientRect');
+        });
+
+        it('does NOT contain getComputedStyle', () => {
+            expect(RESPONSE_SELECTORS.CLICK_RETRY_BUTTON).not.toContain('getComputedStyle');
+        });
+
+        it('includes English retry text patterns', () => {
+            const script = RESPONSE_SELECTORS.CLICK_RETRY_BUTTON.toLowerCase();
+            expect(script).toContain('retry');
+            expect(script).toContain('try again');
+        });
+
+        it('includes Japanese retry text patterns', () => {
+            expect(RESPONSE_SELECTORS.CLICK_RETRY_BUTTON).toContain('再試行');
+        });
+
+        it('clicks matching buttons via .click()', () => {
+            expect(RESPONSE_SELECTORS.CLICK_RETRY_BUTTON).toContain('.click()');
+        });
+
+        it('returns { ok: true } on success and { ok: false } on failure', () => {
+            const script = RESPONSE_SELECTORS.CLICK_RETRY_BUTTON;
+            expect(script).toContain('ok: true');
+            expect(script).toContain('ok: false');
+        });
+
+        it('searches buttons and role=button elements', () => {
+            const script = RESPONSE_SELECTORS.CLICK_RETRY_BUTTON;
+            expect(script).toContain('button');
+            expect(script).toContain('[role="button"]');
+        });
+
+        it('checks aria-label and title attributes for text fallback', () => {
+            const script = RESPONSE_SELECTORS.CLICK_RETRY_BUTTON;
+            expect(script).toContain('aria-label');
+            expect(script).toContain('title');
+        });
+    });
 });
