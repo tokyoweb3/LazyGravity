@@ -795,7 +795,7 @@ export const startBot = async () => {
     });
 
     client.once(Events.ClientReady, async (readyClient) => {
-        logger.info(`Ready! Logged in as ${readyClient.user.tag}`);
+        logger.info(`Ready! Logged in as ${readyClient.user.tag} | extractionMode=${config.extractionMode}`);
 
         try {
             await registerSlashCommands(config.discordToken, config.clientId, config.guildId);
@@ -827,6 +827,7 @@ export const startBot = async () => {
                     { name: 'Model', value: modelService.getCurrentModel(), inline: true },
                     { name: 'Mode', value: modeService.getCurrentMode(), inline: true },
                     { name: 'Projects', value: `${projects.length} registered`, inline: true },
+                    { name: 'Extraction', value: config.extractionMode, inline: true },
                 )
                 .setFooter({ text: `Started at ${new Date().toLocaleString()}` })
                 .setTimestamp();
