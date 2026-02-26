@@ -36,6 +36,9 @@ plans/
 .gemini/
 .claude/
 
+# Manual test checklists (development only)
+manual-tests/
+
 # Debug / inspection scripts (development only)
 inspect_dom.js
 inspect_dom.ts

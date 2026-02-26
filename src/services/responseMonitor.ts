@@ -1,5 +1,10 @@
 import { logger } from '../utils/logger';
+import type { ExtractionMode } from '../utils/config';
 import { CdpService } from './cdpService';
+import {
+    extractAssistantSegmentsPayloadScript,
+    classifyAssistantSegments,
+} from './assistantDomExtractor';
 
 /** Lean DOM selectors for response extraction */
 export const RESPONSE_SELECTORS = {
@@ -26,7 +31,7 @@ export const RESPONSE_SELECTORS = {
         const looksLikeActivityLog = (text) => {
             const normalized = (text || '').trim().toLowerCase();
             if (!normalized) return false;
-            const activityPattern = /^(?:analy[sz]ing|reading|writing|running|searching|planning|thinking|processing|loading|executing|testing|debugging|analyzed|read|wrote|ran)/i;
+            const activityPattern = /^(?:analy[sz]ing|reading|writing|running|searching|planning|thinking|processing|loading|executing|testing|debugging|fetching|connecting|creating|updating|deleting|installing|building|compiling|deploying|checking|scanning|parsing|resolving|downloading|uploading|analyzed|read|wrote|ran|created|updated|deleted|fetched|built|compiled|installed|resolved|downloaded|connected)\\b/i;
             if (activityPattern.test(normalized) && normalized.length <= 220) return true;
             if (/^initiating\\s/i.test(normalized) && normalized.length <= 500) return true;
             if (/^thought for\\s/i.test(normalized) && normalized.length <= 500) return true;
@@ -195,7 +200,7 @@ export const RESPONSE_SELECTORS = {
         const looksLikeActivityLog = (text) => {
             const normalized = (text || '').trim().toLowerCase();
             if (!normalized) return false;
-            const activityPattern = /^(?:analy[sz]ing|reading|writing|running|searching|planning|thinking|processing|loading|executing|testing|debugging|analyzed|read|wrote|ran)/i;
+            const activityPattern = /^(?:analy[sz]ing|reading|writing|running|searching|planning|thinking|processing|loading|executing|testing|debugging|fetching|connecting|creating|updating|deleting|installing|building|compiling|deploying|checking|scanning|parsing|resolving|downloading|uploading|analyzed|read|wrote|ran|created|updated|deleted|fetched|built|compiled|installed|resolved|downloaded|connected)\\b/i;
             if (activityPattern.test(normalized) && normalized.length <= 220) return true;
             if (/^initiating\\s/i.test(normalized) && normalized.length <= 500) return true;
             if (/^thought for\\s/i.test(normalized) && normalized.length <= 500) return true;
@@ -280,7 +285,7 @@ export const RESPONSE_SELECTORS = {
         const looksLikeActivityLog = (text) => {
             const normalized = (text || '').trim().toLowerCase();
             if (!normalized) return false;
-            const activityPattern = /^(?:analy[sz]ing|reading|writing|running|searching|planning|thinking|processing|loading|executing|testing|debugging|analyzed|read|wrote|ran)/i;
+            const activityPattern = /^(?:analy[sz]ing|reading|writing|running|searching|planning|thinking|processing|loading|executing|testing|debugging|fetching|connecting|creating|updating|deleting|installing|building|compiling|deploying|checking|scanning|parsing|resolving|downloading|uploading|analyzed|read|wrote|ran|created|updated|deleted|fetched|built|compiled|installed|resolved|downloaded|connected)\\b/i;
             if (activityPattern.test(normalized) && normalized.length <= 220) return true;
             if (/^initiating\\s/i.test(normalized) && normalized.length <= 500) return true;
             if (/^thought for\\s/i.test(normalized) && normalized.length <= 500) return true;
@@ -372,6 +377,61 @@ export const RESPONSE_SELECTORS = {
         }
         return false;
     })()`,
+    /** Structured DOM extraction — walks DOM to produce typed segment array */
+    RESPONSE_STRUCTURED: extractAssistantSegmentsPayloadScript(),
+    /** One-shot DOM diagnostic — dumps DOM structure around activity areas */
+    DOM_DIAGNOSTIC: `(() => {
+        var panel = document.querySelector('.antigravity-agent-side-panel');
+        var scope = panel || document;
+        var diag = { detailsCount: 0, detailsDump: [], activityNodes: [], allTextNodes: [] };
+
+        // 1. Dump all <details> elements
+        var details = scope.querySelectorAll('details');
+        diag.detailsCount = details.length;
+        for (var i = 0; i < Math.min(details.length, 5); i++) {
+            diag.detailsDump.push({
+                outerHTML: details[i].outerHTML.slice(0, 500),
+                summaryText: (details[i].querySelector('summary') || {}).textContent || '(no summary)',
+                childCount: details[i].children.length
+            });
+        }
+
+        // 2. Find all text nodes that look like activity
+        var selectors = '.rendered-markdown, .leading-relaxed.select-text, .flex.flex-col.gap-y-3, [data-message-author-role="assistant"], [data-message-role="assistant"], [class*="assistant-message"], [class*="message-content"], [class*="markdown-body"], .prose';
+        var nodes = scope.querySelectorAll(selectors);
+        for (var j = 0; j < nodes.length; j++) {
+            var text = (nodes[j].innerText || nodes[j].textContent || '').trim();
+            if (!text || text.length < 2) continue;
+            diag.allTextNodes.push({
+                tag: nodes[j].tagName,
+                className: (nodes[j].className || '').toString().slice(0, 100),
+                text: text.slice(0, 200),
+                insideDetails: !!nodes[j].closest('details'),
+                length: text.length
+            });
+        }
+
+        // 3. Broader scan: any element with activity-like text
+        var allEls = scope.querySelectorAll('*');
+        for (var k = 0; k < allEls.length; k++) {
+            var el = allEls[k];
+            if (el.children.length > 2) continue; // only leaf-ish nodes
+            var t = (el.textContent || '').trim();
+            if (!t || t.length < 5 || t.length > 300) continue;
+            var lower = t.toLowerCase();
+            if (/^(?:analy[sz]|read|writ|run|search|think|process|execut|debug|test)/i.test(lower) || /\\//.test(t)) {
+                diag.activityNodes.push({
+                    tag: el.tagName,
+                    className: (el.className || '').toString().slice(0, 100),
+                    text: t.slice(0, 200),
+                    parentTag: el.parentElement ? el.parentElement.tagName : null,
+                    parentClass: el.parentElement ? (el.parentElement.className || '').toString().slice(0, 100) : null,
+                    insideDetails: !!el.closest('details')
+                });
+            }
+        }
+        return diag;
+    })()`,
 };
 
 /** Response generation phases */
@@ -386,6 +446,8 @@ export interface ResponseMonitorOptions {
     maxDurationMs?: number;
     /** Consecutive stop-gone confirmations needed (default: 3) */
     stopGoneConfirmCount?: number;
+    /** Extraction mode: 'legacy' uses innerText, 'structured' uses DOM segment extraction */
+    extractionMode?: ExtractionMode;
     /** Text update callback */
     onProgress?: (text: string) => void;
     /** Generation complete callback */
@@ -411,6 +473,7 @@ export class ResponseMonitor {
     private readonly pollIntervalMs: number;
     private readonly maxDurationMs: number;
     private readonly stopGoneConfirmCount: number;
+    private readonly extractionMode: ExtractionMode;
     private readonly onProgress?: (text: string) => void;
     private readonly onComplete?: (finalText: string) => void;
     private readonly onTimeout?: (lastText: string) => void;
@@ -427,12 +490,15 @@ export class ResponseMonitor {
     private stopGoneCount: number = 0;
     private quotaDetected: boolean = false;
     private seenProcessLogKeys: Set<string> = new Set();
+    private structuredDiagLogged: boolean = false;
 
     constructor(options: ResponseMonitorOptions) {
         this.cdpService = options.cdpService;
         this.pollIntervalMs = options.pollIntervalMs ?? 2000;
         this.maxDurationMs = options.maxDurationMs ?? 300000;
         this.stopGoneConfirmCount = options.stopGoneConfirmCount ?? 3;
+        this.extractionMode = options.extractionMode
+            ?? (process.env.EXTRACTION_MODE === 'legacy' ? 'legacy' : 'structured');
         this.onProgress = options.onProgress;
         this.onComplete = options.onComplete;
         this.onTimeout = options.onTimeout;
@@ -611,11 +677,31 @@ export class ResponseMonitor {
     }
 
     /**
-     * Single poll: exactly 4 CDP calls.
-     * 1. Stop button check
-     * 2. Quota error check
-     * 3. Text extraction
-     * 4. Process log extraction
+     * Emit new process log entries, deduplicating against previously seen keys.
+     */
+    private emitNewProcessLogs(entries: string[]): void {
+        const newEntries: string[] = [];
+        for (const line of entries) {
+            const normalized = (line || '').replace(/\r/g, '').trim();
+            if (!normalized) continue;
+            const key = normalized.slice(0, 200);
+            if (this.seenProcessLogKeys.has(key)) continue;
+            this.seenProcessLogKeys.add(key);
+            newEntries.push(normalized.slice(0, 300));
+        }
+        if (newEntries.length > 0) {
+            try {
+                this.onProcessLog?.(newEntries.join('\n\n'));
+            } catch {
+                // callback error
+            }
+        }
+    }
+
+    /**
+     * Single poll cycle.
+     * - Legacy mode: 4 CDP calls (stop, quota, text, process logs).
+     * - Structured mode: 3-4 CDP calls (stop, quota, structured; legacy text on fallback).
      */
     private async poll(): Promise<void> {
         try {
@@ -634,46 +720,75 @@ export class ResponseMonitor {
             );
             const quotaDetected = quotaResult?.result?.value === true;
 
-            // 3. Text extraction
-            const textResult = await this.cdpService.call(
-                'Runtime.evaluate',
-                this.buildEvaluateParams(RESPONSE_SELECTORS.RESPONSE_TEXT),
-            );
-            const rawText = textResult?.result?.value;
-            const exceptionDetail = textResult?.result?.exceptionDetails ?? textResult?.exceptionDetails;
-            if (exceptionDetail) {
-                logger.warn('[ResponseMonitor:poll] RESPONSE_TEXT threw:', exceptionDetail.text ?? JSON.stringify(exceptionDetail).slice(0, 200));
-            }
-            const currentText = typeof rawText === 'string' ? rawText.trim() || null : null;
+            // 3. Text extraction (structured or legacy)
+            let currentText: string | null = null;
+            let structuredHandledLogs = false;
 
-            // 4. Process log extraction
-            try {
-                const logResult = await this.cdpService.call(
-                    'Runtime.evaluate',
-                    this.buildEvaluateParams(RESPONSE_SELECTORS.PROCESS_LOGS),
-                );
-                const logEntries = logResult?.result?.value;
-                if (Array.isArray(logEntries)) {
-                    const newEntries: string[] = [];
-                    for (const raw of logEntries) {
-                        const normalized = (raw || '').replace(/\r/g, '').trim();
-                        if (!normalized) continue;
-                        const key = normalized.slice(0, 200);
-                        if (this.seenProcessLogKeys.has(key)) continue;
-                        this.seenProcessLogKeys.add(key);
-                        newEntries.push(normalized.slice(0, 300));
-                    }
+            if (this.extractionMode === 'structured') {
+                // Structured: use DOM segment extraction with HTML-to-Markdown
+                try {
+                    const structuredResult = await this.cdpService.call(
+                        'Runtime.evaluate',
+                        this.buildEvaluateParams(RESPONSE_SELECTORS.RESPONSE_STRUCTURED),
+                    );
+                    const payload = structuredResult?.result?.value;
+                    const classified = classifyAssistantSegments(payload);
 
-                    if (newEntries.length > 0) {
-                        try {
-                            this.onProcessLog?.(newEntries.join('\n\n'));
-                        } catch {
-                            // callback error
+                    if (classified.diagnostics.source === 'dom-structured') {
+                        currentText = classified.finalOutputText.trim() || null;
+                        structuredHandledLogs = true;
+
+                        if (!this.structuredDiagLogged) {
+                            this.structuredDiagLogged = true;
+                            logger.debug('[ResponseMonitor] Structured extraction OK — segments:', classified.diagnostics.segmentCounts);
                         }
+
+                        // Emit structured activity lines as process logs
+                        if (classified.activityLines.length > 0) {
+                            this.emitNewProcessLogs(classified.activityLines);
+                        }
+                    } else if (!this.structuredDiagLogged) {
+                        this.structuredDiagLogged = true;
+                        logger.warn(
+                            '[ResponseMonitor:poll] Structured extraction failed — reason:',
+                            classified.diagnostics.fallbackReason ?? 'unknown',
+                            '| payload type:', typeof payload,
+                            '| payload:', payload === null ? 'null' : payload === undefined ? 'undefined' : 'object',
+                        );
                     }
+                } catch (error) {
+                    logger.warn('[ResponseMonitor:poll] RESPONSE_STRUCTURED failed, falling back to legacy:', error);
                 }
-            } catch {
-                // process log extraction is best-effort
+            }
+
+            // Legacy path (or fallback from structured)
+            if (currentText === null) {
+                const textResult = await this.cdpService.call(
+                    'Runtime.evaluate',
+                    this.buildEvaluateParams(RESPONSE_SELECTORS.RESPONSE_TEXT),
+                );
+                const rawText = textResult?.result?.value;
+                const exceptionDetail = textResult?.result?.exceptionDetails ?? textResult?.exceptionDetails;
+                if (exceptionDetail) {
+                    logger.warn('[ResponseMonitor:poll] RESPONSE_TEXT threw:', exceptionDetail.text ?? JSON.stringify(exceptionDetail).slice(0, 200));
+                }
+                currentText = typeof rawText === 'string' ? rawText.trim() || null : null;
+            }
+
+            // 4. Process log extraction — always when structured didn't handle it
+            if (!structuredHandledLogs) {
+                try {
+                    const logResult = await this.cdpService.call(
+                        'Runtime.evaluate',
+                        this.buildEvaluateParams(RESPONSE_SELECTORS.PROCESS_LOGS),
+                    );
+                    const logEntries = logResult?.result?.value;
+                    if (Array.isArray(logEntries)) {
+                        this.emitNewProcessLogs(logEntries);
+                    }
+                } catch {
+                    // process log extraction is best-effort
+                }
             }
 
             // Handle stop button appearing

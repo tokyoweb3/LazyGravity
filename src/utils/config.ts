@@ -1,5 +1,7 @@
 import { ConfigLoader } from './configLoader';
 
+export type ExtractionMode = 'legacy' | 'structured';
+
 export interface AppConfig {
     discordToken: string;
     clientId: string;
@@ -7,6 +9,7 @@ export interface AppConfig {
     allowedUserIds: string[];
     workspaceBaseDir: string;
     autoApproveFileEdits: boolean;
+    extractionMode: ExtractionMode;
 }
 
 export type ResponseDeliveryMode = 'stream';

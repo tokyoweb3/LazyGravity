@@ -30,6 +30,22 @@
 - [ ] **Template Import / Export** — Portable prompt templates ([#10](https://github.com/tokyoweb3/LazyGravity/issues/10))
 - [ ] **Auto Update Check** — Notify on new npm version at startup ([#11](https://github.com/tokyoweb3/LazyGravity/issues/11))
 
+## DOM Extraction Overhaul ([#23](https://github.com/tokyoweb3/LazyGravity/issues/23))
+
+Replace `innerText`-based extraction with structured DOM walking and HTML-to-Discord-Markdown conversion. Improves output fidelity, activity log separation, and resilience to AG DOM updates.
+
+- [x] **Phase 1: Structured DOM Extraction + HTML-to-Markdown** — [PR #27](https://github.com/tokyoweb3/LazyGravity/pull/27)
+  - Structured segment extraction (assistant-body / thinking / tool-call / feedback)
+  - HTML → Discord Markdown (headings, lists, code blocks, bold, file mentions)
+  - Broad activity scan with word-boundary matching, content-body exclusion, ancestor dedup
+  - Activity emoji classification (🧠 thinking, 📄 file ops, 🔍 active ops, 🛠️ MCP tools)
+  - Default extraction mode changed to `structured`
+- [ ] **Phase 2: Activity Log Dedicated DOM Selectors** — Target activity containers directly to reduce regex dependency
+- [ ] **Phase 3a: Network Traffic Discovery** — Diagnostic tool to capture AG ↔ LLM API traffic patterns
+- [ ] **Phase 3b: Network Response Capture** — Intercept API responses pre-DOM rendering (based on 3a findings)
+- [ ] **Phase 4: Event-Driven DOM Monitoring** — `MutationObserver` + `Runtime.addBinding` to replace polling
+- [ ] **Phase 5: Selector Health Monitoring** — Sliding-window failure tracking and graceful degradation
+
 ## Scalability & Architecture
 
 - [ ] **Logger Improvements** — File output, rotation, `--verbose` / `--quiet` flags ([#12](https://github.com/tokyoweb3/LazyGravity/issues/12))

@@ -734,6 +734,28 @@ async function sendPromptToAntigravity(
 
         await monitor.start();
 
+        // 1-second elapsed timer — updates footer independently of process log events
+        const elapsedTimer = setInterval(() => {
+            if (isFinalized) {
+                clearInterval(elapsedTimer);
+                return;
+            }
+            const elapsed = Math.round((Date.now() - startTime) / 1000);
+            liveActivityUpdateVersion += 1;
+            const activityVersion = liveActivityUpdateVersion;
+            upsertLiveActivityEmbeds(
+                `${PHASE_ICONS.thinking} Process Log`,
+                lastActivityLogText || ACTIVITY_PLACEHOLDER,
+                PHASE_COLORS.thinking,
+                t(`⏱️ Elapsed: ${elapsed}s | Process log`),
+                {
+                    source: 'elapsed-tick',
+                    expectedVersion: activityVersion,
+                    skipWhenFinalized: true,
+                },
+            ).catch(() => { });
+        }, 1000);
+
     } catch (e: any) {
         isFinalized = true;
         await sendEmbed(
@@ -795,7 +817,7 @@ export const startBot = async () => {
     });
 
     client.once(Events.ClientReady, async (readyClient) => {
-        logger.info(`Ready! Logged in as ${readyClient.user.tag}`);
+        logger.info(`Ready! Logged in as ${readyClient.user.tag} | extractionMode=${config.extractionMode}`);
 
         try {
             await registerSlashCommands(config.discordToken, config.clientId, config.guildId);
@@ -827,6 +849,7 @@ export const startBot = async () => {
                     { name: 'Model', value: modelService.getCurrentModel(), inline: true },
                     { name: 'Mode', value: modeService.getCurrentMode(), inline: true },
                     { name: 'Projects', value: `${projects.length} registered`, inline: true },
+                    { name: 'Extraction', value: config.extractionMode, inline: true },
                 )
                 .setFooter({ text: `Started at ${new Date().toLocaleString()}` })
                 .setTimestamp();
