@@ -74,28 +74,6 @@ export function htmlToDiscordMarkdown(html: string): string {
         '*$1*',
     );
 
-    // Handle ordered lists: <ol> with <li> children
-    result = result.replace(/<ol[^>]*>([\s\S]*?)<\/ol>/gi, (_m, content) => {
-        let counter = 0;
-        const items = content.replace(
-            /<li[^>]*>([\s\S]*?)<\/li>/gi,
-            (_lm: string, text: string) => {
-                counter++;
-                return `${counter}. ${stripTags(text).trim()}\n`;
-            },
-        );
-        return `\n${items}`;
-    });
-
-    // Handle unordered lists: <ul> with <li> children
-    result = result.replace(/<ul[^>]*>([\s\S]*?)<\/ul>/gi, (_m, content) => {
-        const items = content.replace(
-            /<li[^>]*>([\s\S]*?)<\/li>/gi,
-            (_lm: string, text: string) => `- ${stripTags(text).trim()}\n`,
-        );
-        return `\n${items}`;
-    });
-
     // Handle <span class="context-scope-mention"> → `text`
     result = result.replace(
         /<span[^>]*class="[^"]*context-scope-mention[^"]*"[^>]*>([\s\S]*?)<\/span>/gi,
@@ -114,11 +92,43 @@ export function htmlToDiscordMarkdown(html: string): string {
         },
     );
 
-    // Handle <p> tags → content with trailing double newline
+    // Handle <p> and <div> BEFORE list processing so <li> content is clean text
     result = result.replace(/<p[^>]*>([\s\S]*?)<\/p>/gi, '$1\n\n');
-
-    // Handle <div> tags → content with newline (block element)
     result = result.replace(/<div[^>]*>([\s\S]*?)<\/div>/gi, '$1\n');
+
+    // Handle lists — process innermost first to support nesting.
+    // Loop up to 5 times to peel nested lists from inside out.
+    for (let iteration = 0; iteration < 5; iteration++) {
+        if (!/<(?:ul|ol)\b/i.test(result)) break;
+
+        // Process innermost <ul> (no nested <ul>/<ol> inside)
+        result = result.replace(
+            /<ul[^>]*>((?:(?!<\/?(?:ul|ol)\b)[\s\S])*?)<\/ul>/gi,
+            (_m, content) => {
+                const items = content.replace(
+                    /<li[^>]*>([\s\S]*?)<\/li>/gi,
+                    (_lm: string, text: string) => `- ${stripTags(text).trim()}\n`,
+                );
+                return `\n${items}`;
+            },
+        );
+
+        // Process innermost <ol> (no nested <ul>/<ol> inside)
+        result = result.replace(
+            /<ol[^>]*>((?:(?!<\/?(?:ul|ol)\b)[\s\S])*?)<\/ol>/gi,
+            (_m, content) => {
+                let counter = 0;
+                const items = content.replace(
+                    /<li[^>]*>([\s\S]*?)<\/li>/gi,
+                    (_lm: string, text: string) => {
+                        counter++;
+                        return `${counter}. ${stripTags(text).trim()}\n`;
+                    },
+                );
+                return `\n${items}`;
+            },
+        );
+    }
 
     // Strip remaining HTML tags
     result = stripTags(result);
