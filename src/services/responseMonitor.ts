@@ -491,7 +491,6 @@ export class ResponseMonitor {
     private quotaDetected: boolean = false;
     private seenProcessLogKeys: Set<string> = new Set();
     private structuredDiagLogged: boolean = false;
-    private domDiagLogged: boolean = false;
 
     constructor(options: ResponseMonitorOptions) {
         this.cdpService = options.cdpService;
@@ -741,32 +740,12 @@ export class ResponseMonitor {
 
                         if (!this.structuredDiagLogged) {
                             this.structuredDiagLogged = true;
-                            logger.info('[ResponseMonitor:poll] Structured extraction OK — segments:', classified.diagnostics.segmentCounts);
+                            logger.debug('[ResponseMonitor] Structured extraction OK — segments:', classified.diagnostics.segmentCounts);
                         }
 
                         // Emit structured activity lines as process logs
                         if (classified.activityLines.length > 0) {
                             this.emitNewProcessLogs(classified.activityLines);
-                        }
-
-                        // One-shot DOM diagnostic: dump DOM structure to understand activity elements
-                        if (!this.domDiagLogged) {
-                            this.domDiagLogged = true;
-                            try {
-                                const diagResult = await this.cdpService.call(
-                                    'Runtime.evaluate',
-                                    this.buildEvaluateParams(RESPONSE_SELECTORS.DOM_DIAGNOSTIC),
-                                );
-                                const diagData = diagResult?.result?.value;
-                                if (diagData) {
-                                    logger.info('[DOM-DIAG] details count:', diagData.detailsCount);
-                                    logger.info('[DOM-DIAG] details dump:', JSON.stringify(diagData.detailsDump, null, 2));
-                                    logger.info('[DOM-DIAG] activity nodes:', JSON.stringify(diagData.activityNodes, null, 2));
-                                    logger.info('[DOM-DIAG] all text nodes (content selectors):', JSON.stringify(diagData.allTextNodes, null, 2));
-                                }
-                            } catch (diagError) {
-                                logger.warn('[DOM-DIAG] diagnostic failed:', diagError);
-                            }
                         }
                     } else if (!this.structuredDiagLogged) {
                         this.structuredDiagLogged = true;

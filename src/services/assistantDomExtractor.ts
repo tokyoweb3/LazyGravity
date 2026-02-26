@@ -9,7 +9,6 @@
  */
 
 import { htmlToDiscordMarkdown } from '../utils/htmlToDiscordMarkdown';
-import { logger } from '../utils/logger';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -50,8 +49,6 @@ export interface ClassifyResult {
  *
  * If the payload is invalid, returns a legacy-fallback result with empty fields.
  */
-let _htmlDiagLogged = false;
-
 export function classifyAssistantSegments(payload: unknown): ClassifyResult {
     if (!isValidPayload(payload)) {
         return {
@@ -100,18 +97,6 @@ export function classifyAssistantSegments(payload: unknown): ClassifyResult {
 
     // Join body segments and apply HTML-to-Markdown conversion
     const rawBody = bodyTexts.join('\n\n');
-
-    // Diagnostic: log a snippet of the raw HTML once for debugging
-    if (rawBody.length > 0 && !_htmlDiagLogged) {
-        _htmlDiagLogged = true;
-        const preIdx = rawBody.toLowerCase().indexOf('<pre');
-        if (preIdx >= 0) {
-            logger.debug('[AssistantDomExtractor] Raw HTML around <pre>:', rawBody.slice(preIdx, preIdx + 500));
-        } else {
-            logger.debug('[AssistantDomExtractor] No <pre> found. Raw HTML sample:', rawBody.slice(0, 500));
-        }
-    }
-
     const finalOutputText = htmlToDiscordMarkdown(rawBody);
 
     return {
