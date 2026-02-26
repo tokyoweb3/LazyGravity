@@ -74,7 +74,7 @@ describe('interactionCreateHandler', () => {
             getCurrentCdp: jest.fn(),
             parseApprovalCustomId: jest.fn().mockReturnValue({
                 action: 'approve',
-                workspaceDirName: 'ws-a',
+                projectName: 'ws-a',
                 channelId: 'channel-a',
             }),
             parseErrorPopupCustomId: jest.fn().mockReturnValue(null),

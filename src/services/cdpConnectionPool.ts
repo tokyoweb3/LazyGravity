@@ -34,10 +34,10 @@ export class CdpConnectionPool {
      * @returns Connected CdpService
      */
     async getOrConnect(workspacePath: string): Promise<CdpService> {
-        const dirName = this.extractDirName(workspacePath);
+        const projectName = this.extractProjectName(workspacePath);
 
         // Return existing connection if available
-        const existing = this.connections.get(dirName);
+        const existing = this.connections.get(projectName);
         if (existing && existing.isConnected()) {
             // Re-validate that the still-open window is actually bound to this workspace.
             await existing.discoverAndConnectForWorkspace(workspacePath);
@@ -45,20 +45,20 @@ export class CdpConnectionPool {
         }
 
         // Wait for the pending connection promise if one exists (prevents concurrent connections)
-        const pending = this.connectingPromises.get(dirName);
+        const pending = this.connectingPromises.get(projectName);
         if (pending) {
             return pending;
         }
 
         // Start a new connection
-        const connectPromise = this.createAndConnect(workspacePath, dirName);
-        this.connectingPromises.set(dirName, connectPromise);
+        const connectPromise = this.createAndConnect(workspacePath, projectName);
+        this.connectingPromises.set(projectName, connectPromise);
 
         try {
             const cdp = await connectPromise;
             return cdp;
         } finally {
-            this.connectingPromises.delete(dirName);
+            this.connectingPromises.delete(projectName);
         }
     }
 
@@ -66,8 +66,8 @@ export class CdpConnectionPool {
      * Get a connected CdpService (read-only).
      * Returns null if not connected.
      */
-    getConnected(workspaceDirName: string): CdpService | null {
-        const cdp = this.connections.get(workspaceDirName);
+    getConnected(projectName: string): CdpService | null {
+        const cdp = this.connections.get(projectName);
         if (cdp && cdp.isConnected()) {
             return cdp;
         }
@@ -77,37 +77,37 @@ export class CdpConnectionPool {
     /**
      * Disconnect the specified workspace.
      */
-    disconnectWorkspace(workspaceDirName: string): void {
-        const cdp = this.connections.get(workspaceDirName);
+    disconnectWorkspace(projectName: string): void {
+        const cdp = this.connections.get(projectName);
         if (cdp) {
             cdp.disconnect().catch((err) => {
-                logger.error(`[CdpConnectionPool] Error while disconnecting ${workspaceDirName}:`, err);
+                logger.error(`[CdpConnectionPool] Error while disconnecting ${projectName}:`, err);
             });
-            this.connections.delete(workspaceDirName);
+            this.connections.delete(projectName);
         }
 
-        const detector = this.approvalDetectors.get(workspaceDirName);
+        const detector = this.approvalDetectors.get(projectName);
         if (detector) {
             detector.stop();
-            this.approvalDetectors.delete(workspaceDirName);
+            this.approvalDetectors.delete(projectName);
         }
 
-        const errorPopupDetector = this.errorPopupDetectors.get(workspaceDirName);
+        const errorPopupDetector = this.errorPopupDetectors.get(projectName);
         if (errorPopupDetector) {
             errorPopupDetector.stop();
-            this.errorPopupDetectors.delete(workspaceDirName);
+            this.errorPopupDetectors.delete(projectName);
         }
 
-        const planningDetector = this.planningDetectors.get(workspaceDirName);
+        const planningDetector = this.planningDetectors.get(projectName);
         if (planningDetector) {
             planningDetector.stop();
-            this.planningDetectors.delete(workspaceDirName);
+            this.planningDetectors.delete(projectName);
         }
 
-        const userMsgDetector = this.userMessageDetectors.get(workspaceDirName);
+        const userMsgDetector = this.userMessageDetectors.get(projectName);
         if (userMsgDetector) {
             userMsgDetector.stop();
-            this.userMessageDetectors.delete(workspaceDirName);
+            this.userMessageDetectors.delete(projectName);
         }
     }
 
@@ -115,84 +115,84 @@ export class CdpConnectionPool {
      * Disconnect all workspace connections.
      */
     disconnectAll(): void {
-        for (const dirName of [...this.connections.keys()]) {
-            this.disconnectWorkspace(dirName);
+        for (const projectName of [...this.connections.keys()]) {
+            this.disconnectWorkspace(projectName);
         }
     }
 
     /**
      * Register an approval detector for a workspace.
      */
-    registerApprovalDetector(workspaceDirName: string, detector: ApprovalDetector): void {
+    registerApprovalDetector(projectName: string, detector: ApprovalDetector): void {
         // Stop existing detector
-        const existing = this.approvalDetectors.get(workspaceDirName);
+        const existing = this.approvalDetectors.get(projectName);
         if (existing && existing.isActive()) {
             existing.stop();
         }
-        this.approvalDetectors.set(workspaceDirName, detector);
+        this.approvalDetectors.set(projectName, detector);
     }
 
     /**
      * Get the approval detector for a workspace.
      */
-    getApprovalDetector(workspaceDirName: string): ApprovalDetector | undefined {
-        return this.approvalDetectors.get(workspaceDirName);
+    getApprovalDetector(projectName: string): ApprovalDetector | undefined {
+        return this.approvalDetectors.get(projectName);
     }
 
     /**
      * Register an error popup detector for a workspace.
      */
-    registerErrorPopupDetector(workspaceDirName: string, detector: ErrorPopupDetector): void {
+    registerErrorPopupDetector(projectName: string, detector: ErrorPopupDetector): void {
         // Stop existing detector
-        const existing = this.errorPopupDetectors.get(workspaceDirName);
+        const existing = this.errorPopupDetectors.get(projectName);
         if (existing && existing.isActive()) {
             existing.stop();
         }
-        this.errorPopupDetectors.set(workspaceDirName, detector);
+        this.errorPopupDetectors.set(projectName, detector);
     }
 
     /**
      * Get the error popup detector for a workspace.
      */
-    getErrorPopupDetector(workspaceDirName: string): ErrorPopupDetector | undefined {
-        return this.errorPopupDetectors.get(workspaceDirName);
+    getErrorPopupDetector(projectName: string): ErrorPopupDetector | undefined {
+        return this.errorPopupDetectors.get(projectName);
     }
 
     /**
      * Register a planning detector for a workspace.
      */
-    registerPlanningDetector(workspaceDirName: string, detector: PlanningDetector): void {
+    registerPlanningDetector(projectName: string, detector: PlanningDetector): void {
         // Stop existing detector
-        const existing = this.planningDetectors.get(workspaceDirName);
+        const existing = this.planningDetectors.get(projectName);
         if (existing && existing.isActive()) {
             existing.stop();
         }
-        this.planningDetectors.set(workspaceDirName, detector);
+        this.planningDetectors.set(projectName, detector);
     }
 
     /**
      * Get the planning detector for a workspace.
      */
-    getPlanningDetector(workspaceDirName: string): PlanningDetector | undefined {
-        return this.planningDetectors.get(workspaceDirName);
+    getPlanningDetector(projectName: string): PlanningDetector | undefined {
+        return this.planningDetectors.get(projectName);
     }
 
     /**
      * Register a user message detector for a workspace.
      */
-    registerUserMessageDetector(workspaceDirName: string, detector: UserMessageDetector): void {
-        const existing = this.userMessageDetectors.get(workspaceDirName);
+    registerUserMessageDetector(projectName: string, detector: UserMessageDetector): void {
+        const existing = this.userMessageDetectors.get(projectName);
         if (existing && existing.isActive()) {
             existing.stop();
         }
-        this.userMessageDetectors.set(workspaceDirName, detector);
+        this.userMessageDetectors.set(projectName, detector);
     }
 
     /**
      * Get the user message detector for a workspace.
      */
-    getUserMessageDetector(workspaceDirName: string): UserMessageDetector | undefined {
-        return this.userMessageDetectors.get(workspaceDirName);
+    getUserMessageDetector(projectName: string): UserMessageDetector | undefined {
+        return this.userMessageDetectors.get(projectName);
     }
 
     /**
@@ -209,60 +209,60 @@ export class CdpConnectionPool {
     }
 
     /**
-     * Extract the directory name from a workspace path.
+     * Extract the project name from a workspace path.
      */
-    extractDirName(workspacePath: string): string {
+    extractProjectName(workspacePath: string): string {
         return workspacePath.split('/').filter(Boolean).pop() || workspacePath;
     }
 
     /**
      * Create a new CdpService and connect to the workspace.
      */
-    private async createAndConnect(workspacePath: string, dirName: string): Promise<CdpService> {
+    private async createAndConnect(workspacePath: string, projectName: string): Promise<CdpService> {
         // Disconnect old connection if exists
-        const old = this.connections.get(dirName);
+        const old = this.connections.get(projectName);
         if (old) {
             await old.disconnect().catch(() => {});
-            this.connections.delete(dirName);
+            this.connections.delete(projectName);
         }
 
         const cdp = new CdpService(this.cdpOptions);
 
         // Auto-cleanup on disconnect
         cdp.on('disconnected', () => {
-            logger.error(`[CdpConnectionPool] Workspace "${dirName}" disconnected`);
+            logger.error(`[CdpConnectionPool] Workspace "${projectName}" disconnected`);
             // Only remove from Map when reconnection fails
             // (CdpService attempts reconnection internally, so we don't remove here)
         });
 
         cdp.on('reconnectFailed', () => {
-            logger.error(`[CdpConnectionPool] Reconnection failed for workspace "${dirName}". Removing from pool`);
-            this.connections.delete(dirName);
-            const detector = this.approvalDetectors.get(dirName);
+            logger.error(`[CdpConnectionPool] Reconnection failed for workspace "${projectName}". Removing from pool`);
+            this.connections.delete(projectName);
+            const detector = this.approvalDetectors.get(projectName);
             if (detector) {
                 detector.stop();
-                this.approvalDetectors.delete(dirName);
+                this.approvalDetectors.delete(projectName);
             }
-            const errorDetector = this.errorPopupDetectors.get(dirName);
+            const errorDetector = this.errorPopupDetectors.get(projectName);
             if (errorDetector) {
                 errorDetector.stop();
-                this.errorPopupDetectors.delete(dirName);
+                this.errorPopupDetectors.delete(projectName);
             }
-            const planDetector = this.planningDetectors.get(dirName);
+            const planDetector = this.planningDetectors.get(projectName);
             if (planDetector) {
                 planDetector.stop();
-                this.planningDetectors.delete(dirName);
+                this.planningDetectors.delete(projectName);
             }
-            const userMsgDetector = this.userMessageDetectors.get(dirName);
+            const userMsgDetector = this.userMessageDetectors.get(projectName);
             if (userMsgDetector) {
                 userMsgDetector.stop();
-                this.userMessageDetectors.delete(dirName);
+                this.userMessageDetectors.delete(projectName);
             }
         });
 
         // Connect to the workspace
         await cdp.discoverAndConnectForWorkspace(workspacePath);
-        this.connections.set(dirName, cdp);
+        this.connections.set(projectName, cdp);
 
         return cdp;
     }

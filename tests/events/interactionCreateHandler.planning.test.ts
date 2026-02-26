@@ -54,7 +54,7 @@ describe('interactionCreateHandler - planning buttons', () => {
         const handler = createInteractionCreateHandler(createBaseDeps({
             parsePlanningCustomId: jest.fn().mockReturnValue({
                 action: 'open',
-                workspaceDirName: 'ws-a',
+                projectName: 'ws-a',
                 channelId: 'channel-a',
             }),
         }));
@@ -79,7 +79,7 @@ describe('interactionCreateHandler - planning buttons', () => {
         const handler = createInteractionCreateHandler(createBaseDeps({
             parsePlanningCustomId: jest.fn().mockReturnValue({
                 action: 'open',
-                workspaceDirName: 'ws-a',
+                projectName: 'ws-a',
                 channelId: 'channel-a',
             }),
             bridge: {
@@ -134,7 +134,7 @@ describe('interactionCreateHandler - planning buttons', () => {
         const handler = createInteractionCreateHandler(createBaseDeps({
             parsePlanningCustomId: jest.fn().mockReturnValue({
                 action: 'open',
-                workspaceDirName: 'ws-a',
+                projectName: 'ws-a',
                 channelId: 'channel-a',
             }),
             bridge: {
@@ -214,7 +214,7 @@ describe('interactionCreateHandler - planning buttons', () => {
         const handler = createInteractionCreateHandler(createBaseDeps({
             parsePlanningCustomId: jest.fn().mockReturnValue({
                 action: 'proceed',
-                workspaceDirName: 'ws-a',
+                projectName: 'ws-a',
                 channelId: 'channel-a',
             }),
             bridge: {
@@ -275,7 +275,7 @@ describe('interactionCreateHandler - planning buttons', () => {
         const handler = createInteractionCreateHandler(createBaseDeps({
             parsePlanningCustomId: jest.fn().mockReturnValue({
                 action: 'open',
-                workspaceDirName: 'ws-a',
+                projectName: 'ws-a',
                 channelId: 'channel-a',
             }),
             bridge: {
@@ -328,7 +328,7 @@ describe('interactionCreateHandler - planning buttons', () => {
         const handler = createInteractionCreateHandler(createBaseDeps({
             parsePlanningCustomId: jest.fn().mockReturnValue({
                 action: 'open',
-                workspaceDirName: 'ws-a',
+                projectName: 'ws-a',
                 channelId: 'channel-a',
             }),
             bridge: {

@@ -48,7 +48,7 @@ describe('messageCreateHandler', () => {
                 autoAccept: { handle: jest.fn(), isEnabled: jest.fn() },
                 pool: {
                     getOrConnect: jest.fn().mockResolvedValue({}),
-                    extractDirName: jest.fn().mockReturnValue('proj-a'),
+                    extractProjectName: jest.fn().mockReturnValue('proj-a'),
                 },
             } as any,
             modeService: {} as any,
@@ -103,7 +103,7 @@ describe('messageCreateHandler', () => {
                 autoAccept: { handle: jest.fn(), isEnabled: jest.fn() },
                 pool: {
                     getOrConnect: jest.fn().mockResolvedValue({}),
-                    extractDirName: jest.fn().mockReturnValue('proj-a'),
+                    extractProjectName: jest.fn().mockReturnValue('proj-a'),
                 },
             } as any,
             modeService: {} as any,

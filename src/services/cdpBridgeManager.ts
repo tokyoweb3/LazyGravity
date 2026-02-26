@@ -47,8 +47,8 @@ function normalizeSessionTitle(title: string): string {
     return title.trim().toLowerCase();
 }
 
-function buildSessionRouteKey(workspaceDirName: string, sessionTitle: string): string {
-    return `${workspaceDirName}::${normalizeSessionTitle(sessionTitle)}`;
+function buildSessionRouteKey(projectName: string, sessionTitle: string): string {
+    return `${projectName}::${normalizeSessionTitle(sessionTitle)}`;
 }
 
 const GET_CURRENT_CHAT_TITLE_SCRIPT = `(() => {
@@ -84,41 +84,41 @@ export async function getCurrentChatTitle(cdp: CdpService): Promise<string | nul
 
 export function registerApprovalWorkspaceChannel(
     bridge: CdpBridge,
-    workspaceDirName: string,
+    projectName: string,
     channel: Message['channel'],
 ): void {
-    bridge.approvalChannelByWorkspace.set(workspaceDirName, channel);
+    bridge.approvalChannelByWorkspace.set(projectName, channel);
 }
 
 export function registerApprovalSessionChannel(
     bridge: CdpBridge,
-    workspaceDirName: string,
+    projectName: string,
     sessionTitle: string,
     channel: Message['channel'],
 ): void {
     if (!sessionTitle || sessionTitle.trim().length === 0) return;
-    bridge.approvalChannelBySession.set(buildSessionRouteKey(workspaceDirName, sessionTitle), channel);
-    bridge.approvalChannelByWorkspace.set(workspaceDirName, channel);
+    bridge.approvalChannelBySession.set(buildSessionRouteKey(projectName, sessionTitle), channel);
+    bridge.approvalChannelByWorkspace.set(projectName, channel);
 }
 
 export function resolveApprovalChannelForCurrentChat(
     bridge: CdpBridge,
-    workspaceDirName: string,
+    projectName: string,
     currentChatTitle: string | null,
 ): Message['channel'] | null {
     // Try session-level match first (most precise routing)
     if (currentChatTitle && currentChatTitle.trim().length > 0) {
-        const key = buildSessionRouteKey(workspaceDirName, currentChatTitle);
+        const key = buildSessionRouteKey(projectName, currentChatTitle);
         const sessionChannel = bridge.approvalChannelBySession.get(key);
         if (sessionChannel) return sessionChannel;
     }
     // Fall back to workspace-level routing
-    return bridge.approvalChannelByWorkspace.get(workspaceDirName) ?? null;
+    return bridge.approvalChannelByWorkspace.get(projectName) ?? null;
 }
 
 export function buildApprovalCustomId(
     action: 'approve' | 'always_allow' | 'deny',
-    workspaceDirName: string,
+    projectName: string,
     channelId?: string,
 ): string {
     const prefix = action === 'approve'
@@ -127,76 +127,76 @@ export function buildApprovalCustomId(
             ? ALWAYS_ALLOW_ACTION_PREFIX
             : DENY_ACTION_PREFIX;
     if (channelId && channelId.trim().length > 0) {
-        return `${prefix}:${workspaceDirName}:${channelId}`;
+        return `${prefix}:${projectName}:${channelId}`;
     }
-    return `${prefix}:${workspaceDirName}`;
+    return `${prefix}:${projectName}`;
 }
 
-export function parseApprovalCustomId(customId: string): { action: 'approve' | 'always_allow' | 'deny'; workspaceDirName: string | null; channelId: string | null } | null {
+export function parseApprovalCustomId(customId: string): { action: 'approve' | 'always_allow' | 'deny'; projectName: string | null; channelId: string | null } | null {
     if (customId === APPROVE_ACTION_PREFIX) {
-        return { action: 'approve', workspaceDirName: null, channelId: null };
+        return { action: 'approve', projectName: null, channelId: null };
     }
     if (customId === ALWAYS_ALLOW_ACTION_PREFIX) {
-        return { action: 'always_allow', workspaceDirName: null, channelId: null };
+        return { action: 'always_allow', projectName: null, channelId: null };
     }
     if (customId === DENY_ACTION_PREFIX) {
-        return { action: 'deny', workspaceDirName: null, channelId: null };
+        return { action: 'deny', projectName: null, channelId: null };
     }
     if (customId.startsWith(`${APPROVE_ACTION_PREFIX}:`)) {
         const rest = customId.substring(`${APPROVE_ACTION_PREFIX}:`.length);
-        const [workspaceDirName, channelId] = rest.split(':');
-        return { action: 'approve', workspaceDirName: workspaceDirName || null, channelId: channelId || null };
+        const [projectName, channelId] = rest.split(':');
+        return { action: 'approve', projectName: projectName || null, channelId: channelId || null };
     }
     if (customId.startsWith(`${ALWAYS_ALLOW_ACTION_PREFIX}:`)) {
         const rest = customId.substring(`${ALWAYS_ALLOW_ACTION_PREFIX}:`.length);
-        const [workspaceDirName, channelId] = rest.split(':');
-        return { action: 'always_allow', workspaceDirName: workspaceDirName || null, channelId: channelId || null };
+        const [projectName, channelId] = rest.split(':');
+        return { action: 'always_allow', projectName: projectName || null, channelId: channelId || null };
     }
     if (customId.startsWith(`${DENY_ACTION_PREFIX}:`)) {
         const rest = customId.substring(`${DENY_ACTION_PREFIX}:`.length);
-        const [workspaceDirName, channelId] = rest.split(':');
-        return { action: 'deny', workspaceDirName: workspaceDirName || null, channelId: channelId || null };
+        const [projectName, channelId] = rest.split(':');
+        return { action: 'deny', projectName: projectName || null, channelId: channelId || null };
     }
     return null;
 }
 
 export function buildPlanningCustomId(
     action: 'open' | 'proceed',
-    workspaceDirName: string,
+    projectName: string,
     channelId?: string,
 ): string {
     const prefix = action === 'open'
         ? PLANNING_OPEN_ACTION_PREFIX
         : PLANNING_PROCEED_ACTION_PREFIX;
     if (channelId && channelId.trim().length > 0) {
-        return `${prefix}:${workspaceDirName}:${channelId}`;
+        return `${prefix}:${projectName}:${channelId}`;
     }
-    return `${prefix}:${workspaceDirName}`;
+    return `${prefix}:${projectName}`;
 }
 
-export function parsePlanningCustomId(customId: string): { action: 'open' | 'proceed'; workspaceDirName: string | null; channelId: string | null } | null {
+export function parsePlanningCustomId(customId: string): { action: 'open' | 'proceed'; projectName: string | null; channelId: string | null } | null {
     if (customId === PLANNING_OPEN_ACTION_PREFIX) {
-        return { action: 'open', workspaceDirName: null, channelId: null };
+        return { action: 'open', projectName: null, channelId: null };
     }
     if (customId === PLANNING_PROCEED_ACTION_PREFIX) {
-        return { action: 'proceed', workspaceDirName: null, channelId: null };
+        return { action: 'proceed', projectName: null, channelId: null };
     }
     if (customId.startsWith(`${PLANNING_OPEN_ACTION_PREFIX}:`)) {
         const rest = customId.substring(`${PLANNING_OPEN_ACTION_PREFIX}:`.length);
-        const [workspaceDirName, channelId] = rest.split(':');
-        return { action: 'open', workspaceDirName: workspaceDirName || null, channelId: channelId || null };
+        const [projectName, channelId] = rest.split(':');
+        return { action: 'open', projectName: projectName || null, channelId: channelId || null };
     }
     if (customId.startsWith(`${PLANNING_PROCEED_ACTION_PREFIX}:`)) {
         const rest = customId.substring(`${PLANNING_PROCEED_ACTION_PREFIX}:`.length);
-        const [workspaceDirName, channelId] = rest.split(':');
-        return { action: 'proceed', workspaceDirName: workspaceDirName || null, channelId: channelId || null };
+        const [projectName, channelId] = rest.split(':');
+        return { action: 'proceed', projectName: projectName || null, channelId: channelId || null };
     }
     return null;
 }
 
 export function buildErrorPopupCustomId(
     action: 'dismiss' | 'copy_debug' | 'retry',
-    workspaceDirName: string,
+    projectName: string,
     channelId?: string,
 ): string {
     const prefix = action === 'dismiss'
@@ -205,35 +205,35 @@ export function buildErrorPopupCustomId(
             ? ERROR_POPUP_COPY_DEBUG_ACTION_PREFIX
             : ERROR_POPUP_RETRY_ACTION_PREFIX;
     if (channelId && channelId.trim().length > 0) {
-        return `${prefix}:${workspaceDirName}:${channelId}`;
+        return `${prefix}:${projectName}:${channelId}`;
     }
-    return `${prefix}:${workspaceDirName}`;
+    return `${prefix}:${projectName}`;
 }
 
-export function parseErrorPopupCustomId(customId: string): { action: 'dismiss' | 'copy_debug' | 'retry'; workspaceDirName: string | null; channelId: string | null } | null {
+export function parseErrorPopupCustomId(customId: string): { action: 'dismiss' | 'copy_debug' | 'retry'; projectName: string | null; channelId: string | null } | null {
     if (customId === ERROR_POPUP_DISMISS_ACTION_PREFIX) {
-        return { action: 'dismiss', workspaceDirName: null, channelId: null };
+        return { action: 'dismiss', projectName: null, channelId: null };
     }
     if (customId === ERROR_POPUP_COPY_DEBUG_ACTION_PREFIX) {
-        return { action: 'copy_debug', workspaceDirName: null, channelId: null };
+        return { action: 'copy_debug', projectName: null, channelId: null };
     }
     if (customId === ERROR_POPUP_RETRY_ACTION_PREFIX) {
-        return { action: 'retry', workspaceDirName: null, channelId: null };
+        return { action: 'retry', projectName: null, channelId: null };
     }
     if (customId.startsWith(`${ERROR_POPUP_DISMISS_ACTION_PREFIX}:`)) {
         const rest = customId.substring(`${ERROR_POPUP_DISMISS_ACTION_PREFIX}:`.length);
-        const [workspaceDirName, channelId] = rest.split(':');
-        return { action: 'dismiss', workspaceDirName: workspaceDirName || null, channelId: channelId || null };
+        const [projectName, channelId] = rest.split(':');
+        return { action: 'dismiss', projectName: projectName || null, channelId: channelId || null };
     }
     if (customId.startsWith(`${ERROR_POPUP_COPY_DEBUG_ACTION_PREFIX}:`)) {
         const rest = customId.substring(`${ERROR_POPUP_COPY_DEBUG_ACTION_PREFIX}:`.length);
-        const [workspaceDirName, channelId] = rest.split(':');
-        return { action: 'copy_debug', workspaceDirName: workspaceDirName || null, channelId: channelId || null };
+        const [projectName, channelId] = rest.split(':');
+        return { action: 'copy_debug', projectName: projectName || null, channelId: channelId || null };
     }
     if (customId.startsWith(`${ERROR_POPUP_RETRY_ACTION_PREFIX}:`)) {
         const rest = customId.substring(`${ERROR_POPUP_RETRY_ACTION_PREFIX}:`.length);
-        const [workspaceDirName, channelId] = rest.split(':');
-        return { action: 'retry', workspaceDirName: workspaceDirName || null, channelId: channelId || null };
+        const [projectName, channelId] = rest.split(':');
+        return { action: 'retry', projectName: projectName || null, channelId: channelId || null };
     }
     return null;
 }
@@ -279,10 +279,10 @@ export function getCurrentCdp(bridge: CdpBridge): CdpService | null {
 export function ensureApprovalDetector(
     bridge: CdpBridge,
     cdp: CdpService,
-    workspaceDirName: string,
+    projectName: string,
     client: Client,
 ): void {
-    const existing = bridge.pool.getApprovalDetector(workspaceDirName);
+    const existing = bridge.pool.getApprovalDetector(projectName);
     if (existing && existing.isActive()) return;
 
     // Track the most recent button message for auto-disable on resolve.
@@ -311,15 +311,15 @@ export function ensureApprovalDetector(
             }).catch(logger.error);
         },
         onApprovalRequired: async (info: ApprovalInfo) => {
-            logger.debug(`[ApprovalDetector:${workspaceDirName}] Approval button detected (allow="${info.approveText}", deny="${info.denyText}")`);
+            logger.debug(`[ApprovalDetector:${projectName}] Approval button detected (allow="${info.approveText}", deny="${info.denyText}")`);
 
             const currentChatTitle = await getCurrentChatTitle(cdp);
-            const targetChannel = resolveApprovalChannelForCurrentChat(bridge, workspaceDirName, currentChatTitle);
+            const targetChannel = resolveApprovalChannelForCurrentChat(bridge, projectName, currentChatTitle);
             const targetChannelId = targetChannel && 'id' in targetChannel ? String((targetChannel as any).id) : '';
 
             if (!targetChannel || !targetChannelId || !('send' in targetChannel)) {
                 logger.warn(
-                    `[ApprovalDetector:${workspaceDirName}] Skipped approval notification because chat is not linked to a Discord session` +
+                    `[ApprovalDetector:${projectName}] Skipped approval notification because chat is not linked to a Discord session` +
                     `${currentChatTitle ? ` (title="${currentChatTitle}")` : ''}`,
                 );
                 return;
@@ -334,7 +334,7 @@ export function ensureApprovalDetector(
                     .setColor(accepted ? 0x2ECC71 : 0xF39C12)
                     .addFields(
                         { name: t('Auto-approve mode'), value: t('ON'), inline: true },
-                        { name: t('Workspace'), value: workspaceDirName, inline: true },
+                        { name: t('Workspace'), value: projectName, inline: true },
                         { name: t('Result'), value: accepted ? t('Executed Always Allow/Allow') : t('Manual approval required'), inline: true },
                     );
                 if (info.description) {
@@ -359,22 +359,22 @@ export function ensureApprovalDetector(
                     { name: t('Allow button'), value: info.approveText, inline: true },
                     { name: t('Allow Chat button'), value: info.alwaysAllowText || t('In Dropdown'), inline: true },
                     { name: t('Deny button'), value: info.denyText || t('(None)'), inline: true },
-                    { name: t('Workspace'), value: workspaceDirName, inline: true },
+                    { name: t('Workspace'), value: projectName, inline: true },
                 )
                 .setTimestamp();
 
             const approveBtn = new ButtonBuilder()
-                .setCustomId(buildApprovalCustomId('approve', workspaceDirName, targetChannelId))
+                .setCustomId(buildApprovalCustomId('approve', projectName, targetChannelId))
                 .setLabel(t('Allow'))
                 .setStyle(ButtonStyle.Success);
 
             const alwaysAllowBtn = new ButtonBuilder()
-                .setCustomId(buildApprovalCustomId('always_allow', workspaceDirName, targetChannelId))
+                .setCustomId(buildApprovalCustomId('always_allow', projectName, targetChannelId))
                 .setLabel(t('Allow Chat'))
                 .setStyle(ButtonStyle.Primary);
 
             const denyBtn = new ButtonBuilder()
-                .setCustomId(buildApprovalCustomId('deny', workspaceDirName, targetChannelId))
+                .setCustomId(buildApprovalCustomId('deny', projectName, targetChannelId))
                 .setLabel(t('Deny'))
                 .setStyle(ButtonStyle.Danger);
 
@@ -391,8 +391,8 @@ export function ensureApprovalDetector(
     });
 
     detector.start();
-    bridge.pool.registerApprovalDetector(workspaceDirName, detector);
-    logger.debug(`[ApprovalDetector:${workspaceDirName}] Started approval button detection`);
+    bridge.pool.registerApprovalDetector(projectName, detector);
+    logger.debug(`[ApprovalDetector:${projectName}] Started approval button detection`);
 }
 
 /**
@@ -402,10 +402,10 @@ export function ensureApprovalDetector(
 export function ensurePlanningDetector(
     bridge: CdpBridge,
     cdp: CdpService,
-    workspaceDirName: string,
+    projectName: string,
     _client: Client, // Unused, kept for signature consistency with ensureApprovalDetector
 ): void {
-    const existing = bridge.pool.getPlanningDetector(workspaceDirName);
+    const existing = bridge.pool.getPlanningDetector(projectName);
     if (existing && existing.isActive()) return;
 
     // Track the most recent planning message for auto-disable on resolve.
@@ -432,15 +432,15 @@ export function ensurePlanningDetector(
             }).catch(logger.error);
         },
         onPlanningRequired: async (info: PlanningInfo) => {
-            logger.debug(`[PlanningDetector:${workspaceDirName}] Planning buttons detected (title="${info.planTitle}")`);
+            logger.debug(`[PlanningDetector:${projectName}] Planning buttons detected (title="${info.planTitle}")`);
 
             const currentChatTitle = await getCurrentChatTitle(cdp);
-            const targetChannel = resolveApprovalChannelForCurrentChat(bridge, workspaceDirName, currentChatTitle);
+            const targetChannel = resolveApprovalChannelForCurrentChat(bridge, projectName, currentChatTitle);
             const targetChannelId = targetChannel && 'id' in targetChannel ? String((targetChannel as any).id) : '';
 
             if (!targetChannel || !targetChannelId || !('send' in targetChannel)) {
                 logger.warn(
-                    `[PlanningDetector:${workspaceDirName}] Skipped planning notification because chat is not linked to a Discord session` +
+                    `[PlanningDetector:${projectName}] Skipped planning notification because chat is not linked to a Discord session` +
                     `${currentChatTitle ? ` (title="${currentChatTitle}")` : ''}`,
                 );
                 return;
@@ -454,7 +454,7 @@ export function ensurePlanningDetector(
                 .setColor(0x3498DB)
                 .addFields(
                     { name: t('Plan'), value: info.planTitle || t('Implementation Plan'), inline: true },
-                    { name: t('Workspace'), value: workspaceDirName, inline: true },
+                    { name: t('Workspace'), value: projectName, inline: true },
                 )
                 .setTimestamp();
 
@@ -463,12 +463,12 @@ export function ensurePlanningDetector(
             }
 
             const openBtn = new ButtonBuilder()
-                .setCustomId(buildPlanningCustomId('open', workspaceDirName, targetChannelId))
+                .setCustomId(buildPlanningCustomId('open', projectName, targetChannelId))
                 .setLabel(t('Open'))
                 .setStyle(ButtonStyle.Secondary);
 
             const proceedBtn = new ButtonBuilder()
-                .setCustomId(buildPlanningCustomId('proceed', workspaceDirName, targetChannelId))
+                .setCustomId(buildPlanningCustomId('proceed', projectName, targetChannelId))
                 .setLabel(t('Proceed'))
                 .setStyle(ButtonStyle.Primary);
 
@@ -485,8 +485,8 @@ export function ensurePlanningDetector(
     });
 
     detector.start();
-    bridge.pool.registerPlanningDetector(workspaceDirName, detector);
-    logger.debug(`[PlanningDetector:${workspaceDirName}] Started planning button detection`);
+    bridge.pool.registerPlanningDetector(projectName, detector);
+    logger.debug(`[PlanningDetector:${projectName}] Started planning button detection`);
 }
 
 /**
@@ -496,10 +496,10 @@ export function ensurePlanningDetector(
 export function ensureErrorPopupDetector(
     bridge: CdpBridge,
     cdp: CdpService,
-    workspaceDirName: string,
+    projectName: string,
     _client: Client,
 ): void {
-    const existing = bridge.pool.getErrorPopupDetector(workspaceDirName);
+    const existing = bridge.pool.getErrorPopupDetector(projectName);
     if (existing && existing.isActive()) return;
 
     // Track the most recent error message for auto-disable on resolve.
@@ -526,15 +526,15 @@ export function ensureErrorPopupDetector(
             }).catch(logger.error);
         },
         onErrorPopup: async (info: ErrorPopupInfo) => {
-            logger.debug(`[ErrorPopupDetector:${workspaceDirName}] Error popup detected (title="${info.title}")`);
+            logger.debug(`[ErrorPopupDetector:${projectName}] Error popup detected (title="${info.title}")`);
 
             const currentChatTitle = await getCurrentChatTitle(cdp);
-            const targetChannel = resolveApprovalChannelForCurrentChat(bridge, workspaceDirName, currentChatTitle);
+            const targetChannel = resolveApprovalChannelForCurrentChat(bridge, projectName, currentChatTitle);
             const targetChannelId = targetChannel && 'id' in targetChannel ? String((targetChannel as any).id) : '';
 
             if (!targetChannel || !targetChannelId || !('send' in targetChannel)) {
                 logger.warn(
-                    `[ErrorPopupDetector:${workspaceDirName}] Skipped error popup notification because chat is not linked to a Discord session` +
+                    `[ErrorPopupDetector:${projectName}] Skipped error popup notification because chat is not linked to a Discord session` +
                     `${currentChatTitle ? ` (title="${currentChatTitle}")` : ''}`,
                 );
                 return;
@@ -548,22 +548,22 @@ export function ensureErrorPopupDetector(
                 .setColor(0xE74C3C)
                 .addFields(
                     { name: t('Buttons'), value: info.buttons.join(', ') || t('(None)'), inline: true },
-                    { name: t('Workspace'), value: workspaceDirName, inline: true },
+                    { name: t('Workspace'), value: projectName, inline: true },
                 )
                 .setTimestamp();
 
             const dismissBtn = new ButtonBuilder()
-                .setCustomId(buildErrorPopupCustomId('dismiss', workspaceDirName, targetChannelId))
+                .setCustomId(buildErrorPopupCustomId('dismiss', projectName, targetChannelId))
                 .setLabel(t('Dismiss'))
                 .setStyle(ButtonStyle.Secondary);
 
             const copyDebugBtn = new ButtonBuilder()
-                .setCustomId(buildErrorPopupCustomId('copy_debug', workspaceDirName, targetChannelId))
+                .setCustomId(buildErrorPopupCustomId('copy_debug', projectName, targetChannelId))
                 .setLabel(t('Copy debug info'))
                 .setStyle(ButtonStyle.Primary);
 
             const retryBtn = new ButtonBuilder()
-                .setCustomId(buildErrorPopupCustomId('retry', workspaceDirName, targetChannelId))
+                .setCustomId(buildErrorPopupCustomId('retry', projectName, targetChannelId))
                 .setLabel(t('Retry'))
                 .setStyle(ButtonStyle.Success);
 
@@ -580,8 +580,8 @@ export function ensureErrorPopupDetector(
     });
 
     detector.start();
-    bridge.pool.registerErrorPopupDetector(workspaceDirName, detector);
-    logger.debug(`[ErrorPopupDetector:${workspaceDirName}] Started error popup detection`);
+    bridge.pool.registerErrorPopupDetector(projectName, detector);
+    logger.debug(`[ErrorPopupDetector:${projectName}] Started error popup detection`);
 }
 
 /**
@@ -593,10 +593,10 @@ export function ensureErrorPopupDetector(
 export function ensureUserMessageDetector(
     bridge: CdpBridge,
     cdp: CdpService,
-    workspaceDirName: string,
+    projectName: string,
     onUserMessage: (info: UserMessageInfo) => void,
 ): void {
-    const existing = bridge.pool.getUserMessageDetector(workspaceDirName);
+    const existing = bridge.pool.getUserMessageDetector(projectName);
     if (existing && existing.isActive()) return;
 
     const detector = new UserMessageDetector({
@@ -606,6 +606,6 @@ export function ensureUserMessageDetector(
     });
 
     detector.start();
-    bridge.pool.registerUserMessageDetector(workspaceDirName, detector);
-    logger.debug(`[UserMessageDetector:${workspaceDirName}] Started user message detection`);
+    bridge.pool.registerUserMessageDetector(projectName, detector);
+    logger.debug(`[UserMessageDetector:${projectName}] Started user message detection`);
 }

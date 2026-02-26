@@ -661,11 +661,11 @@ async function sendPromptToAntigravity(
                             const sessionInfo = await options.chatSessionService.getCurrentSessionInfo(cdp);
                             if (sessionInfo && sessionInfo.hasActiveChat && sessionInfo.title && sessionInfo.title !== t('(Untitled)')) {
                                 const session = options.chatSessionRepo.findByChannelId(message.channelId);
-                                const workspaceDirName = session
-                                    ? bridge.pool.extractDirName(session.workspacePath)
+                                const projectName = session
+                                    ? bridge.pool.extractProjectName(session.workspacePath)
                                     : cdp.getCurrentWorkspaceName();
-                                if (workspaceDirName) {
-                                    registerApprovalSessionChannel(bridge, workspaceDirName, sessionInfo.title, message.channel);
+                                if (projectName) {
+                                    registerApprovalSessionChannel(bridge, projectName, sessionInfo.title, message.channel);
                                 }
 
                                 const newName = options.titleGenerator.sanitizeForChannelName(sessionInfo.title);
@@ -939,17 +939,17 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             if (workspacePath) {
                 try {
                     cdp = await bridge.pool.getOrConnect(workspacePath);
-                    const dirName = bridge.pool.extractDirName(workspacePath);
-                    bridge.lastActiveWorkspace = dirName;
+                    const projectName = bridge.pool.extractProjectName(workspacePath);
+                    bridge.lastActiveWorkspace = projectName;
                     bridge.lastActiveChannel = interaction.channel;
-                    registerApprovalWorkspaceChannel(bridge, dirName, interaction.channel as any);
+                    registerApprovalWorkspaceChannel(bridge, projectName, interaction.channel as any);
                     const session = chatSessionRepo.findByChannelId(channelId);
                     if (session?.displayName) {
-                        registerApprovalSessionChannel(bridge, dirName, session.displayName, interaction.channel as any);
+                        registerApprovalSessionChannel(bridge, projectName, session.displayName, interaction.channel as any);
                     }
-                    ensureApprovalDetector(bridge, cdp, dirName, client);
-                    ensureErrorPopupDetector(bridge, cdp, dirName, client);
-                    ensurePlanningDetector(bridge, cdp, dirName, client);
+                    ensureApprovalDetector(bridge, cdp, projectName, client);
+                    ensureErrorPopupDetector(bridge, cdp, projectName, client);
+                    ensurePlanningDetector(bridge, cdp, projectName, client);
                 } catch (e: any) {
                     await interaction.followUp({
                         content: `Failed to connect to workspace: ${e.message}`,
