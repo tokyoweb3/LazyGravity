@@ -61,11 +61,11 @@ export class JoinCommandHandler {
     }
 
     /**
-     * Resolve a workspace name (from DB) to its full absolute path.
-     * The DB stores only the directory name; CDP needs the full path for launching.
+     * Resolve a project name (from DB) to its full absolute path.
+     * The DB stores only the project name; CDP needs the full path for launching.
      */
-    private resolveWorkspacePath(workspaceName: string): string {
-        return this.workspaceService.getWorkspacePath(workspaceName);
+    private resolveProjectPath(projectName: string): string {
+        return this.workspaceService.getWorkspacePath(projectName);
     }
 
     /**
@@ -77,20 +77,20 @@ export class JoinCommandHandler {
     ): Promise<void> {
         const binding = this.bindingRepo.findByChannelId(interaction.channelId);
         const session = this.chatSessionRepo.findByChannelId(interaction.channelId);
-        const workspaceName = binding?.workspacePath ?? session?.workspacePath;
+        const projectName = binding?.workspacePath ?? session?.workspacePath;
 
-        if (!workspaceName) {
+        if (!projectName) {
             await interaction.editReply({
                 content: t('⚠️ No project is bound to this channel. Use `/project` first.'),
             });
             return;
         }
 
-        const workspacePath = this.resolveWorkspacePath(workspaceName);
+        const projectPath = this.resolveProjectPath(projectName);
 
         let cdp;
         try {
-            cdp = await this.pool.getOrConnect(workspacePath);
+            cdp = await this.pool.getOrConnect(projectPath);
         } catch (e: any) {
             await interaction.editReply({
                 content: t(`⚠️ Failed to connect to project: ${e.message}`),
@@ -126,17 +126,17 @@ export class JoinCommandHandler {
 
         const binding = this.bindingRepo.findByChannelId(interaction.channelId);
         const session = this.chatSessionRepo.findByChannelId(interaction.channelId);
-        const workspaceName = binding?.workspacePath ?? session?.workspacePath;
+        const projectName = binding?.workspacePath ?? session?.workspacePath;
 
-        if (!workspaceName) {
+        if (!projectName) {
             await interaction.editReply({ content: t('⚠️ No project is bound to this channel.') });
             return;
         }
 
-        const workspacePath = this.resolveWorkspacePath(workspaceName);
+        const projectPath = this.resolveProjectPath(projectName);
 
         // Step 1: Check if a channel already exists for this session
-        const existingSession = this.chatSessionRepo.findByDisplayName(workspaceName, selectedTitle);
+        const existingSession = this.chatSessionRepo.findByDisplayName(projectName, selectedTitle);
         if (existingSession) {
             const embed = new EmbedBuilder()
                 .setTitle(t('🔗 Session Already Connected'))
@@ -150,7 +150,7 @@ export class JoinCommandHandler {
         // Step 2: Connect to CDP
         let cdp;
         try {
-            cdp = await this.pool.getOrConnect(workspacePath);
+            cdp = await this.pool.getOrConnect(projectPath);
         } catch (e: any) {
             await interaction.editReply({ content: t(`⚠️ Failed to connect to project: ${e.message}`) });
             return;
@@ -164,7 +164,7 @@ export class JoinCommandHandler {
         }
 
         // Step 4: Create a new Discord channel for this session
-        const categoryResult = await this.channelManager.ensureCategory(guild, workspaceName);
+        const categoryResult = await this.channelManager.ensureCategory(guild, projectName);
         const categoryId = categoryResult.categoryId;
         const sessionNumber = this.chatSessionRepo.getNextSessionNumber(categoryId);
         const channelName = this.channelManager.sanitizeChannelName(`${sessionNumber}-${selectedTitle}`);
@@ -174,14 +174,14 @@ export class JoinCommandHandler {
         // Step 5: Register binding and session
         this.bindingRepo.upsert({
             channelId: newChannelId,
-            workspacePath: workspaceName,
+            workspacePath: projectName,
             guildId: guild.id,
         });
 
         this.chatSessionRepo.create({
             channelId: newChannelId,
             categoryId,
-            workspacePath: workspaceName,
+            workspacePath: projectName,
             sessionNumber,
             guildId: guild.id,
         });
@@ -189,7 +189,7 @@ export class JoinCommandHandler {
         this.chatSessionRepo.updateDisplayName(newChannelId, selectedTitle);
 
         // Step 6: Start mirroring (routes dynamically to all bound session channels)
-        this.startMirroring(bridge, cdp, workspacePath);
+        this.startMirroring(bridge, cdp, projectName);
 
         const embed = new EmbedBuilder()
             .setTitle(t('🔗 Joined Session'))
@@ -213,26 +213,25 @@ export class JoinCommandHandler {
     ): Promise<void> {
         const binding = this.bindingRepo.findByChannelId(interaction.channelId);
         const session = this.chatSessionRepo.findByChannelId(interaction.channelId);
-        const workspaceName = binding?.workspacePath ?? session?.workspacePath;
-        const dirName = workspaceName ? this.pool.extractDirName(workspaceName) : null;
+        const projectName = binding?.workspacePath ?? session?.workspacePath;
 
-        if (!dirName || !workspaceName) {
+        if (!projectName) {
             await interaction.editReply({
                 content: t('⚠️ No project is bound to this channel. Use `/project` first.'),
             });
             return;
         }
 
-        const workspacePath = this.resolveWorkspacePath(workspaceName);
-        const detector = this.pool.getUserMessageDetector(dirName);
+        const projectPath = this.resolveProjectPath(projectName);
+        const detector = this.pool.getUserMessageDetector(projectName);
 
         if (detector?.isActive()) {
             // Turn OFF — stop user message detector and any active response monitor
             detector.stop();
-            const responseMonitor = this.activeResponseMonitors.get(dirName);
+            const responseMonitor = this.activeResponseMonitors.get(projectName);
             if (responseMonitor?.isActive()) {
                 await responseMonitor.stop();
-                this.activeResponseMonitors.delete(dirName);
+                this.activeResponseMonitors.delete(projectName);
             }
 
             const embed = new EmbedBuilder()
@@ -245,7 +244,7 @@ export class JoinCommandHandler {
             // Turn ON
             let cdp;
             try {
-                cdp = await this.pool.getOrConnect(workspacePath);
+                cdp = await this.pool.getOrConnect(projectPath);
             } catch (e: any) {
                 await interaction.editReply({
                     content: t(`⚠️ Failed to connect to project: ${e.message}`),
@@ -253,7 +252,7 @@ export class JoinCommandHandler {
                 return;
             }
 
-            this.startMirroring(bridge, cdp, workspacePath);
+            this.startMirroring(bridge, cdp, projectName);
 
             const embed = new EmbedBuilder()
                 .setTitle(t('📡 Mirroring ON'))
@@ -268,7 +267,7 @@ export class JoinCommandHandler {
     }
 
     /**
-     * Start user message mirroring for a workspace.
+     * Start user message mirroring for a project.
      *
      * When a PC message is detected, the callback resolves the correct Discord
      * channel via chatSessionRepo.findByDisplayName. Only explicitly joined
@@ -277,12 +276,18 @@ export class JoinCommandHandler {
     private startMirroring(
         bridge: CdpBridge,
         cdp: CdpService,
-        workspaceName: string,
+        projectName: string,
     ): void {
-        const dirName = this.pool.extractDirName(workspaceName);
+        // Force re-prime: stop existing detector so that ensureUserMessageDetector
+        // creates a fresh one. This prevents the detector from treating the
+        // new session's last message as a "new" user message after /join.
+        const existing = this.pool.getUserMessageDetector(projectName);
+        if (existing?.isActive()) {
+            existing.stop();
+        }
 
-        ensureUserMessageDetector(bridge, cdp, dirName, (info) => {
-            this.routeMirroredMessage(cdp, dirName, workspaceName, info)
+        ensureUserMessageDetector(bridge, cdp, projectName, (info) => {
+            this.routeMirroredMessage(cdp, projectName, info)
                 .catch((err) => {
                     logger.error('[Mirror] Error routing mirrored message:', err);
                 });
@@ -298,8 +303,7 @@ export class JoinCommandHandler {
      */
     private async routeMirroredMessage(
         cdp: CdpService,
-        dirName: string,
-        workspaceName: string,
+        projectName: string,
         info: { text: string },
     ): Promise<void> {
         const chatTitle = await getCurrentChatTitle(cdp);
@@ -309,7 +313,7 @@ export class JoinCommandHandler {
             return;
         }
 
-        const session = this.chatSessionRepo.findByDisplayName(workspaceName, chatTitle);
+        const session = this.chatSessionRepo.findByDisplayName(projectName, chatTitle);
         if (!session) {
             logger.debug(`[Mirror] No bound channel for session "${chatTitle}", skipping`);
             return;
@@ -331,7 +335,7 @@ export class JoinCommandHandler {
         });
 
         // Start passive ResponseMonitor to capture the AI response
-        this.startResponseMirror(cdp, dirName, sendable, chatTitle);
+        this.startResponseMirror(cdp, projectName, sendable, chatTitle);
     }
 
     /**
@@ -340,12 +344,12 @@ export class JoinCommandHandler {
      */
     private startResponseMirror(
         cdp: CdpService,
-        dirName: string,
+        projectName: string,
         channel: { send: (...args: any[]) => Promise<any> },
         chatTitle: string,
     ): void {
         // Stop previous monitor if still running
-        const prev = this.activeResponseMonitors.get(dirName);
+        const prev = this.activeResponseMonitors.get(projectName);
         if (prev?.isActive()) {
             prev.stop().catch(() => {});
         }
@@ -355,7 +359,7 @@ export class JoinCommandHandler {
             pollIntervalMs: 2000,
             maxDurationMs: 300000,
             onComplete: (finalText: string) => {
-                this.activeResponseMonitors.delete(dirName);
+                this.activeResponseMonitors.delete(projectName);
                 if (!finalText || finalText.trim().length === 0) return;
 
                 const text = finalText.length > MAX_EMBED_DESC
@@ -373,14 +377,14 @@ export class JoinCommandHandler {
                 });
             },
             onTimeout: () => {
-                this.activeResponseMonitors.delete(dirName);
+                this.activeResponseMonitors.delete(projectName);
             },
         });
 
-        this.activeResponseMonitors.set(dirName, monitor);
+        this.activeResponseMonitors.set(projectName, monitor);
         monitor.startPassive().catch((err) => {
             logger.error('[Mirror] Failed to start response monitor:', err);
-            this.activeResponseMonitors.delete(dirName);
+            this.activeResponseMonitors.delete(projectName);
         });
     }
 }

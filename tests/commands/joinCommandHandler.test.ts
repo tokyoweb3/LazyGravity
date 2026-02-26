@@ -57,7 +57,7 @@ describe('JoinCommandHandler', () => {
             getApprovalDetector: jest.fn(),
             getUserMessageDetector: jest.fn(),
             registerUserMessageDetector: jest.fn(),
-            extractDirName: jest.fn((path: string) => path.split('/').filter(Boolean).pop() || path),
+            extractProjectName: jest.fn((path: string) => path.split('/').filter(Boolean).pop() || path),
         } as any;
 
         mockWorkspaceService = {
@@ -257,6 +257,38 @@ describe('JoinCommandHandler', () => {
             const session = chatSessionRepo.findByChannelId('new-ch-42');
             expect(session?.displayName).toBe('Brand New Session');
             expect(session?.isRenamed).toBe(true);
+        });
+
+        it('stops existing detector before starting mirroring (force re-prime)', async () => {
+            bindingRepo.upsert({ channelId: 'ch-1', workspacePath: 'my-project', guildId: 'guild-1' });
+            const mockCdp = { isConnected: () => true } as any;
+            mockPool.getOrConnect.mockResolvedValue(mockCdp);
+            mockService.activateSessionByTitle.mockResolvedValue({ ok: true });
+
+            // Set up an active detector that should be stopped
+            const mockDetector = { isActive: jest.fn().mockReturnValue(true), stop: jest.fn() };
+            mockPool.getUserMessageDetector.mockReturnValue(mockDetector as any);
+
+            const guildWithCreate = {
+                ...mockGuild,
+                channels: {
+                    ...mockGuild.channels,
+                    create: jest.fn().mockResolvedValue({ id: 'new-ch-55' }),
+                },
+            };
+
+            const interaction = {
+                guild: guildWithCreate,
+                channelId: 'ch-1',
+                values: ['Session After Switch'],
+                editReply: jest.fn().mockResolvedValue(undefined),
+            };
+            const bridge = { pool: mockPool } as any;
+
+            await handler.handleJoinSelect(interaction as any, bridge);
+
+            // Verify existing detector was stopped before ensureUserMessageDetector
+            expect(mockDetector.stop).toHaveBeenCalled();
         });
 
         it('shows error when session activation fails', async () => {

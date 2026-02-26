@@ -139,7 +139,8 @@ Selectors for opening, browsing, and selecting past conversations.
 | Selector | Purpose | File |
 |----------|---------|------|
 | `div[class*="overflow-auto"], div[class*="overflow-y-scroll"]` | Scrollable conversation list container | `chatSessionService.ts` |
-| `div[class*="cursor-pointer"]` | Session row items | `chatSessionService.ts` |
+| `div[class*="text-xs"][class*="opacity"]` | Section header (e.g. "Other Conversations") — used as boundary to exclude other-project sessions | `chatSessionService.ts` |
+| `div[class*="cursor-pointer"]` | Session row items (rows below "Other Conversations" boundary are skipped) | `chatSessionService.ts` |
 | `span.text-sm span, span.text-sm` | Session title text | `chatSessionService.ts` |
 | `/focusBackground/i` (className regex) | Active/current session indicator | `chatSessionService.ts` |
 

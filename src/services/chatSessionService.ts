@@ -103,10 +103,25 @@ const SCRAPE_PAST_CONVERSATIONS_SCRIPT = `(() => {
     const containers = Array.from(document.querySelectorAll('div[class*="overflow-auto"], div[class*="overflow-y-scroll"]'));
     const container = containers.find((c) => isVisible(c) && c.querySelectorAll('div[class*="cursor-pointer"]').length > 0) || document;
 
+    // Detect the "Other Conversations" section boundary.
+    // Sessions below this header belong to other projects and must be excluded.
+    let boundaryTop = Infinity;
+    const headerCandidates = container.querySelectorAll('div[class*="text-xs"][class*="opacity"]');
+    for (const el of headerCandidates) {
+        if (!isVisible(el)) continue;
+        const t = normalize(el.textContent || '');
+        if (/^Other\\s+Conversations?$/i.test(t)) {
+            boundaryTop = el.getBoundingClientRect().top;
+            break;
+        }
+    }
+
     // Each session row is a div with cursor-pointer
     const rows = Array.from(container.querySelectorAll('div[class*="cursor-pointer"]'));
     for (const row of rows) {
         if (!isVisible(row)) continue;
+        // Skip rows that are below the "Other Conversations" boundary
+        if (row.getBoundingClientRect().top >= boundaryTop) continue;
         // Find the session title — nested span within the row
         const spans = Array.from(row.querySelectorAll('span.text-sm span, span.text-sm'));
         let title = '';
