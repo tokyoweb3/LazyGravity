@@ -48,171 +48,123 @@ const GET_CHAT_TITLE_SCRIPT = `(() => {
 })()`;
 
 /**
- * Script to list sessions via the Past Conversations panel.
+ * Script to find the Past Conversations button and return its coordinates.
+ * We use coordinates so that the actual click is done via CDP Input.dispatchMouseEvent,
+ * which works reliably in Electron (DOM .click() can be ignored).
  *
- * Flow:
- *   1. Open Past Conversations panel (click button / icon / menu)
- *   2. Wait for the panel to render
- *   3. Scrape visible session items (Current + Recent sections)
- *   4. If a "Show N more..." link exists and we have fewer than TARGET items,
- *      click it once to load more
- *   5. Re-scrape and collect up to TARGET items
- *   6. Close the panel (press Escape)
- *   7. Return the session list
- *
- * Returns: { sessions: SessionListItem[], error?: string }
+ * Returns: { found: boolean, x: number, y: number }
  */
-const LIST_SESSIONS_VIA_PAST_CONVERSATIONS_SCRIPT = `(async () => {
-    const TARGET = 10;
-    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-
+const FIND_PAST_CONVERSATIONS_BUTTON_SCRIPT = `(() => {
     const isVisible = (el) => !!el && el instanceof HTMLElement && el.offsetParent !== null;
-    const asArray = (nodeList) => Array.from(nodeList || []);
-    const normalize = (text) => (text || '').trim();
-    const getLabelText = (el) => {
-        if (!el || !(el instanceof Element)) return '';
-        return [
-            el.textContent || '',
-            el.getAttribute('aria-label') || '',
-            el.getAttribute('title') || '',
-            el.getAttribute('data-tooltip-content') || '',
-        ].filter(Boolean).join(' ');
-    };
-    const getClickable = (el) => {
-        if (!el || !(el instanceof Element)) return null;
-        const clickable = el.closest('button, [role="button"], a, li, div[class*="cursor-pointer"]');
-        return clickable instanceof HTMLElement ? clickable : (el instanceof HTMLElement ? el : null);
-    };
-    const pickBest = (elements, patterns) => {
-        const matched = [];
-        for (const el of elements) {
-            if (!isVisible(el)) continue;
-            const text = normalize(getLabelText(el)).toLowerCase();
-            if (!text) continue;
-            for (const pattern of patterns) {
-                const p = (pattern || '').toLowerCase().trim();
-                if (text === p || text.includes(p)) {
-                    matched.push({ el, score: Math.abs(text.length - p.length) });
-                    break;
-                }
-            }
-        }
-        if (matched.length === 0) return null;
-        matched.sort((a, b) => a.score - b.score);
-        return matched[0].el;
-    };
-    const clickByPatterns = (patterns) => {
-        const nodes = asArray(document.querySelectorAll('button, [role="button"], a, li, div, span'));
-        const target = pickBest(nodes, patterns);
-        const clickable = getClickable(target);
-        if (!clickable) return false;
-        clickable.click();
-        return true;
-    };
-    const clickIconHistoryButton = () => {
-        const icons = asArray(document.querySelectorAll('svg, i, span, div'));
-        const patterns = ['history', 'clock', 'conversation', 'past'];
-        for (const icon of icons) {
-            const descriptor = [
-                icon.getAttribute?.('class') || '',
-                icon.getAttribute?.('data-testid') || '',
-                icon.getAttribute?.('data-icon') || '',
-                icon.getAttribute?.('aria-label') || '',
-                icon.getAttribute?.('title') || '',
-                icon.getAttribute?.('data-tooltip-id') || '',
-            ].join(' ').toLowerCase();
-            if (!descriptor) continue;
-            if (!patterns.some((p) => descriptor.includes(p))) continue;
-            const clickable = getClickable(icon);
-            if (clickable && isVisible(clickable)) {
-                clickable.click();
-                return true;
-            }
-        }
-        return false;
-    };
-    const openMenuThenClickPast = async () => {
-        const nodes = asArray(document.querySelectorAll('button, [role="button"]'));
-        const target = pickBest(nodes, ['more', 'options', 'menu', 'actions', '...', 'ellipsis']);
-        const clickable = getClickable(target);
-        if (!clickable) return false;
-        clickable.click();
-        await wait(180);
-        return clickByPatterns([
-            'past conversations', 'past conversation', 'conversation history',
-            'past chats', 'chat history',
-        ]);
+    const normalize = (text) => (text || '').toLowerCase().trim();
+    const getRect = (el) => {
+        const rect = el.getBoundingClientRect();
+        return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
     };
 
-    // ---- Step 1: Open Past Conversations panel ----
-    let opened = clickByPatterns([
-        'past conversations', 'past conversation', 'conversation history',
-        'past chats', 'chat history',
-    ]);
-    if (!opened) opened = clickIconHistoryButton();
-    if (!opened) opened = await openMenuThenClickPast();
-    if (!opened) return { sessions: [], error: 'Past Conversations button not found' };
-
-    await wait(400);
-
-    // ---- Step 2: Scrape sessions from the panel ----
-    const scrapePanel = () => {
-        const items = [];
-        const seen = new Set();
-        // Find the scrollable conversation list container
-        const containers = asArray(document.querySelectorAll('div[class*="overflow-auto"], div[class*="overflow-y-scroll"]'));
-        const container = containers.find((c) => isVisible(c) && c.querySelectorAll('div[class*="cursor-pointer"]').length > 0) || document;
-        // Each session row is a div with cursor-pointer
-        const rows = asArray(container.querySelectorAll('div[class*="cursor-pointer"]'));
-        for (const row of rows) {
-            if (!isVisible(row)) continue;
-            // Find the session title — nested span within the row
-            const spans = asArray(row.querySelectorAll('span.text-sm span, span.text-sm'));
-            let title = '';
-            for (const span of spans) {
-                const t = normalize(span.textContent || '');
-                // Skip timestamp labels like "1 hr ago"
-                if (/^\\d+\\s+(min|hr|hour|day|sec|week|month|year)s?\\s+ago$/i.test(t)) continue;
-                // Skip very short or action-like labels
-                if (t.length < 2 || t.length > 200) continue;
-                if (/^(show\\s+\\d+\\s+more|new|past|history|settings|close|menu)\\b/i.test(t)) continue;
-                title = t;
-                break;
-            }
-            if (!title || seen.has(title)) continue;
-            seen.add(title);
-            // Detect if this is the active/current session (has focusBackground class)
-            const isActive = /focusBackground/i.test(row.className || '');
-            items.push({ title, isActive });
-        }
-        return items;
-    };
-
-    let sessions = scrapePanel();
-
-    // ---- Step 3: Click "Show N more..." if we need more sessions ----
-    if (sessions.length < TARGET) {
-        const showMoreNodes = asArray(document.querySelectorAll('div, span'));
-        const showMoreEl = showMoreNodes.find((el) => {
-            if (!isVisible(el)) return false;
-            const text = normalize(el.textContent || '').toLowerCase();
-            return /^show\\s+\\d+\\s+more/i.test(text);
-        });
-        if (showMoreEl) {
-            const clickable = getClickable(showMoreEl) || showMoreEl;
-            if (clickable instanceof HTMLElement) {
-                clickable.click();
-                await wait(400);
-                sessions = scrapePanel();
-            }
+    // Strategy 1: Find by tooltip (data-tooltip-id / data-tooltip-content)
+    const tooltipPatterns = ['past-conversations', 'past_conversations', 'history'];
+    const allEls = Array.from(document.querySelectorAll('[data-tooltip-id], [data-tooltip-content]'));
+    for (const el of allEls) {
+        if (!isVisible(el)) continue;
+        const tid = normalize(el.getAttribute('data-tooltip-id') || '');
+        const tcontent = normalize(el.getAttribute('data-tooltip-content') || '');
+        if (tooltipPatterns.some((p) => tid.includes(p) || tcontent.includes(p))) {
+            return { found: true, ...getRect(el) };
         }
     }
 
-    // ---- Step 4: Close the panel (press Escape) ----
-    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+    // Strategy 2: Find by text content — buttons containing "Past Conversations"
+    const textPatterns = ['past conversations', 'past conversation', 'conversation history', 'past chats', 'chat history'];
+    const buttons = Array.from(document.querySelectorAll('button, [role="button"], a, div[class*="cursor-pointer"], span'));
+    for (const btn of buttons) {
+        if (!isVisible(btn)) continue;
+        const text = normalize(btn.textContent || '');
+        if (textPatterns.some((p) => text === p || text.includes(p))) {
+            return { found: true, ...getRect(btn) };
+        }
+    }
 
-    // Limit to TARGET
-    return { sessions: sessions.slice(0, TARGET) };
+    // Strategy 3: Find by icon attributes (history/clock icons)
+    const iconPatterns = ['history', 'clock'];
+    const icons = Array.from(document.querySelectorAll('svg, i'));
+    for (const icon of icons) {
+        if (!isVisible(icon)) continue;
+        const desc = [
+            icon.getAttribute('class') || '',
+            icon.getAttribute('data-testid') || '',
+            icon.getAttribute('data-icon') || '',
+            icon.getAttribute('aria-label') || '',
+        ].join(' ').toLowerCase();
+        if (iconPatterns.some((p) => desc.includes(p))) {
+            const clickable = icon.closest('button, [role="button"], a, div[class*="cursor-pointer"]');
+            const target = clickable instanceof HTMLElement && isVisible(clickable) ? clickable : icon;
+            return { found: true, ...getRect(target) };
+        }
+    }
+
+    return { found: false, x: 0, y: 0 };
+})()`;
+
+/**
+ * Script to scrape session items from the open Past Conversations panel.
+ * Expects the panel to already be visible.
+ *
+ * Returns: { sessions: SessionListItem[] }
+ */
+const SCRAPE_PAST_CONVERSATIONS_SCRIPT = `(() => {
+    const isVisible = (el) => !!el && el instanceof HTMLElement && el.offsetParent !== null;
+    const normalize = (text) => (text || '').trim();
+
+    const items = [];
+    const seen = new Set();
+
+    // Find the scrollable conversation list container
+    const containers = Array.from(document.querySelectorAll('div[class*="overflow-auto"], div[class*="overflow-y-scroll"]'));
+    const container = containers.find((c) => isVisible(c) && c.querySelectorAll('div[class*="cursor-pointer"]').length > 0) || document;
+
+    // Each session row is a div with cursor-pointer
+    const rows = Array.from(container.querySelectorAll('div[class*="cursor-pointer"]'));
+    for (const row of rows) {
+        if (!isVisible(row)) continue;
+        // Find the session title — nested span within the row
+        const spans = Array.from(row.querySelectorAll('span.text-sm span, span.text-sm'));
+        let title = '';
+        for (const span of spans) {
+            const t = normalize(span.textContent || '');
+            // Skip timestamp labels like "1 hr ago", "7 mins ago"
+            if (/^\\d+\\s+(min|hr|hour|day|sec|week|month|year)s?\\s+ago$/i.test(t)) continue;
+            // Skip very short or action-like labels
+            if (t.length < 2 || t.length > 200) continue;
+            if (/^(show\\s+\\d+\\s+more|new|past|history|settings|close|menu)\\b/i.test(t)) continue;
+            title = t;
+            break;
+        }
+        if (!title || seen.has(title)) continue;
+        seen.add(title);
+        // Detect if this is the active/current session (has focusBackground class)
+        const isActive = /focusBackground/i.test(row.className || '');
+        items.push({ title, isActive });
+    }
+    return { sessions: items };
+})()`;
+
+/**
+ * Script to find the "Show N more..." link and return its coordinates.
+ * Returns: { found: boolean, x: number, y: number }
+ */
+const FIND_SHOW_MORE_BUTTON_SCRIPT = `(() => {
+    const isVisible = (el) => !!el && el instanceof HTMLElement && el.offsetParent !== null;
+    const els = Array.from(document.querySelectorAll('div, span'));
+    for (const el of els) {
+        if (!isVisible(el)) continue;
+        const text = (el.textContent || '').trim();
+        if (/^Show\\s+\\d+\\s+more/i.test(text)) {
+            const rect = el.getBoundingClientRect();
+            return { found: true, x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
+        }
+    }
+    return { found: false, x: 0, y: 0 };
 })()`;
 
 /**
@@ -473,36 +425,112 @@ function buildActivateViaPastConversationsScript(title: string): string {
 export class ChatSessionService {
     private static readonly ACTIVATE_SESSION_MAX_WAIT_MS = 30000;
     private static readonly ACTIVATE_SESSION_RETRY_INTERVAL_MS = 800;
+    private static readonly LIST_SESSIONS_TARGET = 10;
+
     /**
      * List recent sessions by opening the Past Conversations panel.
      *
-     * Opens the panel, scrapes up to 10 sessions (clicking "Show N more..."
-     * once if needed), then closes the panel with Escape.
+     * Flow (all clicks via CDP Input.dispatchMouseEvent for Electron compatibility):
+     *   1. Find Past Conversations button coordinates
+     *   2. Click it via CDP mouse events
+     *   3. Wait for panel to render
+     *   4. Scrape visible sessions
+     *   5. If < TARGET sessions, find & click "Show N more..."
+     *   6. Re-scrape
+     *   7. Close panel with Escape key
      *
      * @param cdpService CdpService instance to use
      * @returns Array of session list items (empty array on failure)
      */
     async listAllSessions(cdpService: CdpService): Promise<SessionListItem[]> {
         try {
-            const contexts = cdpService.getContexts();
-            for (const ctx of contexts) {
-                try {
-                    const result = await cdpService.call('Runtime.evaluate', {
-                        expression: LIST_SESSIONS_VIA_PAST_CONVERSATIONS_SCRIPT,
-                        returnByValue: true,
-                        awaitPromise: true,
-                        contextId: ctx.id,
-                    });
-                    const value = result?.result?.value;
-                    if (value && Array.isArray(value.sessions)) {
-                        return value.sessions;
-                    }
-                } catch (_) { /* try next context */ }
+            // Step 1: Find Past Conversations button
+            const btnState = await this.evaluateOnAnyContext(
+                cdpService, FIND_PAST_CONVERSATIONS_BUTTON_SCRIPT, false,
+            );
+            if (!btnState?.found) {
+                return [];
             }
-            return [];
+
+            // Step 2: Click via CDP mouse events (reliable in Electron)
+            await this.cdpMouseClick(cdpService, btnState.x, btnState.y);
+
+            // Step 3: Wait for panel to render
+            await new Promise((r) => setTimeout(r, 500));
+
+            // Step 4: Scrape sessions
+            let scrapeResult = await this.evaluateOnAnyContext(
+                cdpService, SCRAPE_PAST_CONVERSATIONS_SCRIPT, false,
+            );
+            let sessions: SessionListItem[] = scrapeResult?.sessions ?? [];
+
+            // Step 5: If fewer than TARGET, click "Show N more..."
+            if (sessions.length < ChatSessionService.LIST_SESSIONS_TARGET) {
+                const showMoreState = await this.evaluateOnAnyContext(
+                    cdpService, FIND_SHOW_MORE_BUTTON_SCRIPT, false,
+                );
+                if (showMoreState?.found) {
+                    await this.cdpMouseClick(cdpService, showMoreState.x, showMoreState.y);
+                    await new Promise((r) => setTimeout(r, 500));
+
+                    // Step 6: Re-scrape
+                    scrapeResult = await this.evaluateOnAnyContext(
+                        cdpService, SCRAPE_PAST_CONVERSATIONS_SCRIPT, false,
+                    );
+                    sessions = scrapeResult?.sessions ?? [];
+                }
+            }
+
+            // Step 7: Close panel with Escape
+            await cdpService.call('Input.dispatchKeyEvent', {
+                type: 'keyDown', key: 'Escape', code: 'Escape',
+                windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27,
+            });
+            await cdpService.call('Input.dispatchKeyEvent', {
+                type: 'keyUp', key: 'Escape', code: 'Escape',
+                windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27,
+            });
+
+            return sessions.slice(0, ChatSessionService.LIST_SESSIONS_TARGET);
         } catch (_) {
             return [];
         }
+    }
+
+    /**
+     * Evaluate a script on the first context that returns a truthy value.
+     */
+    private async evaluateOnAnyContext(
+        cdpService: CdpService,
+        expression: string,
+        awaitPromise: boolean,
+    ): Promise<any> {
+        const contexts = cdpService.getContexts();
+        for (const ctx of contexts) {
+            try {
+                const result = await cdpService.call('Runtime.evaluate', {
+                    expression, returnByValue: true, awaitPromise, contextId: ctx.id,
+                });
+                const value = result?.result?.value;
+                if (value) return value;
+            } catch (_) { /* try next context */ }
+        }
+        return null;
+    }
+
+    /**
+     * Click at coordinates via CDP Input.dispatchMouseEvent.
+     */
+    private async cdpMouseClick(cdpService: CdpService, x: number, y: number): Promise<void> {
+        await cdpService.call('Input.dispatchMouseEvent', {
+            type: 'mouseMoved', x, y,
+        });
+        await cdpService.call('Input.dispatchMouseEvent', {
+            type: 'mousePressed', x, y, button: 'left', clickCount: 1,
+        });
+        await cdpService.call('Input.dispatchMouseEvent', {
+            type: 'mouseReleased', x, y, button: 'left', clickCount: 1,
+        });
     }
 
     /**

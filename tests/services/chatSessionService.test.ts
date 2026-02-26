@@ -279,32 +279,80 @@ describe('ChatSessionService', () => {
     });
 
     describe('listAllSessions()', () => {
-        it('returns sessions from Past Conversations panel', async () => {
-            mockCdpService.call.mockResolvedValue({
-                result: {
-                    value: {
-                        sessions: [
-                            { title: 'Fix login bug', isActive: true },
-                            { title: 'Refactor auth', isActive: false },
-                        ],
-                    },
-                },
+        it('opens Past Conversations via CDP mouse click and returns scraped sessions', async () => {
+            const calls: string[] = [];
+            mockCdpService.call.mockImplementation(async (method: string) => {
+                calls.push(method);
+                if (method === 'Runtime.evaluate') {
+                    // 1st evaluate: find button coords
+                    if (calls.filter((c) => c === 'Runtime.evaluate').length === 1) {
+                        return { result: { value: { found: true, x: 200, y: 30 } } };
+                    }
+                    // 2nd evaluate: scrape sessions
+                    return {
+                        result: {
+                            value: {
+                                sessions: [
+                                    { title: 'Fix login bug', isActive: true },
+                                    { title: 'Refactor auth', isActive: false },
+                                ],
+                            },
+                        },
+                    };
+                }
+                return {};
             });
 
             const sessions = await service.listAllSessions(mockCdpService);
 
             expect(sessions).toHaveLength(2);
             expect(sessions[0]).toEqual({ title: 'Fix login bug', isActive: true });
-            expect(sessions[1]).toEqual({ title: 'Refactor auth', isActive: false });
-            expect(mockCdpService.call).toHaveBeenCalledWith(
-                'Runtime.evaluate',
-                expect.objectContaining({ awaitPromise: true }),
-            );
+            // Verify CDP mouse click was used (not DOM .click())
+            expect(calls).toContain('Input.dispatchMouseEvent');
         });
 
-        it('returns empty array when no sessions found', async () => {
+        it('clicks "Show more" when fewer than 10 sessions found initially', async () => {
+            let evaluateCount = 0;
+            mockCdpService.call.mockImplementation(async (method: string) => {
+                if (method === 'Runtime.evaluate') {
+                    evaluateCount++;
+                    if (evaluateCount === 1) {
+                        // Find Past Conversations button
+                        return { result: { value: { found: true, x: 200, y: 30 } } };
+                    }
+                    if (evaluateCount === 2) {
+                        // First scrape: only 3 sessions
+                        return { result: { value: { sessions: [
+                            { title: 'Session A', isActive: true },
+                            { title: 'Session B', isActive: false },
+                            { title: 'Session C', isActive: false },
+                        ] } } };
+                    }
+                    if (evaluateCount === 3) {
+                        // Find "Show more" button
+                        return { result: { value: { found: true, x: 150, y: 300 } } };
+                    }
+                    // Re-scrape after "Show more" click
+                    return { result: { value: { sessions: [
+                        { title: 'Session A', isActive: true },
+                        { title: 'Session B', isActive: false },
+                        { title: 'Session C', isActive: false },
+                        { title: 'Session D', isActive: false },
+                        { title: 'Session E', isActive: false },
+                    ] } } };
+                }
+                return {};
+            });
+
+            const sessions = await service.listAllSessions(mockCdpService);
+
+            expect(sessions).toHaveLength(5);
+            expect(evaluateCount).toBe(4);
+        });
+
+        it('returns empty array when Past Conversations button not found', async () => {
             mockCdpService.call.mockResolvedValue({
-                result: { value: { sessions: [] } },
+                result: { value: { found: false, x: 0, y: 0 } },
             });
 
             const sessions = await service.listAllSessions(mockCdpService);
@@ -320,24 +368,24 @@ describe('ChatSessionService', () => {
             expect(sessions).toEqual([]);
         });
 
-        it('returns empty array when result value is null', async () => {
-            mockCdpService.call.mockResolvedValue({
-                result: { value: null },
+        it('closes panel with Escape key after scraping', async () => {
+            const calls: Array<{ method: string; params?: any }> = [];
+            mockCdpService.call.mockImplementation(async (method: string, params?: any) => {
+                calls.push({ method, params });
+                if (method === 'Runtime.evaluate') {
+                    const evalCount = calls.filter((c) => c.method === 'Runtime.evaluate').length;
+                    if (evalCount === 1) return { result: { value: { found: true, x: 200, y: 30 } } };
+                    return { result: { value: { sessions: Array.from({ length: 10 }, (_, i) => ({ title: `S${i}`, isActive: i === 0 })) } } };
+                }
+                return {};
             });
 
-            const sessions = await service.listAllSessions(mockCdpService);
+            await service.listAllSessions(mockCdpService);
 
-            expect(sessions).toEqual([]);
-        });
-
-        it('returns empty array when result has no sessions array', async () => {
-            mockCdpService.call.mockResolvedValue({
-                result: { value: { error: 'Past Conversations button not found' } },
-            });
-
-            const sessions = await service.listAllSessions(mockCdpService);
-
-            expect(sessions).toEqual([]);
+            const escapeCall = calls.find(
+                (c) => c.method === 'Input.dispatchKeyEvent' && c.params?.key === 'Escape',
+            );
+            expect(escapeCall).toBeDefined();
         });
     });
 });
