@@ -48,11 +48,12 @@ export function htmlToDiscordMarkdown(html: string): string {
     );
 
     // Handle <pre><code> blocks (must come before inline <code>)
+    // Extract language from class="language-xxx" if present.
     // Do NOT decode entities here — let the final decodeEntities() handle them
     // after stripTags() has run, to avoid decoded < > being stripped as tags.
     result = result.replace(
-        /<pre[^>]*>\s*<code[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/gi,
-        '\n```\n$1\n```\n',
+        /<pre[^>]*>\s*<code(?:\s+class="language-([^"]*)")?[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/gi,
+        (_m, lang, content) => `\n\`\`\`${lang || ''}\n${content}\n\`\`\`\n`,
     );
 
     // Handle inline <code>
@@ -125,6 +126,10 @@ export function htmlToDiscordMarkdown(html: string): string {
     // Decode HTML entities
     result = decodeEntities(result);
 
+    // Escape double underscores outside code blocks/inline code to prevent
+    // Discord from interpreting __dirname, __proto__ etc. as underline markup.
+    result = escapeDoubleUnderscores(result);
+
     // Clean up excessive whitespace
     result = result.replace(/\n{3,}/g, '\n\n');
     result = result.trim();
@@ -156,4 +161,39 @@ function decodeEntities(text: string): string {
         .replace(/&nbsp;/g, ' ')
         .replace(/&#x([0-9a-fA-F]+);/g, (_m, hex) => String.fromCodePoint(parseInt(hex, 16)))
         .replace(/&#(\d+);/g, (_m, dec) => String.fromCodePoint(parseInt(dec, 10)));
+}
+
+/**
+ * Escape double underscores outside code blocks and inline code
+ * to prevent Discord from interpreting them as underline markup.
+ * e.g. __dirname → \_\_dirname
+ */
+function escapeDoubleUnderscores(text: string): string {
+    const lines = text.split('\n');
+    const result: string[] = [];
+    let inCodeBlock = false;
+
+    for (const line of lines) {
+        if (line.trimStart().startsWith('```')) {
+            inCodeBlock = !inCodeBlock;
+            result.push(line);
+            continue;
+        }
+        if (inCodeBlock) {
+            result.push(line);
+            continue;
+        }
+        // Outside code blocks: escape __ that are NOT inside inline backticks
+        // Split by backtick-delimited segments, only escape outside backticks
+        const parts = line.split(/(`[^`]*`)/g);
+        const escaped = parts.map((part, idx) => {
+            // Odd indices are inside backticks — leave as-is
+            if (idx % 2 === 1) return part;
+            // Even indices are outside backticks — escape __
+            return part.replace(/__/g, '\\_\\_');
+        });
+        result.push(escaped.join(''));
+    }
+
+    return result.join('\n');
 }

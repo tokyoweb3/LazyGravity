@@ -9,6 +9,7 @@
  */
 
 import { htmlToDiscordMarkdown } from '../utils/htmlToDiscordMarkdown';
+import { logger } from '../utils/logger';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -49,6 +50,8 @@ export interface ClassifyResult {
  *
  * If the payload is invalid, returns a legacy-fallback result with empty fields.
  */
+let _htmlDiagLogged = false;
+
 export function classifyAssistantSegments(payload: unknown): ClassifyResult {
     if (!isValidPayload(payload)) {
         return {
@@ -97,6 +100,18 @@ export function classifyAssistantSegments(payload: unknown): ClassifyResult {
 
     // Join body segments and apply HTML-to-Markdown conversion
     const rawBody = bodyTexts.join('\n\n');
+
+    // Diagnostic: log a snippet of the raw HTML once for debugging
+    if (rawBody.length > 0 && !_htmlDiagLogged) {
+        _htmlDiagLogged = true;
+        const preIdx = rawBody.toLowerCase().indexOf('<pre');
+        if (preIdx >= 0) {
+            logger.debug('[AssistantDomExtractor] Raw HTML around <pre>:', rawBody.slice(preIdx, preIdx + 500));
+        } else {
+            logger.debug('[AssistantDomExtractor] No <pre> found. Raw HTML sample:', rawBody.slice(0, 500));
+        }
+    }
+
     const finalOutputText = htmlToDiscordMarkdown(rawBody);
 
     return {
@@ -196,8 +211,32 @@ export function extractAssistantSegmentsPayloadScript(): string {
         if (looksLikeFeedbackFooter(text)) continue;
         if (looksLikeToolOutput(text)) continue;
 
-        // This is the assistant body — extract innerHTML for Markdown conversion
-        var bodyHtml = node.innerHTML;
+        // This is the assistant body — normalize code blocks then extract innerHTML
+        // AG wraps code in <pre><div class="..."> with a header div for language label,
+        // instead of standard <pre><code>. Normalize to <pre><code> for htmlToDiscordMarkdown.
+        var clone = node.cloneNode(true);
+        var pres = clone.querySelectorAll('pre');
+        for (var pi = 0; pi < pres.length; pi++) {
+            var pre = pres[pi];
+            // Extract language from header div (font-sans text-sm class)
+            var langDiv = pre.querySelector('.font-sans.text-sm, [class*="text-sm"][class*="opacity"]');
+            var lang = langDiv ? (langDiv.textContent || '').trim() : '';
+            // Get code text via innerText, then strip language label and copy-button text
+            var codeText = (pre.innerText || '').trim();
+            if (lang && codeText.startsWith(lang)) {
+                codeText = codeText.slice(lang.length).trim();
+            }
+            // Remove trailing "Copy" or clipboard button text
+            codeText = codeText.replace(/\\nCopy$/i, '').replace(/\\ncopy code$/i, '').trim();
+            // Replace with simple <pre><code>
+            var newPre = document.createElement('pre');
+            var newCode = document.createElement('code');
+            if (lang) newCode.setAttribute('class', 'language-' + lang);
+            newCode.textContent = codeText;
+            newPre.appendChild(newCode);
+            pre.parentNode.replaceChild(newPre, pre);
+        }
+        var bodyHtml = clone.innerHTML;
         if (bodyHtml && bodyHtml.trim()) {
             segments.push({
                 kind: 'assistant-body',
