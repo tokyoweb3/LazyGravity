@@ -437,6 +437,7 @@ export class ResponseMonitor {
     private stopGoneCount: number = 0;
     private quotaDetected: boolean = false;
     private seenProcessLogKeys: Set<string> = new Set();
+    private structuredDiagLogged: boolean = false;
 
     constructor(options: ResponseMonitorOptions) {
         this.cdpService = options.cdpService;
@@ -668,6 +669,7 @@ export class ResponseMonitor {
 
             // 3. Text extraction (structured or legacy)
             let currentText: string | null = null;
+            let structuredHandledLogs = false;
 
             if (this.extractionMode === 'structured') {
                 // Structured: use DOM segment extraction with HTML-to-Markdown
@@ -681,13 +683,26 @@ export class ResponseMonitor {
 
                     if (classified.diagnostics.source === 'dom-structured') {
                         currentText = classified.finalOutputText.trim() || null;
+                        structuredHandledLogs = true;
+
+                        if (!this.structuredDiagLogged) {
+                            this.structuredDiagLogged = true;
+                            logger.info('[ResponseMonitor:poll] Structured extraction OK — segments:', classified.diagnostics.segmentCounts);
+                        }
 
                         // Emit structured activity lines as process logs
                         if (classified.activityLines.length > 0) {
                             this.emitNewProcessLogs(classified.activityLines);
                         }
+                    } else if (!this.structuredDiagLogged) {
+                        this.structuredDiagLogged = true;
+                        logger.warn(
+                            '[ResponseMonitor:poll] Structured extraction failed — reason:',
+                            classified.diagnostics.fallbackReason ?? 'unknown',
+                            '| payload type:', typeof payload,
+                            '| payload:', payload === null ? 'null' : payload === undefined ? 'undefined' : 'object',
+                        );
                     }
-                    // If structured extraction returned legacy-fallback, fall through to legacy
                 } catch (error) {
                     logger.warn('[ResponseMonitor:poll] RESPONSE_STRUCTURED failed, falling back to legacy:', error);
                 }
@@ -707,8 +722,8 @@ export class ResponseMonitor {
                 currentText = typeof rawText === 'string' ? rawText.trim() || null : null;
             }
 
-            // 4. Process log extraction (legacy path — only if structured didn't already handle it)
-            if (this.extractionMode !== 'structured') {
+            // 4. Process log extraction — always when structured didn't handle it
+            if (!structuredHandledLogs) {
                 try {
                     const logResult = await this.cdpService.call(
                         'Runtime.evaluate',
