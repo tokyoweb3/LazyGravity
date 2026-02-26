@@ -55,7 +55,7 @@ describe('interactionCreateHandler - error popup buttons', () => {
         const handler = createInteractionCreateHandler(createBaseDeps({
             parseErrorPopupCustomId: jest.fn().mockReturnValue({
                 action: 'dismiss',
-                workspaceDirName: 'ws-a',
+                projectName: 'ws-a',
                 channelId: 'channel-a',
             }),
         }));
@@ -80,7 +80,7 @@ describe('interactionCreateHandler - error popup buttons', () => {
         const handler = createInteractionCreateHandler(createBaseDeps({
             parseErrorPopupCustomId: jest.fn().mockReturnValue({
                 action: 'dismiss',
-                workspaceDirName: 'ws-a',
+                projectName: 'ws-a',
                 channelId: 'channel-a',
             }),
             bridge: {
@@ -163,7 +163,7 @@ describe('interactionCreateHandler - error popup buttons', () => {
         const handler = createInteractionCreateHandler(createBaseDeps({
             parseErrorPopupCustomId: jest.fn().mockReturnValue({
                 action: 'dismiss',
-                workspaceDirName: 'ws-a',
+                projectName: 'ws-a',
                 channelId: 'channel-a',
             }),
             bridge: {
@@ -225,7 +225,7 @@ describe('interactionCreateHandler - error popup buttons', () => {
         const handler = createInteractionCreateHandler(createBaseDeps({
             parseErrorPopupCustomId: jest.fn().mockReturnValue({
                 action: 'copy_debug',
-                workspaceDirName: 'ws-a',
+                projectName: 'ws-a',
                 channelId: 'channel-a',
             }),
             bridge: {
@@ -279,7 +279,7 @@ describe('interactionCreateHandler - error popup buttons', () => {
         const handler = createInteractionCreateHandler(createBaseDeps({
             parseErrorPopupCustomId: jest.fn().mockReturnValue({
                 action: 'copy_debug',
-                workspaceDirName: 'ws-a',
+                projectName: 'ws-a',
                 channelId: 'channel-a',
             }),
             bridge: {
@@ -334,7 +334,7 @@ describe('interactionCreateHandler - error popup buttons', () => {
         const handler = createInteractionCreateHandler(createBaseDeps({
             parseErrorPopupCustomId: jest.fn().mockReturnValue({
                 action: 'copy_debug',
-                workspaceDirName: 'ws-a',
+                projectName: 'ws-a',
                 channelId: 'channel-a',
             }),
             bridge: {
@@ -416,7 +416,7 @@ describe('interactionCreateHandler - error popup buttons', () => {
         const handler = createInteractionCreateHandler(createBaseDeps({
             parseErrorPopupCustomId: jest.fn().mockReturnValue({
                 action: 'retry',
-                workspaceDirName: 'ws-a',
+                projectName: 'ws-a',
                 channelId: 'channel-a',
             }),
             bridge: {

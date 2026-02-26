@@ -33,6 +33,8 @@ import { CdpService } from '../services/cdpService';
 import { MODE_DISPLAY_NAMES, ModeService } from '../services/modeService';
 import { ModelService } from '../services/modelService';
 import { AutoAcceptService } from '../services/autoAcceptService';
+import { JoinCommandHandler } from '../commands/joinCommandHandler';
+import { isSessionSelectId } from '../ui/sessionPickerUi';
 
 export interface InteractionCreateHandlerDeps {
     config: { allowedUserIds: string[] };
@@ -55,9 +57,9 @@ export interface InteractionCreateHandlerDeps {
     ) => Promise<void>;
     handleScreenshot?: (...args: any[]) => Promise<void>;
     getCurrentCdp: (bridge: CdpBridge) => CdpService | null;
-    parseApprovalCustomId: (customId: string) => { action: 'approve' | 'always_allow' | 'deny'; workspaceDirName: string | null; channelId: string | null } | null;
-    parsePlanningCustomId: (customId: string) => { action: 'open' | 'proceed'; workspaceDirName: string | null; channelId: string | null } | null;
-    parseErrorPopupCustomId: (customId: string) => { action: 'dismiss' | 'copy_debug' | 'retry'; workspaceDirName: string | null; channelId: string | null } | null;
+    parseApprovalCustomId: (customId: string) => { action: 'approve' | 'always_allow' | 'deny'; projectName: string | null; channelId: string | null } | null;
+    parsePlanningCustomId: (customId: string) => { action: 'open' | 'proceed'; projectName: string | null; channelId: string | null } | null;
+    parseErrorPopupCustomId: (customId: string) => { action: 'dismiss' | 'copy_debug' | 'retry'; projectName: string | null; channelId: string | null } | null;
     handleSlashInteraction: (
         interaction: ChatInputCommandInteraction,
         handler: SlashCommandHandler,
@@ -71,6 +73,7 @@ export interface InteractionCreateHandlerDeps {
         client: any,
     ) => Promise<void>;
     handleTemplateUse?: (interaction: ButtonInteraction, templateId: number) => Promise<void>;
+    joinHandler?: JoinCommandHandler;
 }
 
 export function createInteractionCreateHandler(deps: InteractionCreateHandlerDeps) {
@@ -92,9 +95,9 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                         return;
                     }
 
-                    const workspaceDirName = approvalAction.workspaceDirName ?? deps.bridge.lastActiveWorkspace;
-                    const detector = workspaceDirName
-                        ? deps.bridge.pool.getApprovalDetector(workspaceDirName)
+                    const projectName = approvalAction.projectName ?? deps.bridge.lastActiveWorkspace;
+                    const detector = projectName
+                        ? deps.bridge.pool.getApprovalDetector(projectName)
                         : undefined;
 
                     if (!detector) {
@@ -162,7 +165,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                         return;
                     }
 
-                    const planWorkspaceDirName = planningAction.workspaceDirName ?? deps.bridge.lastActiveWorkspace;
+                    const planWorkspaceDirName = planningAction.projectName ?? deps.bridge.lastActiveWorkspace;
                     const planDetector = planWorkspaceDirName
                         ? deps.bridge.pool.getPlanningDetector(planWorkspaceDirName)
                         : undefined;
@@ -292,7 +295,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                         return;
                     }
 
-                    const errorWorkspaceDirName = errorPopupAction.workspaceDirName ?? deps.bridge.lastActiveWorkspace;
+                    const errorWorkspaceDirName = errorPopupAction.projectName ?? deps.bridge.lastActiveWorkspace;
                     const errorDetector = errorWorkspaceDirName
                         ? deps.bridge.pool.getErrorPopupDetector(errorWorkspaceDirName)
                         : undefined;
@@ -588,6 +591,33 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                 } catch (e) {
                     logger.error('Failed to send error message:', e);
                 }
+            }
+            return;
+        }
+
+        if (interaction.isStringSelectMenu() && isSessionSelectId(interaction.customId)) {
+            if (!deps.config.allowedUserIds.includes(interaction.user.id)) {
+                await interaction.reply({ content: t('You do not have permission.'), flags: MessageFlags.Ephemeral }).catch(logger.error);
+                return;
+            }
+
+            try {
+                await interaction.deferUpdate();
+            } catch (deferError: any) {
+                if (deferError?.code === 10062 || deferError?.code === 40060) {
+                    logger.warn('[SessionSelect] deferUpdate expired. Skipping.');
+                    return;
+                }
+                logger.error('[SessionSelect] deferUpdate failed:', deferError);
+                return;
+            }
+
+            try {
+                if (deps.joinHandler) {
+                    await deps.joinHandler.handleJoinSelect(interaction, deps.bridge);
+                }
+            } catch (error) {
+                logger.error('Session selection error:', error);
             }
             return;
         }

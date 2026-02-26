@@ -245,6 +245,11 @@ describe('ChatSessionService', () => {
             expect(directAttemptCount).toBe(3);
         });
 
+        it('returns ok:false for empty title', async () => {
+            const result = await service.activateSessionByTitle(mockCdpService, '');
+            expect(result.ok).toBe(false);
+            expect(result.error).toContain('empty');
+        });
         it('returns direct and past errors when both activation paths fail', async () => {
             mockCdpService.call.mockImplementation(async (_method: string, params: any) => {
                 const expression = String(params?.expression || '');
@@ -270,6 +275,117 @@ describe('ChatSessionService', () => {
             expect(result.error).toContain('direct:');
             expect(result.error).toContain('past: past miss');
             expect(result.error).toContain('after');
+        });
+    });
+
+    describe('listAllSessions()', () => {
+        it('opens Past Conversations via CDP mouse click and returns scraped sessions', async () => {
+            const calls: string[] = [];
+            mockCdpService.call.mockImplementation(async (method: string) => {
+                calls.push(method);
+                if (method === 'Runtime.evaluate') {
+                    // 1st evaluate: find button coords
+                    if (calls.filter((c) => c === 'Runtime.evaluate').length === 1) {
+                        return { result: { value: { found: true, x: 200, y: 30 } } };
+                    }
+                    // 2nd evaluate: scrape sessions
+                    return {
+                        result: {
+                            value: {
+                                sessions: [
+                                    { title: 'Fix login bug', isActive: true },
+                                    { title: 'Refactor auth', isActive: false },
+                                ],
+                            },
+                        },
+                    };
+                }
+                return {};
+            });
+
+            const sessions = await service.listAllSessions(mockCdpService);
+
+            expect(sessions).toHaveLength(2);
+            expect(sessions[0]).toEqual({ title: 'Fix login bug', isActive: true });
+            // Verify CDP mouse click was used (not DOM .click())
+            expect(calls).toContain('Input.dispatchMouseEvent');
+        });
+
+        it('clicks "Show more" when fewer than 10 sessions found initially', async () => {
+            let evaluateCount = 0;
+            mockCdpService.call.mockImplementation(async (method: string) => {
+                if (method === 'Runtime.evaluate') {
+                    evaluateCount++;
+                    if (evaluateCount === 1) {
+                        // Find Past Conversations button
+                        return { result: { value: { found: true, x: 200, y: 30 } } };
+                    }
+                    if (evaluateCount === 2) {
+                        // First scrape: only 3 sessions
+                        return { result: { value: { sessions: [
+                            { title: 'Session A', isActive: true },
+                            { title: 'Session B', isActive: false },
+                            { title: 'Session C', isActive: false },
+                        ] } } };
+                    }
+                    if (evaluateCount === 3) {
+                        // Find "Show more" button
+                        return { result: { value: { found: true, x: 150, y: 300 } } };
+                    }
+                    // Re-scrape after "Show more" click
+                    return { result: { value: { sessions: [
+                        { title: 'Session A', isActive: true },
+                        { title: 'Session B', isActive: false },
+                        { title: 'Session C', isActive: false },
+                        { title: 'Session D', isActive: false },
+                        { title: 'Session E', isActive: false },
+                    ] } } };
+                }
+                return {};
+            });
+
+            const sessions = await service.listAllSessions(mockCdpService);
+
+            expect(sessions).toHaveLength(5);
+            expect(evaluateCount).toBe(4);
+        });
+
+        it('returns empty array when Past Conversations button not found', async () => {
+            mockCdpService.call.mockResolvedValue({
+                result: { value: { found: false, x: 0, y: 0 } },
+            });
+
+            const sessions = await service.listAllSessions(mockCdpService);
+
+            expect(sessions).toEqual([]);
+        });
+
+        it('returns empty array when CDP call throws', async () => {
+            mockCdpService.call.mockRejectedValue(new Error('WebSocket disconnected'));
+
+            const sessions = await service.listAllSessions(mockCdpService);
+
+            expect(sessions).toEqual([]);
+        });
+
+        it('closes panel with Escape key after scraping', async () => {
+            const calls: Array<{ method: string; params?: any }> = [];
+            mockCdpService.call.mockImplementation(async (method: string, params?: any) => {
+                calls.push({ method, params });
+                if (method === 'Runtime.evaluate') {
+                    const evalCount = calls.filter((c) => c.method === 'Runtime.evaluate').length;
+                    if (evalCount === 1) return { result: { value: { found: true, x: 200, y: 30 } } };
+                    return { result: { value: { sessions: Array.from({ length: 10 }, (_, i) => ({ title: `S${i}`, isActive: i === 0 })) } } };
+                }
+                return {};
+            });
+
+            await service.listAllSessions(mockCdpService);
+
+            const escapeCall = calls.find(
+                (c) => c.method === 'Input.dispatchKeyEvent' && c.params?.key === 'Escape',
+            );
+            expect(escapeCall).toBeDefined();
         });
     });
 });

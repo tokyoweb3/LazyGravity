@@ -511,18 +511,32 @@ export class ResponseMonitor {
 
     /** Start monitoring */
     async start(): Promise<void> {
+        return this.initMonitoring(false);
+    }
+
+    /**
+     * Start monitoring in passive mode.
+     * Same as start() but with generationStarted=true, so text changes
+     * are detected immediately without waiting for the stop button to appear.
+     * Used when joining an existing session that may already be generating.
+     */
+    async startPassive(): Promise<void> {
+        return this.initMonitoring(true);
+    }
+
+    /** Internal initialization shared between start() and startPassive() */
+    private async initMonitoring(passive: boolean): Promise<void> {
         if (this.isRunning) return;
         this.isRunning = true;
         this.lastText = null;
         this.baselineText = null;
-        this.generationStarted = false;
-        this.currentPhase = 'waiting';
+        this.generationStarted = passive;
+        this.currentPhase = passive ? 'generating' : 'waiting';
         this.stopGoneCount = 0;
         this.quotaDetected = false;
         this.seenProcessLogKeys = new Set();
 
-        // Always fire callback on start, even though phase is already 'waiting'
-        this.onPhaseChange?.('waiting', null);
+        this.onPhaseChange?.(this.currentPhase, null);
 
         // Capture baseline text
         try {
@@ -555,6 +569,29 @@ export class ResponseMonitor {
             // baseline capture only
         }
 
+        // In structured mode, also capture activity lines from the structured
+        // extraction to align the baseline with polling logic. The PROCESS_LOGS
+        // script skips <details> content, but structured extraction (Pass 2)
+        // explicitly walks <details> elements — without this, tool-call/thinking
+        // entries from previous turns leak into the process log as "new" entries.
+        if (this.extractionMode === 'structured') {
+            try {
+                const structuredBaseline = await this.cdpService.call(
+                    'Runtime.evaluate',
+                    this.buildEvaluateParams(RESPONSE_SELECTORS.RESPONSE_STRUCTURED),
+                );
+                const baselineClassified = classifyAssistantSegments(structuredBaseline?.result?.value);
+                if (baselineClassified.diagnostics.source === 'dom-structured') {
+                    for (const line of baselineClassified.activityLines) {
+                        const key = (line || '').replace(/\r/g, '').trim().slice(0, 200);
+                        if (key) this.seenProcessLogKeys.add(key);
+                    }
+                }
+            } catch {
+                // structured baseline is best-effort
+            }
+        }
+
         // Set timeout timer
         if (this.maxDurationMs > 0) {
             this.timeoutTimer = setTimeout(async () => {
@@ -569,11 +606,11 @@ export class ResponseMonitor {
             }, this.maxDurationMs);
         }
 
+        const mode = passive ? 'Passive monitoring' : 'Monitoring';
         logger.debug(
-            `── Monitoring started | poll=${this.pollIntervalMs}ms timeout=${this.maxDurationMs / 1000}s baseline=${this.baselineText?.length ?? 0}ch`,
+            `── ${mode} started | poll=${this.pollIntervalMs}ms timeout=${this.maxDurationMs / 1000}s baseline=${this.baselineText?.length ?? 0}ch`,
         );
 
-        // Start polling
         this.schedulePoll();
     }
 

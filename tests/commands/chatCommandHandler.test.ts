@@ -28,7 +28,7 @@ describe('ChatCommandHandler', () => {
             getConnected: jest.fn(),
             getActiveWorkspaceNames: jest.fn().mockReturnValue([]),
             getApprovalDetector: jest.fn(),
-            extractDirName: jest.fn((path: string) => path.split('/').filter(Boolean).pop() || path),
+            extractProjectName: jest.fn((path: string) => path.split('/').filter(Boolean).pop() || path),
         } as any;
 
         db = new Database(':memory:');

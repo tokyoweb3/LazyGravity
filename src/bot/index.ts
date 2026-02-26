@@ -35,6 +35,8 @@ import {
 } from '../commands/cleanupCommandHandler';
 import { ChannelManager } from '../services/channelManager';
 import { TitleGeneratorService } from '../services/titleGeneratorService';
+import { JoinCommandHandler } from '../commands/joinCommandHandler';
+import { isSessionSelectId } from '../ui/sessionPickerUi';
 
 // CDP integration services
 import { CdpService } from '../services/cdpService';
@@ -659,11 +661,11 @@ async function sendPromptToAntigravity(
                             const sessionInfo = await options.chatSessionService.getCurrentSessionInfo(cdp);
                             if (sessionInfo && sessionInfo.hasActiveChat && sessionInfo.title && sessionInfo.title !== t('(Untitled)')) {
                                 const session = options.chatSessionRepo.findByChannelId(message.channelId);
-                                const workspaceDirName = session
-                                    ? bridge.pool.extractDirName(session.workspacePath)
+                                const projectName = session
+                                    ? bridge.pool.extractProjectName(session.workspacePath)
                                     : cdp.getCurrentWorkspaceName();
-                                if (workspaceDirName) {
-                                    registerApprovalSessionChannel(bridge, workspaceDirName, sessionInfo.title, message.channel);
+                                if (projectName) {
+                                    registerApprovalSessionChannel(bridge, projectName, sessionInfo.title, message.channel);
                                 }
 
                                 const newName = options.titleGenerator.sanitizeForChannelName(sessionInfo.title);
@@ -803,7 +805,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         sendPromptImpl: sendPromptToAntigravity,
     });
 
-    // Initialize command handlers
+    // Initialize command handlers (joinHandler is created after client, see below)
     const wsHandler = new WorkspaceCommandHandler(workspaceBindingRepo, chatSessionRepo, workspaceService, channelManager);
     const chatHandler = new ChatCommandHandler(chatSessionService, chatSessionRepo, workspaceBindingRepo, channelManager, workspaceService, bridge.pool);
     const cleanupHandler = new CleanupCommandHandler(chatSessionRepo, workspaceBindingRepo);
@@ -817,6 +819,8 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             GatewayIntentBits.MessageContent,
         ]
     });
+
+    const joinHandler = new JoinCommandHandler(chatSessionService, chatSessionRepo, workspaceBindingRepo, channelManager, bridge.pool, workspaceService, client);
 
     client.once(Events.ClientReady, async (readyClient) => {
         logger.info(`Ready! Logged in as ${readyClient.user.tag} | extractionMode=${config.extractionMode}`);
@@ -890,6 +894,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         parseApprovalCustomId,
         parseErrorPopupCustomId,
         parsePlanningCustomId,
+        joinHandler,
         handleSlashInteraction: async (
             interaction,
             handler,
@@ -914,6 +919,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             clientArg,
             promptDispatcher,
             templateRepo,
+            joinHandler,
         ),
         handleTemplateUse: async (interaction, templateId) => {
             const template = templateRepo.findById(templateId);
@@ -933,17 +939,17 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             if (workspacePath) {
                 try {
                     cdp = await bridge.pool.getOrConnect(workspacePath);
-                    const dirName = bridge.pool.extractDirName(workspacePath);
-                    bridge.lastActiveWorkspace = dirName;
+                    const projectName = bridge.pool.extractProjectName(workspacePath);
+                    bridge.lastActiveWorkspace = projectName;
                     bridge.lastActiveChannel = interaction.channel;
-                    registerApprovalWorkspaceChannel(bridge, dirName, interaction.channel as any);
+                    registerApprovalWorkspaceChannel(bridge, projectName, interaction.channel as any);
                     const session = chatSessionRepo.findByChannelId(channelId);
                     if (session?.displayName) {
-                        registerApprovalSessionChannel(bridge, dirName, session.displayName, interaction.channel as any);
+                        registerApprovalSessionChannel(bridge, projectName, session.displayName, interaction.channel as any);
                     }
-                    ensureApprovalDetector(bridge, cdp, dirName, client);
-                    ensureErrorPopupDetector(bridge, cdp, dirName, client);
-                    ensurePlanningDetector(bridge, cdp, dirName, client);
+                    ensureApprovalDetector(bridge, cdp, projectName, client);
+                    ensureErrorPopupDetector(bridge, cdp, projectName, client);
+                    ensurePlanningDetector(bridge, cdp, projectName, client);
                 } catch (e: any) {
                     await interaction.followUp({
                         content: `Failed to connect to workspace: ${e.message}`,
@@ -1062,6 +1068,7 @@ async function handleSlashInteraction(
     _client: Client,
     promptDispatcher: PromptDispatcher,
     templateRepo: TemplateRepository,
+    joinHandler?: JoinCommandHandler,
 ): Promise<void> {
     const commandName = interaction.commandName;
 
@@ -1076,6 +1083,12 @@ async function handleSlashInteraction(
                         name: '💬 Chat', value: [
                             '`/new` — Start a new chat session',
                             '`/chat` — Show current session info + list',
+                        ].join('\n')
+                    },
+                    {
+                        name: '🔗 Session', value: [
+                            '`/join` — Join an existing Antigravity session',
+                            '`/mirror` — Toggle PC→Discord mirroring ON/OFF',
                         ].join('\n')
                     },
                     {
@@ -1185,6 +1198,13 @@ async function handleSlashInteraction(
             })();
             const currentMode = modeService.getCurrentMode();
 
+            const mirroringWorkspaces = activeNames.filter(
+                (name) => bridge.pool.getUserMessageDetector(name)?.isActive(),
+            );
+            const mirrorStatus = mirroringWorkspaces.length > 0
+                ? `📡 ON (${mirroringWorkspaces.join(', ')})`
+                : '⚪ OFF';
+
             const embed = new EmbedBuilder()
                 .setTitle('🔧 Bot Status')
                 .setColor(activeNames.length > 0 ? 0x00CC88 : 0x888888)
@@ -1192,6 +1212,7 @@ async function handleSlashInteraction(
                     { name: 'CDP Connection', value: activeNames.length > 0 ? `🟢 ${activeNames.length} project(s) connected` : '⚪ Disconnected', inline: true },
                     { name: 'Mode', value: MODE_DISPLAY_NAMES[currentMode] || currentMode, inline: true },
                     { name: 'Auto Approve', value: autoAcceptService.isEnabled() ? '🟢 ON' : '⚪ OFF', inline: true },
+                    { name: 'Mirroring', value: mirrorStatus, inline: true },
                 )
                 .setTimestamp();
 
@@ -1200,7 +1221,8 @@ async function handleSlashInteraction(
                     const cdp = bridge.pool.getConnected(name);
                     const contexts = cdp ? cdp.getContexts().length : 0;
                     const detectorActive = bridge.pool.getApprovalDetector(name)?.isActive() ? ' [Detecting]' : '';
-                    return `• **${name}** — Contexts: ${contexts}${detectorActive}`;
+                    const mirrorActive = bridge.pool.getUserMessageDetector(name)?.isActive() ? ' [Mirror]' : '';
+                    return `• **${name}** — Contexts: ${contexts}${detectorActive}${mirrorActive}`;
                 });
                 embed.setDescription(`**Connected Projects:**\n${lines.join('\n')}`);
             } else {
@@ -1293,6 +1315,24 @@ async function handleSlashInteraction(
 
         case 'chat': {
             await chatHandler.handleChat(interaction);
+            break;
+        }
+
+        case 'join': {
+            if (joinHandler) {
+                await joinHandler.handleJoin(interaction, bridge);
+            } else {
+                await interaction.editReply({ content: t('⚠️ Join handler not available.') });
+            }
+            break;
+        }
+
+        case 'mirror': {
+            if (joinHandler) {
+                await joinHandler.handleMirror(interaction, bridge);
+            } else {
+                await interaction.editReply({ content: t('⚠️ Mirror handler not available.') });
+            }
             break;
         }
 

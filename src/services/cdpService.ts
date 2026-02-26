@@ -267,23 +267,23 @@ export class CdpService extends EventEmitter {
      * @returns true on successful connection
      */
     async discoverAndConnectForWorkspace(workspacePath: string): Promise<boolean> {
-        const workspaceDirName = workspacePath.split('/').filter(Boolean).pop() || '';
+        const projectName = workspacePath.split('/').filter(Boolean).pop() || '';
         this.currentWorkspacePath = workspacePath;
 
         // Re-validate existing connection before skipping reconnect.
-        if (this.isConnectedFlag && this.currentWorkspaceName === workspaceDirName) {
-            const stillMatched = await this.verifyCurrentWorkspace(workspaceDirName, workspacePath);
+        if (this.isConnectedFlag && this.currentWorkspaceName === projectName) {
+            const stillMatched = await this.verifyCurrentWorkspace(projectName, workspacePath);
             if (stillMatched) {
                 return true;
             }
             logger.warn(
-                `[CdpService] Workspace mismatch detected while reusing connection (expected="${workspaceDirName}"). Reconnecting...`,
+                `[CdpService] Workspace mismatch detected while reusing connection (expected="${projectName}"). Reconnecting...`,
             );
         }
 
         this.isSwitchingWorkspace = true;
         try {
-            return await this._discoverAndConnectForWorkspaceImpl(workspacePath, workspaceDirName);
+            return await this._discoverAndConnectForWorkspaceImpl(workspacePath, projectName);
         } finally {
             this.isSwitchingWorkspace = false;
         }
@@ -292,7 +292,7 @@ export class CdpService extends EventEmitter {
     /**
      * Verify whether the currently attached page still represents the expected workspace.
      */
-    private async verifyCurrentWorkspace(workspaceDirName: string, workspacePath: string): Promise<boolean> {
+    private async verifyCurrentWorkspace(projectName: string, workspacePath: string): Promise<boolean> {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN || !this.isConnectedFlag) {
             return false;
         }
@@ -303,20 +303,20 @@ export class CdpService extends EventEmitter {
                 returnByValue: true,
             });
             const liveTitle = String(titleResult?.result?.value || '');
-            if (liveTitle.includes(workspaceDirName)) {
-                this.currentWorkspaceName = workspaceDirName;
+            if (liveTitle.includes(projectName)) {
+                this.currentWorkspaceName = projectName;
                 return true;
             }
         } catch {
             // Fall through to folder-path probe.
         }
 
-        return this.probeWorkspaceFolderPath(workspaceDirName, workspacePath);
+        return this.probeWorkspaceFolderPath(projectName, workspacePath);
     }
 
     private async _discoverAndConnectForWorkspaceImpl(
         workspacePath: string,
-        workspaceDirName: string,
+        projectName: string,
     ): Promise<boolean> {
         // Scan all ports to collect workbench pages
         let pages: any[] = [];
@@ -343,7 +343,7 @@ export class CdpService extends EventEmitter {
 
         if (respondingPort === null) {
             // Launch Antigravity if no port responds
-            return this.launchAndConnectWorkspace(workspacePath, workspaceDirName);
+            return this.launchAndConnectWorkspace(workspacePath, projectName);
         }
 
         // Filter workbench pages only (exclude Launchpad, Manager, iframe, worker)
@@ -356,43 +356,43 @@ export class CdpService extends EventEmitter {
                 t.url?.includes('workbench'),
         );
 
-        logger.debug(`[CdpService] Searching for workspace "${workspaceDirName}" (port=${respondingPort})... ${workbenchPages.length} workbench pages:`);
+        logger.debug(`[CdpService] Searching for workspace "${projectName}" (port=${respondingPort})... ${workbenchPages.length} workbench pages:`);
         for (const p of workbenchPages) {
             logger.debug(`  - title="${p.title}" url=${p.url}`);
         }
 
         // 1. Title match (fast path)
-        const titleMatch = workbenchPages.find((t: any) => t.title?.includes(workspaceDirName));
+        const titleMatch = workbenchPages.find((t: any) => t.title?.includes(projectName));
         if (titleMatch) {
-            return this.connectToPage(titleMatch, workspaceDirName);
+            return this.connectToPage(titleMatch, projectName);
         }
 
         // 2. Title match failed -> CDP probe (connect to each page and check document.title)
         logger.debug(`[CdpService] Title match failed. Searching via CDP probe...`);
-        const probeResult = await this.probeWorkbenchPages(workbenchPages, workspaceDirName, workspacePath);
+        const probeResult = await this.probeWorkbenchPages(workbenchPages, projectName, workspacePath);
         if (probeResult) {
             return true;
         }
 
         // 3. If not found by probe either, launch a new window
-        return this.launchAndConnectWorkspace(workspacePath, workspaceDirName);
+        return this.launchAndConnectWorkspace(workspacePath, projectName);
     }
 
     /**
      * Connect to the specified page (skip if already connected).
      */
-    private async connectToPage(page: any, workspaceDirName: string): Promise<boolean> {
+    private async connectToPage(page: any, projectName: string): Promise<boolean> {
         // No reconnection needed if already connected to the same URL
         if (this.isConnectedFlag && this.targetUrl === page.webSocketDebuggerUrl) {
-            this.currentWorkspaceName = workspaceDirName;
+            this.currentWorkspaceName = projectName;
             return true;
         }
 
         this.disconnectQuietly();
         this.targetUrl = page.webSocketDebuggerUrl;
         await this.connect();
-        this.currentWorkspaceName = workspaceDirName;
-        logger.debug(`[CdpService] Connected to workspace "${workspaceDirName}"`);
+        this.currentWorkspaceName = projectName;
+        logger.debug(`[CdpService] Connected to workspace "${projectName}"`);
 
         return true;
     }
@@ -404,12 +404,12 @@ export class CdpService extends EventEmitter {
      * If the title is "Untitled (Workspace)", verify workspace folder path via CDP.
      *
      * @param workbenchPages List of workbench pages
-     * @param workspaceDirName Workspace directory name
+     * @param projectName Workspace directory name
      * @param workspacePath Full workspace path (for folder path matching)
      */
     private async probeWorkbenchPages(
         workbenchPages: any[],
-        workspaceDirName: string,
+        projectName: string,
         workspacePath?: string,
     ): Promise<boolean> {
         for (const page of workbenchPages) {
@@ -425,15 +425,15 @@ export class CdpService extends EventEmitter {
                 });
                 const liveTitle = result?.result?.value || '';
 
-                if (liveTitle.includes(workspaceDirName)) {
-                    this.currentWorkspaceName = workspaceDirName;
-                    logger.debug(`[CdpService] Probe success: detected "${workspaceDirName}"`);
+                if (liveTitle.includes(projectName)) {
+                    this.currentWorkspaceName = projectName;
+                    logger.debug(`[CdpService] Probe success: detected "${projectName}"`);
                     return true;
                 }
 
                 // If title is "Untitled (Workspace)", verify by folder path
                 if (liveTitle.includes('Untitled') && workspacePath) {
-                    const folderMatch = await this.probeWorkspaceFolderPath(workspaceDirName, workspacePath);
+                    const folderMatch = await this.probeWorkspaceFolderPath(projectName, workspacePath);
                     if (folderMatch) {
                         return true;
                     }
@@ -458,7 +458,7 @@ export class CdpService extends EventEmitter {
      * 3. Get workspace info from window.location.hash, etc.
      */
     private async probeWorkspaceFolderPath(
-        workspaceDirName: string,
+        projectName: string,
         workspacePath: string,
     ): Promise<boolean> {
         try {
@@ -499,11 +499,11 @@ export class CdpService extends EventEmitter {
                 const detectedValue = value.value as string;
 
                 if (
-                    detectedValue.includes(workspaceDirName) ||
+                    detectedValue.includes(projectName) ||
                     detectedValue.includes(workspacePath)
                 ) {
-                    this.currentWorkspaceName = workspaceDirName;
-                    logger.debug(`[CdpService] Folder path match success: "${workspaceDirName}"`);
+                    this.currentWorkspaceName = projectName;
+                    logger.debug(`[CdpService] Folder path match success: "${projectName}"`);
                     return true;
                 }
             }
@@ -514,9 +514,9 @@ export class CdpService extends EventEmitter {
                 returnByValue: true,
             });
             const pageUrl = urlResult?.result?.value || '';
-            if (pageUrl.includes(encodeURIComponent(workspacePath)) || pageUrl.includes(workspaceDirName)) {
-                this.currentWorkspaceName = workspaceDirName;
-                logger.debug(`[CdpService] URL parameter match success: "${workspaceDirName}"`);
+            if (pageUrl.includes(encodeURIComponent(workspacePath)) || pageUrl.includes(projectName)) {
+                this.currentWorkspaceName = projectName;
+                logger.debug(`[CdpService] URL parameter match success: "${projectName}"`);
                 return true;
             }
 
@@ -532,7 +532,7 @@ export class CdpService extends EventEmitter {
      */
     private async launchAndConnectWorkspace(
         workspacePath: string,
-        workspaceDirName: string,
+        projectName: string,
     ): Promise<boolean> {
         // Open as folder using Antigravity CLI (not as workspace mode).
         // `open -a Antigravity` may open as workspace, resulting in title "Untitled (Workspace)".
@@ -589,13 +589,13 @@ export class CdpService extends EventEmitter {
             );
 
             // Title match
-            const titleMatch = workbenchPages.find((t: any) => t.title?.includes(workspaceDirName));
+            const titleMatch = workbenchPages.find((t: any) => t.title?.includes(projectName));
             if (titleMatch) {
-                return this.connectToPage(titleMatch, workspaceDirName);
+                return this.connectToPage(titleMatch, projectName);
             }
 
             // CDP probe (also check folder path if title is not updated)
-            const probeResult = await this.probeWorkbenchPages(workbenchPages, workspaceDirName, workspacePath);
+            const probeResult = await this.probeWorkbenchPages(workbenchPages, projectName, workspacePath);
             if (probeResult) {
                 return true;
             }
@@ -609,14 +609,14 @@ export class CdpService extends EventEmitter {
                         (t.title?.includes('Untitled') || t.title === ''),
                 );
                 if (newUntitledPages.length === 1) {
-                    logger.debug(`[CdpService] New Untitled page detected. Connecting as "${workspaceDirName}" (page.id=${newUntitledPages[0].id})`);
-                    return this.connectToPage(newUntitledPages[0], workspaceDirName);
+                    logger.debug(`[CdpService] New Untitled page detected. Connecting as "${projectName}" (page.id=${newUntitledPages[0].id})`);
+                    return this.connectToPage(newUntitledPages[0], projectName);
                 }
             }
         }
 
         throw new Error(
-            `Workbench page for workspace "${workspaceDirName}" not found within ${maxWaitMs / 1000} seconds`,
+            `Workbench page for workspace "${projectName}" not found within ${maxWaitMs / 1000} seconds`,
         );
     }
 

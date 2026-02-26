@@ -1,5 +1,13 @@
 import { CdpService } from './cdpService';
 
+/** Session list item from the side panel */
+export interface SessionListItem {
+    /** Conversation title */
+    title: string;
+    /** Whether this is the currently active session */
+    isActive: boolean;
+}
+
 /** Chat session information */
 export interface ChatSessionInfo {
     /** Current chat title (if available) */
@@ -37,6 +45,121 @@ const GET_CHAT_TITLE_SCRIPT = `(() => {
     // "Agent" is the default empty chat title
     const hasActiveChat = title.length > 0 && title !== 'Agent';
     return { title: title || '(Untitled)', hasActiveChat };
+})()`;
+
+/**
+ * Script to find the Past Conversations button and return its coordinates.
+ * We use coordinates so that the actual click is done via CDP Input.dispatchMouseEvent,
+ * which works reliably in Electron (DOM .click() can be ignored).
+ *
+ * Returns: { found: boolean, x: number, y: number }
+ */
+const FIND_PAST_CONVERSATIONS_BUTTON_SCRIPT = `(() => {
+    const isVisible = (el) => !!el && el instanceof HTMLElement && el.offsetParent !== null;
+    const getRect = (el) => {
+        const rect = el.getBoundingClientRect();
+        return { found: true, x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
+    };
+
+    // Strategy 1 (primary): data-past-conversations-toggle attribute
+    const toggle = document.querySelector('[data-past-conversations-toggle]');
+    if (toggle && isVisible(toggle)) return getRect(toggle);
+
+    // Strategy 2: data-tooltip-id containing "history"
+    const tooltipEls = Array.from(document.querySelectorAll('[data-tooltip-id]'));
+    for (const el of tooltipEls) {
+        if (!isVisible(el)) continue;
+        const tid = (el.getAttribute('data-tooltip-id') || '').toLowerCase();
+        if (tid.includes('history') || tid.includes('past-conversations')) {
+            return getRect(el);
+        }
+    }
+
+    // Strategy 3: SVG with lucide-history class
+    const icons = Array.from(document.querySelectorAll('svg.lucide-history, svg[class*="lucide-history"]'));
+    for (const icon of icons) {
+        const parent = icon.closest('a, button, [role="button"], div[class*="cursor-pointer"]');
+        const target = parent instanceof HTMLElement && isVisible(parent) ? parent : icon;
+        if (isVisible(target)) return getRect(target);
+    }
+
+    return { found: false, x: 0, y: 0 };
+})()`;
+
+/**
+ * Script to scrape session items from the open Past Conversations panel.
+ * Expects the panel to already be visible.
+ *
+ * Returns: { sessions: SessionListItem[] }
+ */
+const SCRAPE_PAST_CONVERSATIONS_SCRIPT = `(() => {
+    const isVisible = (el) => !!el && el instanceof HTMLElement && el.offsetParent !== null;
+    const normalize = (text) => (text || '').trim();
+
+    const items = [];
+    const seen = new Set();
+
+    // Find the scrollable conversation list container
+    const containers = Array.from(document.querySelectorAll('div[class*="overflow-auto"], div[class*="overflow-y-scroll"]'));
+    const container = containers.find((c) => isVisible(c) && c.querySelectorAll('div[class*="cursor-pointer"]').length > 0) || document;
+
+    // Detect the "Other Conversations" section boundary.
+    // Sessions below this header belong to other projects and must be excluded.
+    let boundaryTop = Infinity;
+    const headerCandidates = container.querySelectorAll('div[class*="text-xs"][class*="opacity"]');
+    for (const el of headerCandidates) {
+        if (!isVisible(el)) continue;
+        const t = normalize(el.textContent || '');
+        if (/^Other\\s+Conversations?$/i.test(t)) {
+            boundaryTop = el.getBoundingClientRect().top;
+            break;
+        }
+    }
+
+    // Each session row is a div with cursor-pointer
+    const rows = Array.from(container.querySelectorAll('div[class*="cursor-pointer"]'));
+    for (const row of rows) {
+        if (!isVisible(row)) continue;
+        // Skip rows that are below the "Other Conversations" boundary
+        if (row.getBoundingClientRect().top >= boundaryTop) continue;
+        // Find the session title — nested span within the row
+        const spans = Array.from(row.querySelectorAll('span.text-sm span, span.text-sm'));
+        let title = '';
+        for (const span of spans) {
+            const t = normalize(span.textContent || '');
+            // Skip timestamp labels like "1 hr ago", "7 mins ago"
+            if (/^\\d+\\s+(min|hr|hour|day|sec|week|month|year)s?\\s+ago$/i.test(t)) continue;
+            // Skip very short or action-like labels
+            if (t.length < 2 || t.length > 200) continue;
+            if (/^(show\\s+\\d+\\s+more|new|past|history|settings|close|menu)\\b/i.test(t)) continue;
+            title = t;
+            break;
+        }
+        if (!title || seen.has(title)) continue;
+        seen.add(title);
+        // Detect if this is the active/current session (has focusBackground class)
+        const isActive = /focusBackground/i.test(row.className || '');
+        items.push({ title, isActive });
+    }
+    return { sessions: items };
+})()`;
+
+/**
+ * Script to find the "Show N more..." link and return its coordinates.
+ * Returns: { found: boolean, x: number, y: number }
+ */
+const FIND_SHOW_MORE_BUTTON_SCRIPT = `(() => {
+    const isVisible = (el) => !!el && el instanceof HTMLElement && el.offsetParent !== null;
+    const els = Array.from(document.querySelectorAll('div, span'));
+    for (const el of els) {
+        if (!isVisible(el)) continue;
+        const text = (el.textContent || '').trim();
+        if (/^Show\\s+\\d+\\s+more/i.test(text)) {
+            const rect = el.getBoundingClientRect();
+            return { found: true, x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
+        }
+    }
+    return { found: false, x: 0, y: 0 };
 })()`;
 
 /**
@@ -245,14 +368,35 @@ function buildActivateViaPastConversationsScript(title: string): string {
         };
 
         return (async () => {
-            let opened = clickByPatterns([
-                'past conversations',
-                'past conversation',
-                'conversation history',
-                'past chats',
-                '過去の会話',
-                'chat history',
-            ]);
+            // Primary: click via data-past-conversations-toggle attribute
+            let opened = false;
+            const toggleBtn = document.querySelector('[data-past-conversations-toggle]');
+            if (toggleBtn && isVisible(toggleBtn)) {
+                const clickable = getClickable(toggleBtn);
+                if (clickable) { clickable.click(); opened = true; }
+            }
+            if (!opened) {
+                // Fallback: data-tooltip-id containing "history"
+                const tooltipEls = asArray(document.querySelectorAll('[data-tooltip-id]'));
+                for (const el of tooltipEls) {
+                    if (!isVisible(el)) continue;
+                    const tid = normalize(el.getAttribute('data-tooltip-id') || '');
+                    if (tid.includes('history') || tid.includes('past-conversations')) {
+                        const cl = getClickable(el);
+                        if (cl) { cl.click(); opened = true; break; }
+                    }
+                }
+            }
+            if (!opened) {
+                opened = clickByPatterns([
+                    'past conversations',
+                    'past conversation',
+                    'conversation history',
+                    'past chats',
+                    '過去の会話',
+                    'chat history',
+                ]);
+            }
             if (!opened) {
                 opened = clickIconHistoryButton();
             }
@@ -297,6 +441,114 @@ function buildActivateViaPastConversationsScript(title: string): string {
 export class ChatSessionService {
     private static readonly ACTIVATE_SESSION_MAX_WAIT_MS = 30000;
     private static readonly ACTIVATE_SESSION_RETRY_INTERVAL_MS = 800;
+    private static readonly LIST_SESSIONS_TARGET = 20;
+
+    /**
+     * List recent sessions by opening the Past Conversations panel.
+     *
+     * Flow (all clicks via CDP Input.dispatchMouseEvent for Electron compatibility):
+     *   1. Find Past Conversations button coordinates
+     *   2. Click it via CDP mouse events
+     *   3. Wait for panel to render
+     *   4. Scrape visible sessions
+     *   5. If < TARGET sessions, find & click "Show N more..."
+     *   6. Re-scrape
+     *   7. Close panel with Escape key
+     *
+     * @param cdpService CdpService instance to use
+     * @returns Array of session list items (empty array on failure)
+     */
+    async listAllSessions(cdpService: CdpService): Promise<SessionListItem[]> {
+        try {
+            // Step 1: Find Past Conversations button
+            const btnState = await this.evaluateOnAnyContext(
+                cdpService, FIND_PAST_CONVERSATIONS_BUTTON_SCRIPT, false,
+            );
+            if (!btnState?.found) {
+                return [];
+            }
+
+            // Step 2: Click via CDP mouse events (reliable in Electron)
+            await this.cdpMouseClick(cdpService, btnState.x, btnState.y);
+
+            // Step 3: Wait for panel to render
+            await new Promise((r) => setTimeout(r, 500));
+
+            // Step 4: Scrape sessions
+            let scrapeResult = await this.evaluateOnAnyContext(
+                cdpService, SCRAPE_PAST_CONVERSATIONS_SCRIPT, false,
+            );
+            let sessions: SessionListItem[] = scrapeResult?.sessions ?? [];
+
+            // Step 5: If fewer than TARGET, click "Show N more..."
+            if (sessions.length < ChatSessionService.LIST_SESSIONS_TARGET) {
+                const showMoreState = await this.evaluateOnAnyContext(
+                    cdpService, FIND_SHOW_MORE_BUTTON_SCRIPT, false,
+                );
+                if (showMoreState?.found) {
+                    await this.cdpMouseClick(cdpService, showMoreState.x, showMoreState.y);
+                    await new Promise((r) => setTimeout(r, 500));
+
+                    // Step 6: Re-scrape
+                    scrapeResult = await this.evaluateOnAnyContext(
+                        cdpService, SCRAPE_PAST_CONVERSATIONS_SCRIPT, false,
+                    );
+                    sessions = scrapeResult?.sessions ?? [];
+                }
+            }
+
+            // Step 7: Close panel with Escape
+            await cdpService.call('Input.dispatchKeyEvent', {
+                type: 'keyDown', key: 'Escape', code: 'Escape',
+                windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27,
+            });
+            await cdpService.call('Input.dispatchKeyEvent', {
+                type: 'keyUp', key: 'Escape', code: 'Escape',
+                windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27,
+            });
+
+            return sessions.slice(0, ChatSessionService.LIST_SESSIONS_TARGET);
+        } catch (_) {
+            return [];
+        }
+    }
+
+    /**
+     * Evaluate a script on the first context that returns a truthy value.
+     */
+    private async evaluateOnAnyContext(
+        cdpService: CdpService,
+        expression: string,
+        awaitPromise: boolean,
+    ): Promise<any> {
+        const contexts = cdpService.getContexts();
+        for (const ctx of contexts) {
+            try {
+                const result = await cdpService.call('Runtime.evaluate', {
+                    expression, returnByValue: true, awaitPromise, contextId: ctx.id,
+                });
+                const value = result?.result?.value;
+                if (value) return value;
+            } catch (_) { /* try next context */ }
+        }
+        return null;
+    }
+
+    /**
+     * Click at coordinates via CDP Input.dispatchMouseEvent.
+     */
+    private async cdpMouseClick(cdpService: CdpService, x: number, y: number): Promise<void> {
+        await cdpService.call('Input.dispatchMouseEvent', {
+            type: 'mouseMoved', x, y,
+        });
+        await cdpService.call('Input.dispatchMouseEvent', {
+            type: 'mousePressed', x, y, button: 'left', clickCount: 1,
+        });
+        await cdpService.call('Input.dispatchMouseEvent', {
+            type: 'mouseReleased', x, y, button: 'left', clickCount: 1,
+        });
+    }
+
     /**
      * Start a new chat session in the Antigravity UI.
      *

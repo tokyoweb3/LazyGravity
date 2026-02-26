@@ -58,11 +58,11 @@ export interface MessageCreateHandlerDeps {
     ) => Promise<void>;
     handleScreenshot: (target: Message, cdp: CdpService | null) => Promise<void>;
     getCurrentCdp?: (bridge: CdpBridge) => CdpService | null;
-    ensureApprovalDetector?: (bridge: CdpBridge, cdp: CdpService, workspaceDirName: string, client: any) => void;
-    ensureErrorPopupDetector?: (bridge: CdpBridge, cdp: CdpService, workspaceDirName: string, client: any) => void;
-    ensurePlanningDetector?: (bridge: CdpBridge, cdp: CdpService, workspaceDirName: string, client: any) => void;
-    registerApprovalWorkspaceChannel?: (bridge: CdpBridge, workspaceDirName: string, channel: Message['channel']) => void;
-    registerApprovalSessionChannel?: (bridge: CdpBridge, workspaceDirName: string, sessionTitle: string, channel: Message['channel']) => void;
+    ensureApprovalDetector?: (bridge: CdpBridge, cdp: CdpService, projectName: string, client: any) => void;
+    ensureErrorPopupDetector?: (bridge: CdpBridge, cdp: CdpService, projectName: string, client: any) => void;
+    ensurePlanningDetector?: (bridge: CdpBridge, cdp: CdpService, projectName: string, client: any) => void;
+    registerApprovalWorkspaceChannel?: (bridge: CdpBridge, projectName: string, channel: Message['channel']) => void;
+    registerApprovalSessionChannel?: (bridge: CdpBridge, projectName: string, sessionTitle: string, channel: Message['channel']) => void;
     downloadInboundImageAttachments?: (message: Message) => Promise<InboundImageAttachment[]>;
     cleanupInboundImageAttachments?: (attachments: InboundImageAttachment[]) => Promise<void>;
     isImageAttachment?: (contentType: string | null | undefined, fileName: string | null | undefined) => boolean;
@@ -132,7 +132,7 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                 return;
             }
 
-            const slashOnlyCommands = ['help', 'stop', 'model', 'mode', 'project', 'chat', 'new', 'cleanup'];
+            const slashOnlyCommands = ['help', 'stop', 'model', 'mode', 'project', 'chat', 'new', 'cleanup', 'join', 'mirror'];
             if (slashOnlyCommands.includes(parsed.commandName)) {
                 await message.reply({
                     content: `💡 Please use \`/${parsed.commandName}\` as a slash command.\nType \`/${parsed.commandName}\` in the Discord input field to see suggestions.`,
@@ -179,19 +179,19 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                 if (workspacePath) {
                     try {
                         const cdp = await deps.bridge.pool.getOrConnect(workspacePath);
-                        const dirName = deps.bridge.pool.extractDirName(workspacePath);
+                        const projectName = deps.bridge.pool.extractProjectName(workspacePath);
 
-                        deps.bridge.lastActiveWorkspace = dirName;
+                        deps.bridge.lastActiveWorkspace = projectName;
                         deps.bridge.lastActiveChannel = message.channel;
-                        registerApprovalWorkspaceChannel(deps.bridge, dirName, message.channel);
+                        registerApprovalWorkspaceChannel(deps.bridge, projectName, message.channel);
 
-                        ensureApprovalDetector(deps.bridge, cdp, dirName, deps.client);
-                        ensureErrorPopupDetector(deps.bridge, cdp, dirName, deps.client);
-                        ensurePlanningDetector(deps.bridge, cdp, dirName, deps.client);
+                        ensureApprovalDetector(deps.bridge, cdp, projectName, deps.client);
+                        ensureErrorPopupDetector(deps.bridge, cdp, projectName, deps.client);
+                        ensurePlanningDetector(deps.bridge, cdp, projectName, deps.client);
 
                         const session = deps.chatSessionRepo.findByChannelId(message.channelId);
                         if (session?.displayName) {
-                            registerApprovalSessionChannel(deps.bridge, dirName, session.displayName, message.channel);
+                            registerApprovalSessionChannel(deps.bridge, projectName, session.displayName, message.channel);
                         }
 
                         if (session?.isRenamed && session.displayName) {
@@ -222,7 +222,13 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                         // Re-register session channel after autoRenameChannel sets displayName
                         const updatedSession = deps.chatSessionRepo.findByChannelId(message.channelId);
                         if (updatedSession?.displayName) {
-                            registerApprovalSessionChannel(deps.bridge, dirName, updatedSession.displayName, message.channel);
+                            registerApprovalSessionChannel(deps.bridge, projectName, updatedSession.displayName, message.channel);
+                        }
+
+                        // Register echo hash so UserMessageDetector skips this message
+                        const userMsgDetector = deps.bridge.pool.getUserMessageDetector?.(projectName);
+                        if (userMsgDetector) {
+                            userMsgDetector.addEchoHash(promptText);
                         }
 
                         await deps.sendPromptToAntigravity(deps.bridge, message, promptText, cdp, deps.modeService, deps.modelService, inboundImages, {

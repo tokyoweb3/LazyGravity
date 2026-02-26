@@ -80,6 +80,12 @@ describe('registerSlashCommands', () => {
         expect(names).toContain('autoaccept');
     });
 
+    it('includes join and mirror commands in registration targets', () => {
+        const names = slashCommands.map((cmd) => cmd.toJSON().name);
+        expect(names).toContain('join');
+        expect(names).toContain('mirror');
+    });
+
     beforeEach(() => {
         jest.clearAllMocks();
     });

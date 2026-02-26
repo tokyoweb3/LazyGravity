@@ -16,17 +16,17 @@ describe('CdpConnectionPool', () => {
         pool.disconnectAll();
     });
 
-    describe('extractDirName()', () => {
+    describe('extractProjectName()', () => {
         it('extracts the directory name from a full path', () => {
-            expect(pool.extractDirName('/home/user/Code/MyProject')).toBe('MyProject');
+            expect(pool.extractProjectName('/home/user/Code/MyProject')).toBe('MyProject');
         });
 
         it('handles trailing slashes', () => {
-            expect(pool.extractDirName('/home/user/Code/MyProject/')).toBe('MyProject');
+            expect(pool.extractProjectName('/home/user/Code/MyProject/')).toBe('MyProject');
         });
 
         it('returns a simple name as-is', () => {
-            expect(pool.extractDirName('MyProject')).toBe('MyProject');
+            expect(pool.extractProjectName('MyProject')).toBe('MyProject');
         });
     });
 

@@ -48,7 +48,7 @@ Replace `innerText`-based extraction with structured DOM walking and HTML-to-Dis
 
 ## Scalability & Architecture
 
-- [ ] **Logger Improvements** — File output, rotation, `--verbose` / `--quiet` flags ([#12](https://github.com/tokyoweb3/LazyGravity/issues/12))
+- [X] **Logger Improvements** — File output, rotation, `--verbose` / `--quiet` flags ([#12](https://github.com/tokyoweb3/LazyGravity/issues/12))
 - [ ] **Multi-Editor Support** — Adapter abstraction for Cursor, Windsurf, etc. ([#13](https://github.com/tokyoweb3/LazyGravity/issues/13))
 - [ ] **Plugin System** — User-defined hooks and commands ([#14](https://github.com/tokyoweb3/LazyGravity/issues/14))
 

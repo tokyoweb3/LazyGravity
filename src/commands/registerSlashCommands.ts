@@ -140,6 +140,16 @@ const helpCommand = new SlashCommandBuilder()
     .setName('help')
     .setDescription(t('Display list of available commands'));
 
+/** /join command definition */
+const joinCommand = new SlashCommandBuilder()
+    .setName('join')
+    .setDescription(t('Join an existing Antigravity session (shows up to 20 recent sessions)'));
+
+/** /mirror command definition */
+const mirrorCommand = new SlashCommandBuilder()
+    .setName('mirror')
+    .setDescription(t('Toggle PC-to-Discord message mirroring for the current session'));
+
 /** /ping command definition */
 const pingCommand = new SlashCommandBuilder()
     .setName('ping')
@@ -159,6 +169,8 @@ export const slashCommands = [
     newCommand,
     chatCommand,
     cleanupCommand,
+    joinCommand,
+    mirrorCommand,
     pingCommand,
 ];
 
