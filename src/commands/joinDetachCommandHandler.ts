@@ -58,12 +58,12 @@ export class JoinDetachCommandHandler {
             return;
         }
 
-        const dirName = this.pool.extractDirName(workspaceName);
-        const cdp = this.pool.getConnected(dirName);
-
-        if (!cdp) {
+        let cdp;
+        try {
+            cdp = await this.pool.getOrConnect(workspaceName);
+        } catch (e: any) {
             await interaction.editReply({
-                content: t('⚠️ CDP is not connected for this project. Send a message first to auto-connect.'),
+                content: t(`⚠️ Failed to connect to project: ${e.message}`),
             });
             return;
         }
@@ -95,12 +95,12 @@ export class JoinDetachCommandHandler {
             return;
         }
 
-        const dirName = this.pool.extractDirName(workspaceName);
-        const cdp = this.pool.getConnected(dirName);
-
-        if (!cdp) {
+        let cdp;
+        try {
+            cdp = await this.pool.getOrConnect(workspaceName);
+        } catch (e: any) {
             await interaction.editReply({
-                content: t('⚠️ CDP is not connected for this project.'),
+                content: t(`⚠️ Failed to connect to project: ${e.message}`),
             });
             return;
         }

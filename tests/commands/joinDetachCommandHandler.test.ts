@@ -36,6 +36,7 @@ describe('JoinDetachCommandHandler', () => {
             getConnected: jest.fn(),
             getActiveWorkspaceNames: jest.fn().mockReturnValue([]),
             getApprovalDetector: jest.fn(),
+            getUserMessageDetector: jest.fn(),
             extractDirName: jest.fn((path: string) => path.split('/').filter(Boolean).pop() || path),
         } as any;
 
@@ -71,10 +72,10 @@ describe('JoinDetachCommandHandler', () => {
             );
         });
 
-        it('returns error when CDP is not connected', async () => {
+        it('returns error when CDP connection fails', async () => {
             // Bind a workspace to this channel
             bindingRepo.upsert({ channelId: 'ch-1', workspacePath: 'my-project', guildId: 'guild-1' });
-            mockPool.getConnected.mockReturnValue(null);
+            mockPool.getOrConnect.mockRejectedValue(new Error('WebSocket connection refused'));
 
             const interaction = makeMockInteraction();
             const bridge = { pool: mockPool, lastActiveWorkspace: null } as any;
@@ -83,7 +84,7 @@ describe('JoinDetachCommandHandler', () => {
 
             expect(interaction.editReply).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    content: expect.stringContaining('CDP'),
+                    content: expect.stringContaining('Failed to connect'),
                 }),
             );
         });
@@ -91,7 +92,7 @@ describe('JoinDetachCommandHandler', () => {
         it('shows session picker when sessions are found', async () => {
             bindingRepo.upsert({ channelId: 'ch-1', workspacePath: 'my-project', guildId: 'guild-1' });
             const mockCdp = { isConnected: () => true } as any;
-            mockPool.getConnected.mockReturnValue(mockCdp);
+            mockPool.getOrConnect.mockResolvedValue(mockCdp);
 
             const sessions: SessionListItem[] = [
                 { title: 'Fix bug', isActive: true },
@@ -115,7 +116,7 @@ describe('JoinDetachCommandHandler', () => {
         it('returns message when no sessions found', async () => {
             bindingRepo.upsert({ channelId: 'ch-1', workspacePath: 'my-project', guildId: 'guild-1' });
             const mockCdp = { isConnected: () => true } as any;
-            mockPool.getConnected.mockReturnValue(mockCdp);
+            mockPool.getOrConnect.mockResolvedValue(mockCdp);
             mockService.listAllSessions.mockResolvedValue([]);
 
             const interaction = makeMockInteraction();
@@ -141,7 +142,7 @@ describe('JoinDetachCommandHandler', () => {
         it('activates selected session and updates binding', async () => {
             bindingRepo.upsert({ channelId: 'ch-1', workspacePath: 'my-project', guildId: 'guild-1' });
             const mockCdp = { isConnected: () => true } as any;
-            mockPool.getConnected.mockReturnValue(mockCdp);
+            mockPool.getOrConnect.mockResolvedValue(mockCdp);
             mockService.activateSessionByTitle.mockResolvedValue({ ok: true });
 
             const interaction = {
@@ -165,7 +166,7 @@ describe('JoinDetachCommandHandler', () => {
         it('shows error when session activation fails', async () => {
             bindingRepo.upsert({ channelId: 'ch-1', workspacePath: 'my-project', guildId: 'guild-1' });
             const mockCdp = { isConnected: () => true } as any;
-            mockPool.getConnected.mockReturnValue(mockCdp);
+            mockPool.getOrConnect.mockResolvedValue(mockCdp);
             mockService.activateSessionByTitle.mockResolvedValue({ ok: false, error: 'Title not found' });
 
             const interaction = {
