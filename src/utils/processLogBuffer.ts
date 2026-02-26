@@ -34,6 +34,8 @@ function pickEmoji(entry: string): string {
     if (/^thought for\b/.test(lower) || /^thinking\b/.test(lower)) return '🧠';
     if (/^initiating\b/.test(lower) || /^starting\b/.test(lower)) return '🚀';
     if (/^[a-z0-9._-]+\s*\/\s*[a-z0-9._-]+$/i.test(entry)) return '🛠️';
+    if (/^(?:analy[sz]ed|read|wrote|created|updated|deleted|built|compiled|installed|resolved|downloaded|connected|fetched)\b/i.test(entry)) return '📄';
+    if (/^(?:analy[sz]ing|reading|writing|running|searching|fetching|checking|scanning|creating|updating|deleting|building|compiling|deploying|parsing|resolving|downloading|uploading|connecting|installing|executing|testing|debugging|processing|loading)\b/i.test(entry)) return '🔍';
     if (/^title:\s/.test(lower) && /\surl:\s/.test(lower)) return '🔎';
     if (/^(json|javascript|typescript|python|bash|sh|html|css|xml|yaml|yml|toml|sql|graphql|markdown|text|plaintext|log)$/i.test(entry)) return '📦';
     return '•';

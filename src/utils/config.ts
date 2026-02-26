@@ -1,6 +1,8 @@
 import { ConfigLoader } from './configLoader';
 import type { LogLevel } from './logger';
 
+export type ExtractionMode = 'legacy' | 'structured';
+
 export interface AppConfig {
     discordToken: string;
     clientId: string;
@@ -9,6 +11,7 @@ export interface AppConfig {
     workspaceBaseDir: string;
     autoApproveFileEdits: boolean;
     logLevel: LogLevel;
+    extractionMode: ExtractionMode;
 }
 
 export type ResponseDeliveryMode = 'stream';

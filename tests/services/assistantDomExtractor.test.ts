@@ -128,6 +128,147 @@ describe('assistantDomExtractor', () => {
         expect(script).toContain('feedback');
     });
 
+    describe('Pass 2.5: broad activity scan captures non-selector-matched nodes', () => {
+        beforeEach(() => {
+            document.body.innerHTML = '';
+        });
+
+        it('captures activity text from leaf-ish elements outside content selectors', () => {
+            const panel = document.createElement('div');
+            panel.className = 'antigravity-agent-side-panel';
+
+            // Activity node that does NOT match any content selector
+            // (e.g. <div class="flex flex-row">Analyzed package.json#L1-75</div>)
+            const activityContainer = document.createElement('div');
+            activityContainer.className = 'flex flex-col space-y-2';
+            const activityNode = document.createElement('div');
+            activityNode.className = 'flex flex-row';
+            activityNode.textContent = 'Analyzed package.json#L1-75';
+            activityContainer.appendChild(activityNode);
+            panel.appendChild(activityContainer);
+
+            document.body.appendChild(panel);
+
+            const script = extractAssistantSegmentsPayloadScript();
+            const scriptEl = document.createElement('script');
+            scriptEl.textContent = `window.__pass25Payload = ${script};`;
+            document.body.appendChild(scriptEl);
+            const payload = (window as any).__pass25Payload;
+            const result = classifyAssistantSegments(payload);
+
+            expect(result.activityLines).toContain('Analyzed package.json#L1-75');
+        });
+
+        it('captures MCP tool output from non-selector-matched nodes', () => {
+            const panel = document.createElement('div');
+            panel.className = 'antigravity-agent-side-panel';
+
+            const toolNode = document.createElement('div');
+            toolNode.className = 'flex flex-row';
+            toolNode.textContent = 'jina-mcp-server / search_web';
+            panel.appendChild(toolNode);
+
+            document.body.appendChild(panel);
+
+            const script = extractAssistantSegmentsPayloadScript();
+            const scriptEl = document.createElement('script');
+            scriptEl.textContent = `window.__pass25McpPayload = ${script};`;
+            document.body.appendChild(scriptEl);
+            const payload = (window as any).__pass25McpPayload;
+            const result = classifyAssistantSegments(payload);
+
+            expect(result.activityLines).toContain('jina-mcp-server / search_web');
+        });
+
+        it('captures new activity verbs (fetching, creating, building, etc.)', () => {
+            const panel = document.createElement('div');
+            panel.className = 'antigravity-agent-side-panel';
+
+            const verbs = ['Fetching data from API', 'Creating new file', 'Building project', 'Connected to server'];
+            for (const verb of verbs) {
+                const node = document.createElement('div');
+                node.className = 'flex flex-row';
+                node.textContent = verb;
+                panel.appendChild(node);
+            }
+
+            document.body.appendChild(panel);
+
+            const script = extractAssistantSegmentsPayloadScript();
+            const scriptEl = document.createElement('script');
+            scriptEl.textContent = `window.__pass25VerbsPayload = ${script};`;
+            document.body.appendChild(scriptEl);
+            const payload = (window as any).__pass25VerbsPayload;
+            const result = classifyAssistantSegments(payload);
+
+            for (const verb of verbs) {
+                expect(result.activityLines).toContain(verb);
+            }
+        });
+
+        it('skips mode description inside role="dialog" container', () => {
+            const panel = document.createElement('div');
+            panel.className = 'antigravity-agent-side-panel';
+
+            // AG mode selector popup: role="dialog" container
+            const dialog = document.createElement('div');
+            dialog.setAttribute('role', 'dialog');
+            const modeOption = document.createElement('div');
+            modeOption.className = 'flex flex-col';
+            const modeName = document.createElement('div');
+            modeName.className = 'font-medium';
+            modeName.textContent = 'Planning';
+            const modeDesc = document.createElement('div');
+            modeDesc.className = 'text-xs opacity-50';
+            modeDesc.textContent =
+                'Agent can plan before executing tasks. Use for deep research, complex tasks, or collaborative work';
+            modeOption.appendChild(modeName);
+            modeOption.appendChild(modeDesc);
+            dialog.appendChild(modeOption);
+            panel.appendChild(dialog);
+
+            document.body.appendChild(panel);
+
+            const script = extractAssistantSegmentsPayloadScript();
+            const scriptEl = document.createElement('script');
+            scriptEl.textContent = `window.__pass25DialogPayload = ${script};`;
+            document.body.appendChild(scriptEl);
+            const payload = (window as any).__pass25DialogPayload;
+            const result = classifyAssistantSegments(payload);
+
+            // Neither "Planning" nor the description should appear in activity
+            expect(result.activityLines).toEqual([]);
+        });
+
+        it('skips container elements with more than 3 children', () => {
+            const panel = document.createElement('div');
+            panel.className = 'antigravity-agent-side-panel';
+
+            // Container with 4+ children should be skipped
+            const container = document.createElement('div');
+            container.className = 'flex flex-col';
+            for (let i = 0; i < 5; i++) {
+                const child = document.createElement('span');
+                child.textContent = `Analyzed file${i}.ts`;
+                container.appendChild(child);
+            }
+            panel.appendChild(container);
+
+            document.body.appendChild(panel);
+
+            const script = extractAssistantSegmentsPayloadScript();
+            const scriptEl = document.createElement('script');
+            scriptEl.textContent = `window.__pass25ContainerPayload = ${script};`;
+            document.body.appendChild(scriptEl);
+            const payload = (window as any).__pass25ContainerPayload;
+            const result = classifyAssistantSegments(payload);
+
+            // The container div itself should NOT appear, but individual leaf children should
+            const containerText = Array.from({ length: 5 }, (_, i) => `Analyzed file${i}.ts`).join('');
+            expect(result.activityLines).not.toContain(containerText);
+        });
+    });
+
     describe('Task 1 & Task 2 & Task 3: DOM extraction and Markdown structure/file reference restoration', () => {
         beforeEach(() => {
             // Minimal mock for environments without JSDOM; use JSDOM DOM if available

@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as dotenv from 'dotenv';
-import type { AppConfig } from './config';
+import type { AppConfig, ExtractionMode } from './config';
 import type { LogLevel } from './logger';
 
 // Load .env at module init time (same as the original config.ts behavior).
@@ -25,6 +25,7 @@ export interface PersistedConfig {
     workspaceBaseDir?: string;
     autoApproveFileEdits?: boolean;
     logLevel?: LogLevel;
+    extractionMode?: 'legacy' | 'structured';
 }
 
 // ---------------------------------------------------------------------------
@@ -93,6 +94,11 @@ function mergeConfig(persisted: PersistedConfig): AppConfig {
         persisted.logLevel,
     );
 
+    const extractionMode = resolveExtractionMode(
+        process.env.EXTRACTION_MODE,
+        persisted.extractionMode,
+    );
+
     return {
         discordToken: token,
         clientId,
@@ -101,6 +107,7 @@ function mergeConfig(persisted: PersistedConfig): AppConfig {
         workspaceBaseDir,
         autoApproveFileEdits,
         logLevel,
+        extractionMode,
     };
 }
 
@@ -129,6 +136,15 @@ function resolveLogLevel(
         return raw as LogLevel;
     }
     return 'info';
+}
+
+function resolveExtractionMode(
+    envValue: string | undefined,
+    persistedValue: 'legacy' | 'structured' | undefined,
+): ExtractionMode {
+    const raw = envValue ?? persistedValue;
+    if (raw === 'legacy') return 'legacy';
+    return 'structured';
 }
 
 function resolveBoolean(

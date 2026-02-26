@@ -19,6 +19,48 @@ describe('ProcessLogBuffer', () => {
         expect(result).toContain('🛠️ jina-mcp-server / search_web');
     });
 
+    it('uses 📄 emoji for past-tense file operations', () => {
+        const buffer = new ProcessLogBuffer({ maxChars: 1000 });
+
+        const result = buffer.append(
+            [
+                'Analyzed package.json#L1-75',
+                '',
+                'Read src/index.ts',
+                '',
+                'Created new-file.ts',
+                '',
+                'Built project successfully',
+            ].join('\n'),
+        );
+
+        expect(result).toContain('📄 Analyzed package.json#L1-75');
+        expect(result).toContain('📄 Read src/index.ts');
+        expect(result).toContain('📄 Created new-file.ts');
+        expect(result).toContain('📄 Built project successfully');
+    });
+
+    it('uses 🔍 emoji for present-tense activity operations', () => {
+        const buffer = new ProcessLogBuffer({ maxChars: 1000 });
+
+        const result = buffer.append(
+            [
+                'Fetching data from API',
+                '',
+                'Scanning directory for files',
+                '',
+                'Building project',
+                '',
+                'Creating test fixtures',
+            ].join('\n'),
+        );
+
+        expect(result).toContain('🔍 Fetching data from API');
+        expect(result).toContain('🔍 Scanning directory for files');
+        expect(result).toContain('🔍 Building project');
+        expect(result).toContain('🔍 Creating test fixtures');
+    });
+
     it('drops oldest entries first when exceeding maxChars', () => {
         const buffer = new ProcessLogBuffer({ maxChars: 45, maxEntries: 10 });
 
