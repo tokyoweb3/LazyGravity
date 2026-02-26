@@ -1192,4 +1192,60 @@ describe('ResponseMonitor - AI response extraction and progress monitoring (Step
         expect(onComplete).not.toHaveBeenCalled();
         expect(monitor.getPhase()).toBe('thinking');
     });
+
+    describe('startPassive()', () => {
+        it('starts with generationStarted=true and detects text changes immediately', async () => {
+            const onProgress = jest.fn();
+            const onComplete = jest.fn();
+
+            let callIndex = 0;
+            mockCdpService.call.mockImplementation(async () => {
+                callIndex++;
+                // baseline capture during start
+                if (callIndex === 1) return { result: { value: 'Existing text' } }; // baseline text
+                if (callIndex === 2) return { result: { value: [] } }; // baseline process logs
+
+                // poll cycle 1: stop button present, no quota, new text
+                if (callIndex === 3) return { result: { value: { isGenerating: true } } };  // stop button
+                if (callIndex === 4) return { result: { value: false } };  // quota
+                // structured or legacy text
+                if (callIndex === 5) return { result: { value: 'Updated response text' } };
+                // process logs
+                if (callIndex === 6) return { result: { value: [] } };
+
+                // poll cycle 2: stop button gone
+                if (callIndex === 7) return { result: { value: { isGenerating: false } } };
+                if (callIndex === 8) return { result: { value: false } };
+                if (callIndex === 9) return { result: { value: 'Updated response text' } };
+                if (callIndex === 10) return { result: { value: [] } };
+
+                return { result: { value: null } };
+            });
+            mockCdpService.getPrimaryContextId = jest.fn().mockReturnValue(42);
+
+            monitor = new ResponseMonitor({
+                cdpService: mockCdpService,
+                pollIntervalMs: 100,
+                stopGoneConfirmCount: 1,
+                extractionMode: 'legacy',
+                onProgress,
+                onComplete,
+            });
+
+            await monitor.startPassive();
+
+            // Should already be in 'generating' phase (not 'waiting')
+            expect(monitor.getPhase()).not.toBe('waiting');
+
+            // Advance to first poll
+            await jest.advanceTimersByTimeAsync(100);
+
+            expect(onProgress).toHaveBeenCalledWith('Updated response text');
+
+            // Advance to second poll — stop gone
+            await jest.advanceTimersByTimeAsync(100);
+
+            expect(onComplete).toHaveBeenCalledWith('Updated response text');
+        });
+    });
 });

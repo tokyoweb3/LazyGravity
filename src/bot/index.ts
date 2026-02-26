@@ -35,6 +35,8 @@ import {
 } from '../commands/cleanupCommandHandler';
 import { ChannelManager } from '../services/channelManager';
 import { TitleGeneratorService } from '../services/titleGeneratorService';
+import { JoinDetachCommandHandler } from '../commands/joinDetachCommandHandler';
+import { isSessionSelectId } from '../ui/sessionPickerUi';
 
 // CDP integration services
 import { CdpService } from '../services/cdpService';
@@ -806,6 +808,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
     // Initialize command handlers
     const wsHandler = new WorkspaceCommandHandler(workspaceBindingRepo, chatSessionRepo, workspaceService, channelManager);
     const chatHandler = new ChatCommandHandler(chatSessionService, chatSessionRepo, workspaceBindingRepo, channelManager, workspaceService, bridge.pool);
+    const joinDetachHandler = new JoinDetachCommandHandler(chatSessionService, chatSessionRepo, workspaceBindingRepo, channelManager, bridge.pool);
     const cleanupHandler = new CleanupCommandHandler(chatSessionRepo, workspaceBindingRepo);
 
     const slashCommandHandler = new SlashCommandHandler(templateRepo);
@@ -890,6 +893,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         parseApprovalCustomId,
         parseErrorPopupCustomId,
         parsePlanningCustomId,
+        joinDetachHandler,
         handleSlashInteraction: async (
             interaction,
             handler,
@@ -914,6 +918,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             clientArg,
             promptDispatcher,
             templateRepo,
+            joinDetachHandler,
         ),
         handleTemplateUse: async (interaction, templateId) => {
             const template = templateRepo.findById(templateId);
@@ -1062,6 +1067,7 @@ async function handleSlashInteraction(
     _client: Client,
     promptDispatcher: PromptDispatcher,
     templateRepo: TemplateRepository,
+    joinDetachHandler?: JoinDetachCommandHandler,
 ): Promise<void> {
     const commandName = interaction.commandName;
 
@@ -1076,6 +1082,12 @@ async function handleSlashInteraction(
                         name: '💬 Chat', value: [
                             '`/new` — Start a new chat session',
                             '`/chat` — Show current session info + list',
+                        ].join('\n')
+                    },
+                    {
+                        name: '🔗 Session', value: [
+                            '`/join` — Join an existing Antigravity session',
+                            '`/detach` — Detach from session monitoring',
                         ].join('\n')
                     },
                     {
@@ -1293,6 +1305,24 @@ async function handleSlashInteraction(
 
         case 'chat': {
             await chatHandler.handleChat(interaction);
+            break;
+        }
+
+        case 'join': {
+            if (joinDetachHandler) {
+                await joinDetachHandler.handleJoin(interaction, bridge);
+            } else {
+                await interaction.editReply({ content: t('⚠️ Join handler not available.') });
+            }
+            break;
+        }
+
+        case 'detach': {
+            if (joinDetachHandler) {
+                await joinDetachHandler.handleDetach(interaction);
+            } else {
+                await interaction.editReply({ content: t('⚠️ Detach handler not available.') });
+            }
             break;
         }
 

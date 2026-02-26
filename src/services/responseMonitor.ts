@@ -511,18 +511,32 @@ export class ResponseMonitor {
 
     /** Start monitoring */
     async start(): Promise<void> {
+        return this.initMonitoring(false);
+    }
+
+    /**
+     * Start monitoring in passive mode.
+     * Same as start() but with generationStarted=true, so text changes
+     * are detected immediately without waiting for the stop button to appear.
+     * Used when joining an existing session that may already be generating.
+     */
+    async startPassive(): Promise<void> {
+        return this.initMonitoring(true);
+    }
+
+    /** Internal initialization shared between start() and startPassive() */
+    private async initMonitoring(passive: boolean): Promise<void> {
         if (this.isRunning) return;
         this.isRunning = true;
         this.lastText = null;
         this.baselineText = null;
-        this.generationStarted = false;
-        this.currentPhase = 'waiting';
+        this.generationStarted = passive;
+        this.currentPhase = passive ? 'generating' : 'waiting';
         this.stopGoneCount = 0;
         this.quotaDetected = false;
         this.seenProcessLogKeys = new Set();
 
-        // Always fire callback on start, even though phase is already 'waiting'
-        this.onPhaseChange?.('waiting', null);
+        this.onPhaseChange?.(this.currentPhase, null);
 
         // Capture baseline text
         try {
@@ -569,11 +583,11 @@ export class ResponseMonitor {
             }, this.maxDurationMs);
         }
 
+        const mode = passive ? 'Passive monitoring' : 'Monitoring';
         logger.debug(
-            `── Monitoring started | poll=${this.pollIntervalMs}ms timeout=${this.maxDurationMs / 1000}s baseline=${this.baselineText?.length ?? 0}ch`,
+            `── ${mode} started | poll=${this.pollIntervalMs}ms timeout=${this.maxDurationMs / 1000}s baseline=${this.baselineText?.length ?? 0}ch`,
         );
 
-        // Start polling
         this.schedulePoll();
     }
 

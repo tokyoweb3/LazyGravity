@@ -132,7 +132,7 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                 return;
             }
 
-            const slashOnlyCommands = ['help', 'stop', 'model', 'mode', 'project', 'chat', 'new', 'cleanup'];
+            const slashOnlyCommands = ['help', 'stop', 'model', 'mode', 'project', 'chat', 'new', 'cleanup', 'join', 'detach'];
             if (slashOnlyCommands.includes(parsed.commandName)) {
                 await message.reply({
                     content: `💡 Please use \`/${parsed.commandName}\` as a slash command.\nType \`/${parsed.commandName}\` in the Discord input field to see suggestions.`,
@@ -223,6 +223,12 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                         const updatedSession = deps.chatSessionRepo.findByChannelId(message.channelId);
                         if (updatedSession?.displayName) {
                             registerApprovalSessionChannel(deps.bridge, dirName, updatedSession.displayName, message.channel);
+                        }
+
+                        // Register echo hash so UserMessageDetector skips this message
+                        const userMsgDetector = deps.bridge.pool.getUserMessageDetector?.(dirName);
+                        if (userMsgDetector) {
+                            userMsgDetector.addEchoHash(promptText);
                         }
 
                         await deps.sendPromptToAntigravity(deps.bridge, message, promptText, cdp, deps.modeService, deps.modelService, inboundImages, {

@@ -17,6 +17,7 @@ import { CdpService } from './cdpService';
 import { ErrorPopupDetector, ErrorPopupInfo } from './errorPopupDetector';
 import { PlanningDetector, PlanningInfo } from './planningDetector';
 import { QuotaService } from './quotaService';
+import { UserMessageDetector, UserMessageInfo } from './userMessageDetector';
 
 /** CDP connection state management */
 export interface CdpBridge {
@@ -581,4 +582,30 @@ export function ensureErrorPopupDetector(
     detector.start();
     bridge.pool.registerErrorPopupDetector(workspaceDirName, detector);
     logger.debug(`[ErrorPopupDetector:${workspaceDirName}] Started error popup detection`);
+}
+
+/**
+ * Helper to start a user message detector for a workspace.
+ * Detects messages typed directly in the Antigravity UI (e.g., from a PC)
+ * and mirrors them to a Discord channel.
+ * Does nothing if a detector for the same workspace is already running.
+ */
+export function ensureUserMessageDetector(
+    bridge: CdpBridge,
+    cdp: CdpService,
+    workspaceDirName: string,
+    onUserMessage: (info: UserMessageInfo) => void,
+): void {
+    const existing = bridge.pool.getUserMessageDetector(workspaceDirName);
+    if (existing && existing.isActive()) return;
+
+    const detector = new UserMessageDetector({
+        cdpService: cdp,
+        pollIntervalMs: 2000,
+        onUserMessage,
+    });
+
+    detector.start();
+    bridge.pool.registerUserMessageDetector(workspaceDirName, detector);
+    logger.debug(`[UserMessageDetector:${workspaceDirName}] Started user message detection`);
 }

@@ -245,6 +245,11 @@ describe('ChatSessionService', () => {
             expect(directAttemptCount).toBe(3);
         });
 
+        it('returns ok:false for empty title', async () => {
+            const result = await service.activateSessionByTitle(mockCdpService, '');
+            expect(result.ok).toBe(false);
+            expect(result.error).toContain('empty');
+        });
         it('returns direct and past errors when both activation paths fail', async () => {
             mockCdpService.call.mockImplementation(async (_method: string, params: any) => {
                 const expression = String(params?.expression || '');
@@ -270,6 +275,63 @@ describe('ChatSessionService', () => {
             expect(result.error).toContain('direct:');
             expect(result.error).toContain('past: past miss');
             expect(result.error).toContain('after');
+        });
+    });
+
+    describe('listAllSessions()', () => {
+        it('returns multiple sessions from the side panel', async () => {
+            mockCdpService.call.mockResolvedValue({
+                result: {
+                    value: [
+                        { title: 'Fix login bug', isActive: true },
+                        { title: 'Refactor auth', isActive: false },
+                    ],
+                },
+            });
+
+            const sessions = await service.listAllSessions(mockCdpService);
+
+            expect(sessions).toHaveLength(2);
+            expect(sessions[0]).toEqual({ title: 'Fix login bug', isActive: true });
+            expect(sessions[1]).toEqual({ title: 'Refactor auth', isActive: false });
+        });
+
+        it('returns empty array when no sessions found', async () => {
+            mockCdpService.call.mockResolvedValue({
+                result: { value: [] },
+            });
+
+            const sessions = await service.listAllSessions(mockCdpService);
+
+            expect(sessions).toEqual([]);
+        });
+
+        it('returns empty array when CDP call throws', async () => {
+            mockCdpService.call.mockRejectedValue(new Error('WebSocket disconnected'));
+
+            const sessions = await service.listAllSessions(mockCdpService);
+
+            expect(sessions).toEqual([]);
+        });
+
+        it('returns empty array when result value is null', async () => {
+            mockCdpService.call.mockResolvedValue({
+                result: { value: null },
+            });
+
+            const sessions = await service.listAllSessions(mockCdpService);
+
+            expect(sessions).toEqual([]);
+        });
+
+        it('returns empty array when result value is not an array', async () => {
+            mockCdpService.call.mockResolvedValue({
+                result: { value: 'unexpected string' },
+            });
+
+            const sessions = await service.listAllSessions(mockCdpService);
+
+            expect(sessions).toEqual([]);
         });
     });
 });

@@ -1,5 +1,13 @@
 import { CdpService } from './cdpService';
 
+/** Session list item from the side panel */
+export interface SessionListItem {
+    /** Conversation title */
+    title: string;
+    /** Whether this is the currently active session */
+    isActive: boolean;
+}
+
 /** Chat session information */
 export interface ChatSessionInfo {
     /** Current chat title (if available) */
@@ -37,6 +45,46 @@ const GET_CHAT_TITLE_SCRIPT = `(() => {
     // "Agent" is the default empty chat title
     const hasActiveChat = title.length > 0 && title !== 'Agent';
     return { title: title || '(Untitled)', hasActiveChat };
+})()`;
+
+/**
+ * Script to list all conversation items in the side panel.
+ * Returns an array of { title, isActive } items.
+ */
+const LIST_ALL_SESSIONS_SCRIPT = `(() => {
+    const panel = document.querySelector('.antigravity-agent-side-panel');
+    if (!panel) return [];
+
+    // Get current active title for isActive comparison
+    const header = panel.querySelector('div[class*="border-b"]');
+    const titleEl = header ? header.querySelector('div[class*="text-ellipsis"]') : null;
+    const currentTitle = titleEl ? (titleEl.textContent || '').trim() : '';
+
+    // Find conversation items in the side panel
+    const normalize = (text) => (text || '').trim();
+    const items = [];
+    const seen = new Set();
+
+    // Strategy 1: Look for conversation list items with text-ellipsis titles
+    const conversationItems = panel.querySelectorAll('button, [role="button"], a, li, [data-testid*="conversation"]');
+    for (const item of conversationItems) {
+        if (!item.offsetParent) continue;
+        // Skip the header area
+        if (header && header.contains(item)) continue;
+        const titleNode = item.querySelector('div[class*="text-ellipsis"], span[class*="text-ellipsis"]') || item;
+        const title = normalize(titleNode.textContent || '');
+        if (!title || title === 'Agent' || title.length < 2 || title.length > 200) continue;
+        // Skip buttons that look like actions (New Chat, Past Conversations, etc.)
+        if (/^(new|past|history|settings|close|menu|more|options)\\b/i.test(title)) continue;
+        if (seen.has(title)) continue;
+        seen.add(title);
+        items.push({
+            title,
+            isActive: title === currentTitle,
+        });
+    }
+
+    return items;
 })()`;
 
 /**
@@ -297,6 +345,33 @@ function buildActivateViaPastConversationsScript(title: string): string {
 export class ChatSessionService {
     private static readonly ACTIVATE_SESSION_MAX_WAIT_MS = 30000;
     private static readonly ACTIVATE_SESSION_RETRY_INTERVAL_MS = 800;
+    /**
+     * List all visible conversation sessions in the side panel.
+     * @param cdpService CdpService instance to use
+     * @returns Array of session list items (empty array on failure)
+     */
+    async listAllSessions(cdpService: CdpService): Promise<SessionListItem[]> {
+        try {
+            const contexts = cdpService.getContexts();
+            for (const ctx of contexts) {
+                try {
+                    const result = await cdpService.call('Runtime.evaluate', {
+                        expression: LIST_ALL_SESSIONS_SCRIPT,
+                        returnByValue: true,
+                        contextId: ctx.id,
+                    });
+                    const value = result?.result?.value;
+                    if (Array.isArray(value)) {
+                        return value;
+                    }
+                } catch (_) { /* try next context */ }
+            }
+            return [];
+        } catch (_) {
+            return [];
+        }
+    }
+
     /**
      * Start a new chat session in the Antigravity UI.
      *

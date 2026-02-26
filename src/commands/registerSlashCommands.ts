@@ -140,6 +140,16 @@ const helpCommand = new SlashCommandBuilder()
     .setName('help')
     .setDescription(t('Display list of available commands'));
 
+/** /join command definition */
+const joinCommand = new SlashCommandBuilder()
+    .setName('join')
+    .setDescription(t('Join an existing Antigravity session from the side panel'));
+
+/** /detach command definition */
+const detachCommand = new SlashCommandBuilder()
+    .setName('detach')
+    .setDescription(t('Detach from session monitoring (Antigravity continues running)'));
+
 /** /ping command definition */
 const pingCommand = new SlashCommandBuilder()
     .setName('ping')
@@ -159,6 +169,8 @@ export const slashCommands = [
     newCommand,
     chatCommand,
     cleanupCommand,
+    joinCommand,
+    detachCommand,
     pingCommand,
 ];
 

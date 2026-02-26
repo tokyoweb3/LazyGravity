@@ -33,6 +33,8 @@ import { CdpService } from '../services/cdpService';
 import { MODE_DISPLAY_NAMES, ModeService } from '../services/modeService';
 import { ModelService } from '../services/modelService';
 import { AutoAcceptService } from '../services/autoAcceptService';
+import { JoinDetachCommandHandler } from '../commands/joinDetachCommandHandler';
+import { isSessionSelectId } from '../ui/sessionPickerUi';
 
 export interface InteractionCreateHandlerDeps {
     config: { allowedUserIds: string[] };
@@ -71,6 +73,7 @@ export interface InteractionCreateHandlerDeps {
         client: any,
     ) => Promise<void>;
     handleTemplateUse?: (interaction: ButtonInteraction, templateId: number) => Promise<void>;
+    joinDetachHandler?: JoinDetachCommandHandler;
 }
 
 export function createInteractionCreateHandler(deps: InteractionCreateHandlerDeps) {
@@ -588,6 +591,33 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                 } catch (e) {
                     logger.error('Failed to send error message:', e);
                 }
+            }
+            return;
+        }
+
+        if (interaction.isStringSelectMenu() && isSessionSelectId(interaction.customId)) {
+            if (!deps.config.allowedUserIds.includes(interaction.user.id)) {
+                await interaction.reply({ content: t('You do not have permission.'), flags: MessageFlags.Ephemeral }).catch(logger.error);
+                return;
+            }
+
+            try {
+                await interaction.deferUpdate();
+            } catch (deferError: any) {
+                if (deferError?.code === 10062 || deferError?.code === 40060) {
+                    logger.warn('[SessionSelect] deferUpdate expired. Skipping.');
+                    return;
+                }
+                logger.error('[SessionSelect] deferUpdate failed:', deferError);
+                return;
+            }
+
+            try {
+                if (deps.joinDetachHandler) {
+                    await deps.joinDetachHandler.handleJoinSelect(interaction, deps.bridge);
+                }
+            } catch (error) {
+                logger.error('Session selection error:', error);
             }
             return;
         }

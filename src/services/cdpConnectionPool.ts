@@ -3,6 +3,7 @@ import { CdpService, CdpServiceOptions } from './cdpService';
 import { ApprovalDetector } from './approvalDetector';
 import { ErrorPopupDetector } from './errorPopupDetector';
 import { PlanningDetector } from './planningDetector';
+import { UserMessageDetector } from './userMessageDetector';
 
 /**
  * Pool that manages independent CdpService instances per workspace.
@@ -16,6 +17,7 @@ export class CdpConnectionPool {
     private readonly approvalDetectors = new Map<string, ApprovalDetector>();
     private readonly errorPopupDetectors = new Map<string, ErrorPopupDetector>();
     private readonly planningDetectors = new Map<string, PlanningDetector>();
+    private readonly userMessageDetectors = new Map<string, UserMessageDetector>();
     private readonly connectingPromises = new Map<string, Promise<CdpService>>();
     private readonly cdpOptions: CdpServiceOptions;
 
@@ -101,6 +103,12 @@ export class CdpConnectionPool {
             planningDetector.stop();
             this.planningDetectors.delete(workspaceDirName);
         }
+
+        const userMsgDetector = this.userMessageDetectors.get(workspaceDirName);
+        if (userMsgDetector) {
+            userMsgDetector.stop();
+            this.userMessageDetectors.delete(workspaceDirName);
+        }
     }
 
     /**
@@ -170,6 +178,24 @@ export class CdpConnectionPool {
     }
 
     /**
+     * Register a user message detector for a workspace.
+     */
+    registerUserMessageDetector(workspaceDirName: string, detector: UserMessageDetector): void {
+        const existing = this.userMessageDetectors.get(workspaceDirName);
+        if (existing && existing.isActive()) {
+            existing.stop();
+        }
+        this.userMessageDetectors.set(workspaceDirName, detector);
+    }
+
+    /**
+     * Get the user message detector for a workspace.
+     */
+    getUserMessageDetector(workspaceDirName: string): UserMessageDetector | undefined {
+        return this.userMessageDetectors.get(workspaceDirName);
+    }
+
+    /**
      * Return a list of workspace names with active connections.
      */
     getActiveWorkspaceNames(): string[] {
@@ -226,6 +252,11 @@ export class CdpConnectionPool {
             if (planDetector) {
                 planDetector.stop();
                 this.planningDetectors.delete(dirName);
+            }
+            const userMsgDetector = this.userMessageDetectors.get(dirName);
+            if (userMsgDetector) {
+                userMsgDetector.stop();
+                this.userMessageDetectors.delete(dirName);
             }
         });
 
