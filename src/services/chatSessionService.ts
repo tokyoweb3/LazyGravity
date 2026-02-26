@@ -48,43 +48,171 @@ const GET_CHAT_TITLE_SCRIPT = `(() => {
 })()`;
 
 /**
- * Script to list all conversation items in the side panel.
- * Returns an array of { title, isActive } items.
+ * Script to list sessions via the Past Conversations panel.
+ *
+ * Flow:
+ *   1. Open Past Conversations panel (click button / icon / menu)
+ *   2. Wait for the panel to render
+ *   3. Scrape visible session items (Current + Recent sections)
+ *   4. If a "Show N more..." link exists and we have fewer than TARGET items,
+ *      click it once to load more
+ *   5. Re-scrape and collect up to TARGET items
+ *   6. Close the panel (press Escape)
+ *   7. Return the session list
+ *
+ * Returns: { sessions: SessionListItem[], error?: string }
  */
-const LIST_ALL_SESSIONS_SCRIPT = `(() => {
-    const panel = document.querySelector('.antigravity-agent-side-panel');
-    if (!panel) return [];
+const LIST_SESSIONS_VIA_PAST_CONVERSATIONS_SCRIPT = `(async () => {
+    const TARGET = 10;
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
-    // Get current active title for isActive comparison
-    const header = panel.querySelector('div[class*="border-b"]');
-    const titleEl = header ? header.querySelector('div[class*="text-ellipsis"]') : null;
-    const currentTitle = titleEl ? (titleEl.textContent || '').trim() : '';
-
-    // Find conversation items in the side panel
+    const isVisible = (el) => !!el && el instanceof HTMLElement && el.offsetParent !== null;
+    const asArray = (nodeList) => Array.from(nodeList || []);
     const normalize = (text) => (text || '').trim();
-    const items = [];
-    const seen = new Set();
+    const getLabelText = (el) => {
+        if (!el || !(el instanceof Element)) return '';
+        return [
+            el.textContent || '',
+            el.getAttribute('aria-label') || '',
+            el.getAttribute('title') || '',
+            el.getAttribute('data-tooltip-content') || '',
+        ].filter(Boolean).join(' ');
+    };
+    const getClickable = (el) => {
+        if (!el || !(el instanceof Element)) return null;
+        const clickable = el.closest('button, [role="button"], a, li, div[class*="cursor-pointer"]');
+        return clickable instanceof HTMLElement ? clickable : (el instanceof HTMLElement ? el : null);
+    };
+    const pickBest = (elements, patterns) => {
+        const matched = [];
+        for (const el of elements) {
+            if (!isVisible(el)) continue;
+            const text = normalize(getLabelText(el)).toLowerCase();
+            if (!text) continue;
+            for (const pattern of patterns) {
+                const p = (pattern || '').toLowerCase().trim();
+                if (text === p || text.includes(p)) {
+                    matched.push({ el, score: Math.abs(text.length - p.length) });
+                    break;
+                }
+            }
+        }
+        if (matched.length === 0) return null;
+        matched.sort((a, b) => a.score - b.score);
+        return matched[0].el;
+    };
+    const clickByPatterns = (patterns) => {
+        const nodes = asArray(document.querySelectorAll('button, [role="button"], a, li, div, span'));
+        const target = pickBest(nodes, patterns);
+        const clickable = getClickable(target);
+        if (!clickable) return false;
+        clickable.click();
+        return true;
+    };
+    const clickIconHistoryButton = () => {
+        const icons = asArray(document.querySelectorAll('svg, i, span, div'));
+        const patterns = ['history', 'clock', 'conversation', 'past'];
+        for (const icon of icons) {
+            const descriptor = [
+                icon.getAttribute?.('class') || '',
+                icon.getAttribute?.('data-testid') || '',
+                icon.getAttribute?.('data-icon') || '',
+                icon.getAttribute?.('aria-label') || '',
+                icon.getAttribute?.('title') || '',
+                icon.getAttribute?.('data-tooltip-id') || '',
+            ].join(' ').toLowerCase();
+            if (!descriptor) continue;
+            if (!patterns.some((p) => descriptor.includes(p))) continue;
+            const clickable = getClickable(icon);
+            if (clickable && isVisible(clickable)) {
+                clickable.click();
+                return true;
+            }
+        }
+        return false;
+    };
+    const openMenuThenClickPast = async () => {
+        const nodes = asArray(document.querySelectorAll('button, [role="button"]'));
+        const target = pickBest(nodes, ['more', 'options', 'menu', 'actions', '...', 'ellipsis']);
+        const clickable = getClickable(target);
+        if (!clickable) return false;
+        clickable.click();
+        await wait(180);
+        return clickByPatterns([
+            'past conversations', 'past conversation', 'conversation history',
+            'past chats', 'chat history',
+        ]);
+    };
 
-    // Strategy 1: Look for conversation list items with text-ellipsis titles
-    const conversationItems = panel.querySelectorAll('button, [role="button"], a, li, [data-testid*="conversation"]');
-    for (const item of conversationItems) {
-        if (!item.offsetParent) continue;
-        // Skip the header area
-        if (header && header.contains(item)) continue;
-        const titleNode = item.querySelector('div[class*="text-ellipsis"], span[class*="text-ellipsis"]') || item;
-        const title = normalize(titleNode.textContent || '');
-        if (!title || title === 'Agent' || title.length < 2 || title.length > 200) continue;
-        // Skip buttons that look like actions (New Chat, Past Conversations, etc.)
-        if (/^(new|past|history|settings|close|menu|more|options)\\b/i.test(title)) continue;
-        if (seen.has(title)) continue;
-        seen.add(title);
-        items.push({
-            title,
-            isActive: title === currentTitle,
+    // ---- Step 1: Open Past Conversations panel ----
+    let opened = clickByPatterns([
+        'past conversations', 'past conversation', 'conversation history',
+        'past chats', 'chat history',
+    ]);
+    if (!opened) opened = clickIconHistoryButton();
+    if (!opened) opened = await openMenuThenClickPast();
+    if (!opened) return { sessions: [], error: 'Past Conversations button not found' };
+
+    await wait(400);
+
+    // ---- Step 2: Scrape sessions from the panel ----
+    const scrapePanel = () => {
+        const items = [];
+        const seen = new Set();
+        // Find the scrollable conversation list container
+        const containers = asArray(document.querySelectorAll('div[class*="overflow-auto"], div[class*="overflow-y-scroll"]'));
+        const container = containers.find((c) => isVisible(c) && c.querySelectorAll('div[class*="cursor-pointer"]').length > 0) || document;
+        // Each session row is a div with cursor-pointer
+        const rows = asArray(container.querySelectorAll('div[class*="cursor-pointer"]'));
+        for (const row of rows) {
+            if (!isVisible(row)) continue;
+            // Find the session title — nested span within the row
+            const spans = asArray(row.querySelectorAll('span.text-sm span, span.text-sm'));
+            let title = '';
+            for (const span of spans) {
+                const t = normalize(span.textContent || '');
+                // Skip timestamp labels like "1 hr ago"
+                if (/^\\d+\\s+(min|hr|hour|day|sec|week|month|year)s?\\s+ago$/i.test(t)) continue;
+                // Skip very short or action-like labels
+                if (t.length < 2 || t.length > 200) continue;
+                if (/^(show\\s+\\d+\\s+more|new|past|history|settings|close|menu)\\b/i.test(t)) continue;
+                title = t;
+                break;
+            }
+            if (!title || seen.has(title)) continue;
+            seen.add(title);
+            // Detect if this is the active/current session (has focusBackground class)
+            const isActive = /focusBackground/i.test(row.className || '');
+            items.push({ title, isActive });
+        }
+        return items;
+    };
+
+    let sessions = scrapePanel();
+
+    // ---- Step 3: Click "Show N more..." if we need more sessions ----
+    if (sessions.length < TARGET) {
+        const showMoreNodes = asArray(document.querySelectorAll('div, span'));
+        const showMoreEl = showMoreNodes.find((el) => {
+            if (!isVisible(el)) return false;
+            const text = normalize(el.textContent || '').toLowerCase();
+            return /^show\\s+\\d+\\s+more/i.test(text);
         });
+        if (showMoreEl) {
+            const clickable = getClickable(showMoreEl) || showMoreEl;
+            if (clickable instanceof HTMLElement) {
+                clickable.click();
+                await wait(400);
+                sessions = scrapePanel();
+            }
+        }
     }
 
-    return items;
+    // ---- Step 4: Close the panel (press Escape) ----
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape', bubbles: true }));
+
+    // Limit to TARGET
+    return { sessions: sessions.slice(0, TARGET) };
 })()`;
 
 /**
@@ -346,7 +474,11 @@ export class ChatSessionService {
     private static readonly ACTIVATE_SESSION_MAX_WAIT_MS = 30000;
     private static readonly ACTIVATE_SESSION_RETRY_INTERVAL_MS = 800;
     /**
-     * List all visible conversation sessions in the side panel.
+     * List recent sessions by opening the Past Conversations panel.
+     *
+     * Opens the panel, scrapes up to 10 sessions (clicking "Show N more..."
+     * once if needed), then closes the panel with Escape.
+     *
      * @param cdpService CdpService instance to use
      * @returns Array of session list items (empty array on failure)
      */
@@ -356,13 +488,14 @@ export class ChatSessionService {
             for (const ctx of contexts) {
                 try {
                     const result = await cdpService.call('Runtime.evaluate', {
-                        expression: LIST_ALL_SESSIONS_SCRIPT,
+                        expression: LIST_SESSIONS_VIA_PAST_CONVERSATIONS_SCRIPT,
                         returnByValue: true,
+                        awaitPromise: true,
                         contextId: ctx.id,
                     });
                     const value = result?.result?.value;
-                    if (Array.isArray(value)) {
-                        return value;
+                    if (value && Array.isArray(value.sessions)) {
+                        return value.sessions;
                     }
                 } catch (_) { /* try next context */ }
             }

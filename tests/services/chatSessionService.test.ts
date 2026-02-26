@@ -279,13 +279,15 @@ describe('ChatSessionService', () => {
     });
 
     describe('listAllSessions()', () => {
-        it('returns multiple sessions from the side panel', async () => {
+        it('returns sessions from Past Conversations panel', async () => {
             mockCdpService.call.mockResolvedValue({
                 result: {
-                    value: [
-                        { title: 'Fix login bug', isActive: true },
-                        { title: 'Refactor auth', isActive: false },
-                    ],
+                    value: {
+                        sessions: [
+                            { title: 'Fix login bug', isActive: true },
+                            { title: 'Refactor auth', isActive: false },
+                        ],
+                    },
                 },
             });
 
@@ -294,11 +296,15 @@ describe('ChatSessionService', () => {
             expect(sessions).toHaveLength(2);
             expect(sessions[0]).toEqual({ title: 'Fix login bug', isActive: true });
             expect(sessions[1]).toEqual({ title: 'Refactor auth', isActive: false });
+            expect(mockCdpService.call).toHaveBeenCalledWith(
+                'Runtime.evaluate',
+                expect.objectContaining({ awaitPromise: true }),
+            );
         });
 
         it('returns empty array when no sessions found', async () => {
             mockCdpService.call.mockResolvedValue({
-                result: { value: [] },
+                result: { value: { sessions: [] } },
             });
 
             const sessions = await service.listAllSessions(mockCdpService);
@@ -324,9 +330,9 @@ describe('ChatSessionService', () => {
             expect(sessions).toEqual([]);
         });
 
-        it('returns empty array when result value is not an array', async () => {
+        it('returns empty array when result has no sessions array', async () => {
             mockCdpService.call.mockResolvedValue({
-                result: { value: 'unexpected string' },
+                result: { value: { error: 'Past Conversations button not found' } },
             });
 
             const sessions = await service.listAllSessions(mockCdpService);
