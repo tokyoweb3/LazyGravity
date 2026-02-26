@@ -31,7 +31,7 @@ export const RESPONSE_SELECTORS = {
         const looksLikeActivityLog = (text) => {
             const normalized = (text || '').trim().toLowerCase();
             if (!normalized) return false;
-            const activityPattern = /^(?:analy[sz]ing|reading|writing|running|searching|planning|thinking|processing|loading|executing|testing|debugging|analyzed|read|wrote|ran)/i;
+            const activityPattern = /^(?:analy[sz]ing|reading|writing|running|searching|planning|thinking|processing|loading|executing|testing|debugging|fetching|connecting|creating|updating|deleting|installing|building|compiling|deploying|checking|scanning|parsing|resolving|downloading|uploading|analyzed|read|wrote|ran|created|updated|deleted|fetched|built|compiled|installed|resolved|downloaded|connected)\\b/i;
             if (activityPattern.test(normalized) && normalized.length <= 220) return true;
             if (/^initiating\\s/i.test(normalized) && normalized.length <= 500) return true;
             if (/^thought for\\s/i.test(normalized) && normalized.length <= 500) return true;
@@ -200,7 +200,7 @@ export const RESPONSE_SELECTORS = {
         const looksLikeActivityLog = (text) => {
             const normalized = (text || '').trim().toLowerCase();
             if (!normalized) return false;
-            const activityPattern = /^(?:analy[sz]ing|reading|writing|running|searching|planning|thinking|processing|loading|executing|testing|debugging|analyzed|read|wrote|ran)/i;
+            const activityPattern = /^(?:analy[sz]ing|reading|writing|running|searching|planning|thinking|processing|loading|executing|testing|debugging|fetching|connecting|creating|updating|deleting|installing|building|compiling|deploying|checking|scanning|parsing|resolving|downloading|uploading|analyzed|read|wrote|ran|created|updated|deleted|fetched|built|compiled|installed|resolved|downloaded|connected)\\b/i;
             if (activityPattern.test(normalized) && normalized.length <= 220) return true;
             if (/^initiating\\s/i.test(normalized) && normalized.length <= 500) return true;
             if (/^thought for\\s/i.test(normalized) && normalized.length <= 500) return true;
@@ -285,7 +285,7 @@ export const RESPONSE_SELECTORS = {
         const looksLikeActivityLog = (text) => {
             const normalized = (text || '').trim().toLowerCase();
             if (!normalized) return false;
-            const activityPattern = /^(?:analy[sz]ing|reading|writing|running|searching|planning|thinking|processing|loading|executing|testing|debugging|analyzed|read|wrote|ran)/i;
+            const activityPattern = /^(?:analy[sz]ing|reading|writing|running|searching|planning|thinking|processing|loading|executing|testing|debugging|fetching|connecting|creating|updating|deleting|installing|building|compiling|deploying|checking|scanning|parsing|resolving|downloading|uploading|analyzed|read|wrote|ran|created|updated|deleted|fetched|built|compiled|installed|resolved|downloaded|connected)\\b/i;
             if (activityPattern.test(normalized) && normalized.length <= 220) return true;
             if (/^initiating\\s/i.test(normalized) && normalized.length <= 500) return true;
             if (/^thought for\\s/i.test(normalized) && normalized.length <= 500) return true;
@@ -379,6 +379,59 @@ export const RESPONSE_SELECTORS = {
     })()`,
     /** Structured DOM extraction — walks DOM to produce typed segment array */
     RESPONSE_STRUCTURED: extractAssistantSegmentsPayloadScript(),
+    /** One-shot DOM diagnostic — dumps DOM structure around activity areas */
+    DOM_DIAGNOSTIC: `(() => {
+        var panel = document.querySelector('.antigravity-agent-side-panel');
+        var scope = panel || document;
+        var diag = { detailsCount: 0, detailsDump: [], activityNodes: [], allTextNodes: [] };
+
+        // 1. Dump all <details> elements
+        var details = scope.querySelectorAll('details');
+        diag.detailsCount = details.length;
+        for (var i = 0; i < Math.min(details.length, 5); i++) {
+            diag.detailsDump.push({
+                outerHTML: details[i].outerHTML.slice(0, 500),
+                summaryText: (details[i].querySelector('summary') || {}).textContent || '(no summary)',
+                childCount: details[i].children.length
+            });
+        }
+
+        // 2. Find all text nodes that look like activity
+        var selectors = '.rendered-markdown, .leading-relaxed.select-text, .flex.flex-col.gap-y-3, [data-message-author-role="assistant"], [data-message-role="assistant"], [class*="assistant-message"], [class*="message-content"], [class*="markdown-body"], .prose';
+        var nodes = scope.querySelectorAll(selectors);
+        for (var j = 0; j < nodes.length; j++) {
+            var text = (nodes[j].innerText || nodes[j].textContent || '').trim();
+            if (!text || text.length < 2) continue;
+            diag.allTextNodes.push({
+                tag: nodes[j].tagName,
+                className: (nodes[j].className || '').toString().slice(0, 100),
+                text: text.slice(0, 200),
+                insideDetails: !!nodes[j].closest('details'),
+                length: text.length
+            });
+        }
+
+        // 3. Broader scan: any element with activity-like text
+        var allEls = scope.querySelectorAll('*');
+        for (var k = 0; k < allEls.length; k++) {
+            var el = allEls[k];
+            if (el.children.length > 2) continue; // only leaf-ish nodes
+            var t = (el.textContent || '').trim();
+            if (!t || t.length < 5 || t.length > 300) continue;
+            var lower = t.toLowerCase();
+            if (/^(?:analy[sz]|read|writ|run|search|think|process|execut|debug|test)/i.test(lower) || /\\//.test(t)) {
+                diag.activityNodes.push({
+                    tag: el.tagName,
+                    className: (el.className || '').toString().slice(0, 100),
+                    text: t.slice(0, 200),
+                    parentTag: el.parentElement ? el.parentElement.tagName : null,
+                    parentClass: el.parentElement ? (el.parentElement.className || '').toString().slice(0, 100) : null,
+                    insideDetails: !!el.closest('details')
+                });
+            }
+        }
+        return diag;
+    })()`,
 };
 
 /** Response generation phases */
@@ -438,6 +491,7 @@ export class ResponseMonitor {
     private quotaDetected: boolean = false;
     private seenProcessLogKeys: Set<string> = new Set();
     private structuredDiagLogged: boolean = false;
+    private domDiagLogged: boolean = false;
 
     constructor(options: ResponseMonitorOptions) {
         this.cdpService = options.cdpService;
@@ -693,6 +747,26 @@ export class ResponseMonitor {
                         // Emit structured activity lines as process logs
                         if (classified.activityLines.length > 0) {
                             this.emitNewProcessLogs(classified.activityLines);
+                        }
+
+                        // One-shot DOM diagnostic: dump DOM structure to understand activity elements
+                        if (!this.domDiagLogged) {
+                            this.domDiagLogged = true;
+                            try {
+                                const diagResult = await this.cdpService.call(
+                                    'Runtime.evaluate',
+                                    this.buildEvaluateParams(RESPONSE_SELECTORS.DOM_DIAGNOSTIC),
+                                );
+                                const diagData = diagResult?.result?.value;
+                                if (diagData) {
+                                    logger.info('[DOM-DIAG] details count:', diagData.detailsCount);
+                                    logger.info('[DOM-DIAG] details dump:', JSON.stringify(diagData.detailsDump, null, 2));
+                                    logger.info('[DOM-DIAG] activity nodes:', JSON.stringify(diagData.activityNodes, null, 2));
+                                    logger.info('[DOM-DIAG] all text nodes (content selectors):', JSON.stringify(diagData.allTextNodes, null, 2));
+                                }
+                            } catch (diagError) {
+                                logger.warn('[DOM-DIAG] diagnostic failed:', diagError);
+                            }
                         }
                     } else if (!this.structuredDiagLogged) {
                         this.structuredDiagLogged = true;

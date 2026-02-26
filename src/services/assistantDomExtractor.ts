@@ -165,7 +165,7 @@ export function extractAssistantSegmentsPayloadScript(): string {
     var looksLikeActivityLog = function(text) {
         var normalized = (text || '').trim().toLowerCase();
         if (!normalized) return false;
-        if (/^(?:analy[sz]ing|reading|writing|running|searching|planning|thinking|processing|loading|executing|testing|debugging|analyzed|read|wrote|ran)/i.test(normalized) && normalized.length <= 220) return true;
+        if (/^(?:analy[sz]ing|reading|writing|running|searching|planning|thinking|processing|loading|executing|testing|debugging|fetching|connecting|creating|updating|deleting|installing|building|compiling|deploying|checking|scanning|parsing|resolving|downloading|uploading|analyzed|read|wrote|ran|created|updated|deleted|fetched|built|compiled|installed|resolved|downloaded|connected)\\b/i.test(normalized) && normalized.length <= 220) return true;
         if (/^initiating\\s/i.test(normalized) && normalized.length <= 500) return true;
         if (/^thought for\\s/i.test(normalized) && normalized.length <= 500) return true;
         return false;
@@ -278,7 +278,7 @@ export function extractAssistantSegmentsPayloadScript(): string {
         }
     }
 
-    // Pass 2: Extract thinking segments from <details> summaries
+    // Pass 2: Extract thinking + tool segments from <details>
     var details = scope.querySelectorAll('details');
     for (var di = 0; di < details.length; di++) {
         var detail = details[di];
@@ -294,6 +294,59 @@ export function extractAssistantSegmentsPayloadScript(): string {
                     domPath: 'details:nth(' + di + ') summary'
                 });
             }
+        }
+        // Extract child content (tool-call / tool-result) inside <details>
+        var children = detail.children;
+        for (var ci = 0; ci < children.length; ci++) {
+            var child = children[ci];
+            if (child.tagName === 'SUMMARY' || child.tagName === 'STYLE') continue;
+            var childText = (child.innerText || child.textContent || '').trim();
+            if (!childText || childText.length < 2) continue;
+            var childKind = looksLikeToolOutput(childText) ? 'tool-result' : 'tool-call';
+            segments.push({
+                kind: childKind,
+                text: childText.slice(0, 300),
+                role: 'assistant',
+                messageIndex: 0,
+                domPath: 'details:nth(' + di + ') child:nth(' + ci + ')'
+            });
+        }
+    }
+
+    // Pass 2.5: Broad activity scan - leaf-ish elements with activity-like text
+    // Uses querySelectorAll('*') to find activity nodes that don't match content
+    // selectors (e.g. "Analyzed package.json#L1-75" inside <div class="flex flex-row">).
+    // Excludes nodes inside response body containers to avoid false positives.
+    // Uses ancestor dedup to prevent capturing both parent and child activity nodes.
+    var actSeen = new Set();
+    var allEls = scope.querySelectorAll('*');
+    for (var ai = 0; ai < allEls.length; ai++) {
+        var el = allEls[ai];
+        if (el.children.length > 3) continue;       // leaf-ish only
+        if (seen.has(el)) continue;                  // already captured in Pass 1/2
+        if (isInsideExcludedContainer(el)) continue;
+        // Skip nodes inside response body containers (prevents capturing inline words)
+        if (el.closest('.leading-relaxed, .rendered-markdown, .prose, .animate-markdown, [data-message-role], [data-message-author-role]')) continue;
+        var aText = (el.innerText || el.textContent || '').replace(/\\r/g, '').trim();
+        if (!aText || aText.length < 4 || aText.length > 300) continue;
+        if (looksLikeActivityLog(aText) || looksLikeToolOutput(aText)) {
+            // Ancestor dedup: skip if a parent was already captured as activity
+            var dup = false;
+            var p = el.parentElement;
+            while (p && p !== scope) {
+                if (actSeen.has(p)) { dup = true; break; }
+                p = p.parentElement;
+            }
+            if (dup) continue;
+            actSeen.add(el);
+            var aKind = looksLikeToolOutput(aText) ? 'tool-result' : 'tool-call';
+            segments.push({
+                kind: aKind,
+                text: aText.slice(0, 300),
+                role: 'assistant',
+                messageIndex: 0,
+                domPath: 'activity-scan:nth(' + ai + ')'
+            });
         }
     }
 
