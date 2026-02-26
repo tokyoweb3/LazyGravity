@@ -213,7 +213,8 @@ export function extractAssistantSegmentsPayloadScript(): string {
 
         // This is the assistant body — normalize code blocks then extract innerHTML
         // AG wraps code in <pre><div class="..."> with a header div for language label,
-        // instead of standard <pre><code>. Normalize to <pre><code> for htmlToDiscordMarkdown.
+        // embedded <style> tags, and code-line divs — NOT standard <pre><code>.
+        // We normalize to <pre><code> for htmlToDiscordMarkdown.
         var clone = node.cloneNode(true);
         var pres = clone.querySelectorAll('pre');
         for (var pi = 0; pi < pres.length; pi++) {
@@ -221,10 +222,32 @@ export function extractAssistantSegmentsPayloadScript(): string {
             // Extract language from header div (font-sans text-sm class)
             var langDiv = pre.querySelector('.font-sans.text-sm, [class*="text-sm"][class*="opacity"]');
             var lang = langDiv ? (langDiv.textContent || '').trim() : '';
-            // Get code text via innerText, then strip language label and copy-button text
-            var codeText = (pre.innerText || '').trim();
-            if (lang && codeText.startsWith(lang)) {
-                codeText = codeText.slice(lang.length).trim();
+
+            // Remove <style> tags before extracting text (AG injects code-block CSS)
+            var styles = pre.querySelectorAll('style');
+            for (var si = 0; si < styles.length; si++) {
+                styles[si].parentNode.removeChild(styles[si]);
+            }
+
+            // Remove the header bar (language label + copy button)
+            var headerBar = pre.querySelector('[class*="rounded-t"][class*="border-b"]');
+            if (headerBar) headerBar.parentNode.removeChild(headerBar);
+
+            // Extract code text: prefer code-line elements for reliable newlines
+            var codeLines = pre.querySelectorAll('.code-line, [class*="code-line"]');
+            var codeText;
+            if (codeLines.length > 0) {
+                var lineTexts = [];
+                for (var cli = 0; cli < codeLines.length; cli++) {
+                    lineTexts.push(codeLines[cli].textContent || '');
+                }
+                codeText = lineTexts.join('\\n');
+            } else {
+                // Fallback: use innerText of cleaned pre
+                codeText = (pre.innerText || '').trim();
+                if (lang && codeText.startsWith(lang)) {
+                    codeText = codeText.slice(lang.length).trim();
+                }
             }
             // Remove trailing "Copy" or clipboard button text
             codeText = codeText.replace(/\\nCopy$/i, '').replace(/\\ncopy code$/i, '').trim();
@@ -235,6 +258,11 @@ export function extractAssistantSegmentsPayloadScript(): string {
             newCode.textContent = codeText;
             newPre.appendChild(newCode);
             pre.parentNode.replaceChild(newPre, pre);
+        }
+        // Also remove any top-level <style> tags from the clone
+        var topStyles = clone.querySelectorAll('style');
+        for (var tsi = 0; tsi < topStyles.length; tsi++) {
+            topStyles[tsi].parentNode.removeChild(topStyles[tsi]);
         }
         var bodyHtml = clone.innerHTML;
         if (bodyHtml && bodyHtml.trim()) {
