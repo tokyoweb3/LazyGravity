@@ -206,6 +206,40 @@ describe('assistantDomExtractor', () => {
             }
         });
 
+        it('skips mode description inside role="dialog" container', () => {
+            const panel = document.createElement('div');
+            panel.className = 'antigravity-agent-side-panel';
+
+            // AG mode selector popup: role="dialog" container
+            const dialog = document.createElement('div');
+            dialog.setAttribute('role', 'dialog');
+            const modeOption = document.createElement('div');
+            modeOption.className = 'flex flex-col';
+            const modeName = document.createElement('div');
+            modeName.className = 'font-medium';
+            modeName.textContent = 'Planning';
+            const modeDesc = document.createElement('div');
+            modeDesc.className = 'text-xs opacity-50';
+            modeDesc.textContent =
+                'Agent can plan before executing tasks. Use for deep research, complex tasks, or collaborative work';
+            modeOption.appendChild(modeName);
+            modeOption.appendChild(modeDesc);
+            dialog.appendChild(modeOption);
+            panel.appendChild(dialog);
+
+            document.body.appendChild(panel);
+
+            const script = extractAssistantSegmentsPayloadScript();
+            const scriptEl = document.createElement('script');
+            scriptEl.textContent = `window.__pass25DialogPayload = ${script};`;
+            document.body.appendChild(scriptEl);
+            const payload = (window as any).__pass25DialogPayload;
+            const result = classifyAssistantSegments(payload);
+
+            // Neither "Planning" nor the description should appear in activity
+            expect(result.activityLines).toEqual([]);
+        });
+
         it('skips container elements with more than 3 children', () => {
             const panel = document.createElement('div');
             panel.className = 'antigravity-agent-side-panel';

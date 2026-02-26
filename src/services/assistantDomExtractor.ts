@@ -173,6 +173,7 @@ export function extractAssistantSegmentsPayloadScript(): string {
         if (node.closest('details')) return true;
         if (node.closest('[class*="feedback"], footer')) return true;
         if (node.closest('.notify-user-container')) return true;
+        if (node.closest('[role="dialog"]')) return true;
         return false;
     };
 
