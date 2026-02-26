@@ -569,6 +569,29 @@ export class ResponseMonitor {
             // baseline capture only
         }
 
+        // In structured mode, also capture activity lines from the structured
+        // extraction to align the baseline with polling logic. The PROCESS_LOGS
+        // script skips <details> content, but structured extraction (Pass 2)
+        // explicitly walks <details> elements — without this, tool-call/thinking
+        // entries from previous turns leak into the process log as "new" entries.
+        if (this.extractionMode === 'structured') {
+            try {
+                const structuredBaseline = await this.cdpService.call(
+                    'Runtime.evaluate',
+                    this.buildEvaluateParams(RESPONSE_SELECTORS.RESPONSE_STRUCTURED),
+                );
+                const baselineClassified = classifyAssistantSegments(structuredBaseline?.result?.value);
+                if (baselineClassified.diagnostics.source === 'dom-structured') {
+                    for (const line of baselineClassified.activityLines) {
+                        const key = (line || '').replace(/\r/g, '').trim().slice(0, 200);
+                        if (key) this.seenProcessLogKeys.add(key);
+                    }
+                }
+            } catch {
+                // structured baseline is best-effort
+            }
+        }
+
         // Set timeout timer
         if (this.maxDurationMs > 0) {
             this.timeoutTimer = setTimeout(async () => {
