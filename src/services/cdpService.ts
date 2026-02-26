@@ -356,9 +356,9 @@ export class CdpService extends EventEmitter {
                 t.url?.includes('workbench'),
         );
 
-        logger.info(`[CdpService] Searching for workspace "${workspaceDirName}" (port=${respondingPort})... ${workbenchPages.length} workbench pages:`);
+        logger.debug(`[CdpService] Searching for workspace "${workspaceDirName}" (port=${respondingPort})... ${workbenchPages.length} workbench pages:`);
         for (const p of workbenchPages) {
-            logger.info(`  - title="${p.title}" url=${p.url}`);
+            logger.debug(`  - title="${p.title}" url=${p.url}`);
         }
 
         // 1. Title match (fast path)
@@ -368,7 +368,7 @@ export class CdpService extends EventEmitter {
         }
 
         // 2. Title match failed -> CDP probe (connect to each page and check document.title)
-        logger.info(`[CdpService] Title match failed. Searching via CDP probe...`);
+        logger.debug(`[CdpService] Title match failed. Searching via CDP probe...`);
         const probeResult = await this.probeWorkbenchPages(workbenchPages, workspaceDirName, workspacePath);
         if (probeResult) {
             return true;
@@ -392,7 +392,7 @@ export class CdpService extends EventEmitter {
         this.targetUrl = page.webSocketDebuggerUrl;
         await this.connect();
         this.currentWorkspaceName = workspaceDirName;
-        logger.info(`[CdpService] Connected to workspace "${workspaceDirName}"`);
+        logger.debug(`[CdpService] Connected to workspace "${workspaceDirName}"`);
 
         return true;
     }
@@ -427,7 +427,7 @@ export class CdpService extends EventEmitter {
 
                 if (liveTitle.includes(workspaceDirName)) {
                     this.currentWorkspaceName = workspaceDirName;
-                    logger.info(`[CdpService] Probe success: detected "${workspaceDirName}"`);
+                    logger.debug(`[CdpService] Probe success: detected "${workspaceDirName}"`);
                     return true;
                 }
 
@@ -503,7 +503,7 @@ export class CdpService extends EventEmitter {
                     detectedValue.includes(workspacePath)
                 ) {
                     this.currentWorkspaceName = workspaceDirName;
-                    logger.info(`[CdpService] Folder path match success: "${workspaceDirName}"`);
+                    logger.debug(`[CdpService] Folder path match success: "${workspaceDirName}"`);
                     return true;
                 }
             }
@@ -516,7 +516,7 @@ export class CdpService extends EventEmitter {
             const pageUrl = urlResult?.result?.value || '';
             if (pageUrl.includes(encodeURIComponent(workspacePath)) || pageUrl.includes(workspaceDirName)) {
                 this.currentWorkspaceName = workspaceDirName;
-                logger.info(`[CdpService] URL parameter match success: "${workspaceDirName}"`);
+                logger.debug(`[CdpService] URL parameter match success: "${workspaceDirName}"`);
                 return true;
             }
 
@@ -538,7 +538,7 @@ export class CdpService extends EventEmitter {
         // `open -a Antigravity` may open as workspace, resulting in title "Untitled (Workspace)".
         // CLI --new-window opens as folder, immediately reflecting directory name in title.
         const antigravityCli = '/Applications/Antigravity.app/Contents/Resources/app/bin/antigravity';
-        logger.info(`[CdpService] Launching Antigravity: ${antigravityCli} --new-window ${workspacePath}`);
+        logger.debug(`[CdpService] Launching Antigravity: ${antigravityCli} --new-window ${workspacePath}`);
         try {
             await this.runCommand(antigravityCli, ['--new-window', workspacePath]);
         } catch (error: any) {
@@ -609,7 +609,7 @@ export class CdpService extends EventEmitter {
                         (t.title?.includes('Untitled') || t.title === ''),
                 );
                 if (newUntitledPages.length === 1) {
-                    logger.info(`[CdpService] New Untitled page detected. Connecting as "${workspaceDirName}" (page.id=${newUntitledPages[0].id})`);
+                    logger.debug(`[CdpService] New Untitled page detected. Connecting as "${workspaceDirName}" (page.id=${newUntitledPages[0].id})`);
                     return this.connectToPage(newUntitledPages[0], workspaceDirName);
                 }
             }

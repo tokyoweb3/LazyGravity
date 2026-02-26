@@ -1,5 +1,6 @@
 import { t } from "../utils/i18n";
 import { logger } from '../utils/logger';
+import type { LogLevel } from '../utils/logger';
 import {
     Client, GatewayIntentBits, Events, Message,
     ChatInputCommandInteraction, Interaction,
@@ -772,8 +773,9 @@ async function sendPromptToAntigravity(
 // Bot main entry point
 // =============================================================================
 
-export const startBot = async () => {
+export const startBot = async (cliLogLevel?: LogLevel) => {
     const config = loadConfig();
+    logger.setLogLevel(cliLogLevel ?? config.logLevel);
 
     const dbPath = process.env.NODE_ENV === 'test' ? ':memory:' : 'antigravity.db';
     const db = new Database(dbPath);

@@ -1,4 +1,5 @@
 import { ConfigLoader } from './configLoader';
+import type { LogLevel } from './logger';
 
 export type ExtractionMode = 'legacy' | 'structured';
 
@@ -9,6 +10,7 @@ export interface AppConfig {
     allowedUserIds: string[];
     workspaceBaseDir: string;
     autoApproveFileEdits: boolean;
+    logLevel: LogLevel;
     extractionMode: ExtractionMode;
 }
 

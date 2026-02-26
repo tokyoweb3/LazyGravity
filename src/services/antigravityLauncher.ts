@@ -34,11 +34,11 @@ function checkPort(port: number): Promise<boolean> {
  * Called during Bot initialization.
  */
 export async function ensureAntigravityRunning(): Promise<void> {
-    logger.info('[AntigravityLauncher] Checking CDP ports...');
+    logger.debug('[AntigravityLauncher] Checking CDP ports...');
 
     for (const port of CDP_PORTS) {
         if (await checkPort(port)) {
-            logger.info(`[AntigravityLauncher] OK — Port ${port} responding`);
+            logger.debug(`[AntigravityLauncher] OK — Port ${port} responding`);
             return;
         }
     }

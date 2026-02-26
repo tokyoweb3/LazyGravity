@@ -6,6 +6,7 @@ jest.mock('http', () => ({
 
 import * as http from 'http';
 import { ensureAntigravityRunning } from '../../src/services/antigravityLauncher';
+import { logger } from '../../src/utils/logger';
 
 function mockHttpSuccessOnce(port: number): void {
     (http.get as unknown as jest.Mock).mockImplementationOnce((url: string, cb: (res: EventEmitter) => void) => {
@@ -48,17 +49,19 @@ function mockHttpErrorAlways(): void {
 }
 
 describe('ensureAntigravityRunning', () => {
-    let consoleSpy: jest.SpyInstance;
+    let consoleDebugSpy: jest.SpyInstance;
     let consoleWarnSpy: jest.SpyInstance;
 
     beforeEach(() => {
         jest.clearAllMocks();
-        consoleSpy = jest.spyOn(console, 'info').mockImplementation(() => { });
+        logger.setLogLevel('debug');
+        consoleDebugSpy = jest.spyOn(console, 'debug').mockImplementation(() => { });
         consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => { });
     });
 
     afterEach(() => {
-        consoleSpy.mockRestore();
+        logger.setLogLevel('info');
+        consoleDebugSpy.mockRestore();
         consoleWarnSpy.mockRestore();
     });
 
@@ -68,8 +71,8 @@ describe('ensureAntigravityRunning', () => {
         await ensureAntigravityRunning();
 
         expect(http.get).toHaveBeenCalledTimes(1);
-        expect(consoleSpy).toHaveBeenCalledWith(
-            expect.stringContaining('\x1b[36m[INFO]\x1b[0m'),
+        expect(consoleDebugSpy).toHaveBeenCalledWith(
+            expect.stringContaining('\x1b[2m[DEBUG]\x1b[0m'),
             expect.stringContaining('[AntigravityLauncher] OK — Port 9222 responding')
         );
     });

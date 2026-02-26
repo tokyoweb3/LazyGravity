@@ -8,28 +8,92 @@ export const COLORS = {
     reset: '\x1b[0m',
 } as const;
 
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error' | 'none';
+
+const LEVEL_PRIORITY: Record<LogLevel, number> = {
+    debug: 0,
+    info: 1,
+    warn: 2,
+    error: 3,
+    none: 4,
+};
+
+export interface Logger {
+    info(...args: any[]): void;
+    warn(...args: any[]): void;
+    error(...args: any[]): void;
+    debug(...args: any[]): void;
+    phase(...args: any[]): void;
+    done(...args: any[]): void;
+    divider(label?: string): void;
+    setLogLevel(level: LogLevel): void;
+    getLogLevel(): LogLevel;
+}
+
 const getTimestamp = () => {
     const now = new Date();
     const timeString = now.toLocaleTimeString('ja-JP', { hour12: false });
     return `${COLORS.dim}[${timeString}]${COLORS.reset}`;
 };
 
-export const logger = {
-    info: (...args: any[]) => console.info(`${getTimestamp()} ${COLORS.cyan}[INFO]${COLORS.reset}`, ...args),
-    warn: (...args: any[]) => console.warn(`${getTimestamp()} ${COLORS.yellow}[WARN]${COLORS.reset}`, ...args),
-    error: (...args: any[]) => console.error(`${getTimestamp()} ${COLORS.red}[ERROR]${COLORS.reset}`, ...args),
-    debug: (...args: any[]) => console.debug(`${getTimestamp()} ${COLORS.dim}[DEBUG]${COLORS.reset}`, ...args),
-    /** Important state transitions — stands out in logs */
-    phase: (...args: any[]) => console.info(`${getTimestamp()} ${COLORS.magenta}[PHASE]${COLORS.reset}`, ...args),
-    /** Completion-related events — green for success */
-    done: (...args: any[]) => console.info(`${getTimestamp()} ${COLORS.green}[DONE]${COLORS.reset}`, ...args),
-    /** Section divider with optional label for structured output */
-    divider: (label?: string) => {
-        if (label) {
-            const pad = Math.max(4, 50 - label.length - 4);
-            console.info(`${COLORS.green}[DONE]${COLORS.reset} ${COLORS.dim}── ${label} ${'─'.repeat(pad)}${COLORS.reset}`);
-        } else {
-            console.info(`${COLORS.green}[DONE]${COLORS.reset} ${COLORS.dim}${'─'.repeat(50)}${COLORS.reset}`);
-        }
-    },
-};
+export function createLogger(initialLevel: LogLevel = 'info'): Logger {
+    let currentLevel: LogLevel = initialLevel;
+
+    function shouldLog(methodLevel: LogLevel): boolean {
+        return LEVEL_PRIORITY[methodLevel] >= LEVEL_PRIORITY[currentLevel];
+    }
+
+    return {
+        info(...args: any[]) {
+            if (shouldLog('info')) {
+                console.info(`${getTimestamp()} ${COLORS.cyan}[INFO]${COLORS.reset}`, ...args);
+            }
+        },
+        warn(...args: any[]) {
+            if (shouldLog('warn')) {
+                console.warn(`${getTimestamp()} ${COLORS.yellow}[WARN]${COLORS.reset}`, ...args);
+            }
+        },
+        error(...args: any[]) {
+            if (shouldLog('error')) {
+                console.error(`${getTimestamp()} ${COLORS.red}[ERROR]${COLORS.reset}`, ...args);
+            }
+        },
+        debug(...args: any[]) {
+            if (shouldLog('debug')) {
+                console.debug(`${getTimestamp()} ${COLORS.dim}[DEBUG]${COLORS.reset}`, ...args);
+            }
+        },
+        /** Important state transitions - stands out in logs */
+        phase(...args: any[]) {
+            if (shouldLog('info')) {
+                console.info(`${getTimestamp()} ${COLORS.magenta}[PHASE]${COLORS.reset}`, ...args);
+            }
+        },
+        /** Completion-related events - green for success */
+        done(...args: any[]) {
+            if (shouldLog('info')) {
+                console.info(`${getTimestamp()} ${COLORS.green}[DONE]${COLORS.reset}`, ...args);
+            }
+        },
+        /** Section divider with optional label for structured output */
+        divider(label?: string) {
+            if (shouldLog('info')) {
+                if (label) {
+                    const pad = Math.max(4, 50 - label.length - 4);
+                    console.info(`${COLORS.green}[DONE]${COLORS.reset} ${COLORS.dim}── ${label} ${'─'.repeat(pad)}${COLORS.reset}`);
+                } else {
+                    console.info(`${COLORS.green}[DONE]${COLORS.reset} ${COLORS.dim}${'─'.repeat(50)}${COLORS.reset}`);
+                }
+            }
+        },
+        setLogLevel(level: LogLevel) {
+            currentLevel = level;
+        },
+        getLogLevel(): LogLevel {
+            return currentLevel;
+        },
+    };
+}
+
+export const logger = createLogger('info');

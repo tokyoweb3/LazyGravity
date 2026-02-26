@@ -23,9 +23,9 @@
     "test:integration": "jest tests/e2e.bot.test.ts",
     "test:watch": "jest --watch",
     "build": "tsc",
-    "start": "ts-node src/index.ts",
+    "start": "ts-node src/bin/cli.ts",
     "start:built": "node dist/bin/cli.js",
-    "dev": "ts-node-dev --respawn src/index.ts",
+    "dev": "ts-node-dev --respawn src/bin/cli.ts",
     "docs:diagram": "mmdc -i docs/diagrams/architecture.mmd -o docs/images/architecture.svg -b transparent",
     "prepublishOnly": "npm run build && npm run test"
   },
