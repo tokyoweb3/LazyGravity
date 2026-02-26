@@ -76,12 +76,23 @@ export class JoinDetachCommandHandler {
 
     /**
      * Handle session selection from the /join picker.
+     *
+     * Flow:
+     *   1. Check if a channel already exists for this session (by displayName)
+     *   2. If yes → reply with a link to that channel
+     *   3. If no → create a new channel, bind it, set displayName, activate session
      */
     async handleJoinSelect(
         interaction: StringSelectMenuInteraction,
         bridge: CdpBridge,
     ): Promise<void> {
         const selectedTitle = interaction.values[0];
+        const guild = interaction.guild;
+
+        if (!guild) {
+            await interaction.editReply({ content: t('⚠️ This command can only be used in a server.') });
+            return;
+        }
 
         // Resolve workspace from channel binding
         const binding = this.bindingRepo.findByChannelId(interaction.channelId);
@@ -89,41 +100,67 @@ export class JoinDetachCommandHandler {
         const workspaceName = binding?.workspacePath ?? session?.workspacePath;
 
         if (!workspaceName) {
-            await interaction.editReply({
-                content: t('⚠️ No project is bound to this channel.'),
-            });
+            await interaction.editReply({ content: t('⚠️ No project is bound to this channel.') });
             return;
         }
 
+        // Step 1: Check if a channel already exists for this session
+        const existingSession = this.chatSessionRepo.findByDisplayName(workspaceName, selectedTitle);
+        if (existingSession) {
+            const embed = new EmbedBuilder()
+                .setTitle(t('🔗 Session Already Connected'))
+                .setDescription(t(`This session already has a channel:\n→ <#${existingSession.channelId}>`))
+                .setColor(0x3498DB)
+                .setTimestamp();
+            await interaction.editReply({ embeds: [embed], components: [] });
+            return;
+        }
+
+        // Step 2: Connect to CDP
         let cdp;
         try {
             cdp = await this.pool.getOrConnect(workspaceName);
         } catch (e: any) {
-            await interaction.editReply({
-                content: t(`⚠️ Failed to connect to project: ${e.message}`),
-            });
+            await interaction.editReply({ content: t(`⚠️ Failed to connect to project: ${e.message}`) });
             return;
         }
 
-        // Activate the selected session in Antigravity
-        const result = await this.chatSessionService.activateSessionByTitle(cdp, selectedTitle);
-
-        if (!result.ok) {
-            await interaction.editReply({
-                content: t(`⚠️ Failed to join session: ${result.error}`),
-            });
+        // Step 3: Activate the session in Antigravity
+        const activateResult = await this.chatSessionService.activateSessionByTitle(cdp, selectedTitle);
+        if (!activateResult.ok) {
+            await interaction.editReply({ content: t(`⚠️ Failed to join session: ${activateResult.error}`) });
             return;
         }
 
-        // Update session display name in the database
-        const existingSession = this.chatSessionRepo.findByChannelId(interaction.channelId);
-        if (existingSession) {
-            this.chatSessionRepo.updateDisplayName(existingSession.channelId, selectedTitle);
-        }
+        // Step 4: Create a new Discord channel for this session
+        const categoryResult = await this.channelManager.ensureCategory(guild, workspaceName);
+        const categoryId = categoryResult.categoryId;
+        const sessionNumber = this.chatSessionRepo.getNextSessionNumber(categoryId);
+        const channelName = this.channelManager.sanitizeChannelName(`${sessionNumber}-${selectedTitle}`);
+        const channelResult = await this.channelManager.createSessionChannel(guild, categoryId, channelName);
+        const newChannelId = channelResult.channelId;
+
+        // Step 5: Register binding and session
+        this.bindingRepo.upsert({
+            channelId: newChannelId,
+            workspacePath: workspaceName,
+            guildId: guild.id,
+        });
+
+        this.chatSessionRepo.create({
+            channelId: newChannelId,
+            categoryId,
+            workspacePath: workspaceName,
+            sessionNumber,
+            guildId: guild.id,
+        });
+
+        // Set displayName immediately (marks isRenamed = true)
+        this.chatSessionRepo.updateDisplayName(newChannelId, selectedTitle);
 
         const embed = new EmbedBuilder()
             .setTitle(t('🔗 Joined Session'))
-            .setDescription(t(`Connected to: **${selectedTitle}**`))
+            .setDescription(t(`Connected to: **${selectedTitle}**\n→ <#${newChannelId}>`))
             .setColor(0x2ECC71)
             .setTimestamp();
 

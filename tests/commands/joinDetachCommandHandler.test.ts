@@ -139,28 +139,87 @@ describe('JoinDetachCommandHandler', () => {
     });
 
     describe('handleJoinSelect()', () => {
-        it('activates selected session and updates binding', async () => {
+        const mockGuild = {
+            id: 'guild-1',
+            channels: {
+                cache: { find: jest.fn() },
+                fetch: jest.fn().mockResolvedValue({ find: jest.fn() }),
+                create: jest.fn().mockResolvedValue({ id: 'new-ch-99' }),
+            },
+        };
+
+        it('redirects to existing channel when session already has a channel', async () => {
+            bindingRepo.upsert({ channelId: 'ch-1', workspacePath: 'my-project', guildId: 'guild-1' });
+            // Create an existing session with the same displayName
+            chatSessionRepo.create({
+                channelId: 'ch-existing',
+                categoryId: 'cat-1',
+                workspacePath: 'my-project',
+                sessionNumber: 1,
+                guildId: 'guild-1',
+            });
+            chatSessionRepo.updateDisplayName('ch-existing', 'My Session');
+
+            const interaction = {
+                guild: mockGuild,
+                channelId: 'ch-1',
+                values: ['My Session'],
+                editReply: jest.fn().mockResolvedValue(undefined),
+            };
+            const bridge = { pool: mockPool } as any;
+
+            await handler.handleJoinSelect(interaction as any, bridge);
+
+            // Should NOT activate session or create channel
+            expect(mockService.activateSessionByTitle).not.toHaveBeenCalled();
+            expect(interaction.editReply).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    embeds: expect.arrayContaining([
+                        expect.objectContaining({
+                            data: expect.objectContaining({
+                                description: expect.stringContaining('ch-existing'),
+                            }),
+                        }),
+                    ]),
+                }),
+            );
+        });
+
+        it('creates new channel and binds session when no channel exists', async () => {
             bindingRepo.upsert({ channelId: 'ch-1', workspacePath: 'my-project', guildId: 'guild-1' });
             const mockCdp = { isConnected: () => true } as any;
             mockPool.getOrConnect.mockResolvedValue(mockCdp);
             mockService.activateSessionByTitle.mockResolvedValue({ ok: true });
 
+            // Mock guild channel creation
+            const guildWithCreate = {
+                ...mockGuild,
+                channels: {
+                    ...mockGuild.channels,
+                    create: jest.fn().mockResolvedValue({ id: 'new-ch-42' }),
+                },
+            };
+
             const interaction = {
+                guild: guildWithCreate,
                 channelId: 'ch-1',
-                values: ['Selected Session'],
-                deferUpdate: jest.fn().mockResolvedValue(undefined),
+                values: ['Brand New Session'],
                 editReply: jest.fn().mockResolvedValue(undefined),
             };
-            const bridge = { pool: mockPool, lastActiveWorkspace: null } as any;
+            const bridge = { pool: mockPool } as any;
 
             await handler.handleJoinSelect(interaction as any, bridge);
 
-            expect(mockService.activateSessionByTitle).toHaveBeenCalledWith(mockCdp, 'Selected Session');
-            expect(interaction.editReply).toHaveBeenCalledWith(
-                expect.objectContaining({
-                    embeds: expect.any(Array),
-                }),
-            );
+            expect(mockService.activateSessionByTitle).toHaveBeenCalledWith(mockCdp, 'Brand New Session');
+            // Verify channel was created
+            expect(guildWithCreate.channels.create).toHaveBeenCalled();
+            // Verify binding was created
+            const binding = bindingRepo.findByChannelId('new-ch-42');
+            expect(binding?.workspacePath).toBe('my-project');
+            // Verify session was created with displayName
+            const session = chatSessionRepo.findByChannelId('new-ch-42');
+            expect(session?.displayName).toBe('Brand New Session');
+            expect(session?.isRenamed).toBe(true);
         });
 
         it('shows error when session activation fails', async () => {
@@ -170,12 +229,12 @@ describe('JoinDetachCommandHandler', () => {
             mockService.activateSessionByTitle.mockResolvedValue({ ok: false, error: 'Title not found' });
 
             const interaction = {
+                guild: mockGuild,
                 channelId: 'ch-1',
                 values: ['Missing Session'],
-                deferUpdate: jest.fn().mockResolvedValue(undefined),
                 editReply: jest.fn().mockResolvedValue(undefined),
             };
-            const bridge = { pool: mockPool, lastActiveWorkspace: null } as any;
+            const bridge = { pool: mockPool } as any;
 
             await handler.handleJoinSelect(interaction as any, bridge);
 

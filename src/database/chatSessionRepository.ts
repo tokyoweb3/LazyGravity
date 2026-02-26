@@ -116,6 +116,18 @@ export class ChatSessionRepository {
         return result.changes > 0;
     }
 
+    /**
+     * Find a session by display name within a workspace.
+     * Returns the first match (most recent).
+     */
+    public findByDisplayName(workspacePath: string, displayName: string): ChatSessionRecord | undefined {
+        const row = this.db.prepare(
+            'SELECT * FROM chat_sessions WHERE workspace_path = ? AND display_name = ? ORDER BY id DESC LIMIT 1'
+        ).get(workspacePath, displayName) as any;
+        if (!row) return undefined;
+        return this.mapRow(row);
+    }
+
     public deleteByChannelId(channelId: string): boolean {
         const result = this.db.prepare(
             'DELETE FROM chat_sessions WHERE channel_id = ?'

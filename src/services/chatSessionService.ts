@@ -56,51 +56,31 @@ const GET_CHAT_TITLE_SCRIPT = `(() => {
  */
 const FIND_PAST_CONVERSATIONS_BUTTON_SCRIPT = `(() => {
     const isVisible = (el) => !!el && el instanceof HTMLElement && el.offsetParent !== null;
-    const normalize = (text) => (text || '').toLowerCase().trim();
     const getRect = (el) => {
         const rect = el.getBoundingClientRect();
-        return { x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
+        return { found: true, x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
     };
 
-    // Strategy 1: Find by tooltip (data-tooltip-id / data-tooltip-content)
-    const tooltipPatterns = ['past-conversations', 'past_conversations', 'history'];
-    const allEls = Array.from(document.querySelectorAll('[data-tooltip-id], [data-tooltip-content]'));
-    for (const el of allEls) {
+    // Strategy 1 (primary): data-past-conversations-toggle attribute
+    const toggle = document.querySelector('[data-past-conversations-toggle]');
+    if (toggle && isVisible(toggle)) return getRect(toggle);
+
+    // Strategy 2: data-tooltip-id containing "history"
+    const tooltipEls = Array.from(document.querySelectorAll('[data-tooltip-id]'));
+    for (const el of tooltipEls) {
         if (!isVisible(el)) continue;
-        const tid = normalize(el.getAttribute('data-tooltip-id') || '');
-        const tcontent = normalize(el.getAttribute('data-tooltip-content') || '');
-        if (tooltipPatterns.some((p) => tid.includes(p) || tcontent.includes(p))) {
-            return { found: true, ...getRect(el) };
+        const tid = (el.getAttribute('data-tooltip-id') || '').toLowerCase();
+        if (tid.includes('history') || tid.includes('past-conversations')) {
+            return getRect(el);
         }
     }
 
-    // Strategy 2: Find by text content — buttons containing "Past Conversations"
-    const textPatterns = ['past conversations', 'past conversation', 'conversation history', 'past chats', 'chat history'];
-    const buttons = Array.from(document.querySelectorAll('button, [role="button"], a, div[class*="cursor-pointer"], span'));
-    for (const btn of buttons) {
-        if (!isVisible(btn)) continue;
-        const text = normalize(btn.textContent || '');
-        if (textPatterns.some((p) => text === p || text.includes(p))) {
-            return { found: true, ...getRect(btn) };
-        }
-    }
-
-    // Strategy 3: Find by icon attributes (history/clock icons)
-    const iconPatterns = ['history', 'clock'];
-    const icons = Array.from(document.querySelectorAll('svg, i'));
+    // Strategy 3: SVG with lucide-history class
+    const icons = Array.from(document.querySelectorAll('svg.lucide-history, svg[class*="lucide-history"]'));
     for (const icon of icons) {
-        if (!isVisible(icon)) continue;
-        const desc = [
-            icon.getAttribute('class') || '',
-            icon.getAttribute('data-testid') || '',
-            icon.getAttribute('data-icon') || '',
-            icon.getAttribute('aria-label') || '',
-        ].join(' ').toLowerCase();
-        if (iconPatterns.some((p) => desc.includes(p))) {
-            const clickable = icon.closest('button, [role="button"], a, div[class*="cursor-pointer"]');
-            const target = clickable instanceof HTMLElement && isVisible(clickable) ? clickable : icon;
-            return { found: true, ...getRect(target) };
-        }
+        const parent = icon.closest('a, button, [role="button"], div[class*="cursor-pointer"]');
+        const target = parent instanceof HTMLElement && isVisible(parent) ? parent : icon;
+        if (isVisible(target)) return getRect(target);
     }
 
     return { found: false, x: 0, y: 0 };
@@ -373,14 +353,35 @@ function buildActivateViaPastConversationsScript(title: string): string {
         };
 
         return (async () => {
-            let opened = clickByPatterns([
-                'past conversations',
-                'past conversation',
-                'conversation history',
-                'past chats',
-                '過去の会話',
-                'chat history',
-            ]);
+            // Primary: click via data-past-conversations-toggle attribute
+            let opened = false;
+            const toggleBtn = document.querySelector('[data-past-conversations-toggle]');
+            if (toggleBtn && isVisible(toggleBtn)) {
+                const clickable = getClickable(toggleBtn);
+                if (clickable) { clickable.click(); opened = true; }
+            }
+            if (!opened) {
+                // Fallback: data-tooltip-id containing "history"
+                const tooltipEls = asArray(document.querySelectorAll('[data-tooltip-id]'));
+                for (const el of tooltipEls) {
+                    if (!isVisible(el)) continue;
+                    const tid = normalize(el.getAttribute('data-tooltip-id') || '');
+                    if (tid.includes('history') || tid.includes('past-conversations')) {
+                        const cl = getClickable(el);
+                        if (cl) { cl.click(); opened = true; break; }
+                    }
+                }
+            }
+            if (!opened) {
+                opened = clickByPatterns([
+                    'past conversations',
+                    'past conversation',
+                    'conversation history',
+                    'past chats',
+                    '過去の会話',
+                    'chat history',
+                ]);
+            }
             if (!opened) {
                 opened = clickIconHistoryButton();
             }
