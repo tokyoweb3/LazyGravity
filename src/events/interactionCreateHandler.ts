@@ -33,7 +33,7 @@ import { CdpService } from '../services/cdpService';
 import { MODE_DISPLAY_NAMES, ModeService } from '../services/modeService';
 import { ModelService } from '../services/modelService';
 import { AutoAcceptService } from '../services/autoAcceptService';
-import { JoinDetachCommandHandler } from '../commands/joinDetachCommandHandler';
+import { JoinCommandHandler } from '../commands/joinCommandHandler';
 import { isSessionSelectId } from '../ui/sessionPickerUi';
 
 export interface InteractionCreateHandlerDeps {
@@ -73,7 +73,7 @@ export interface InteractionCreateHandlerDeps {
         client: any,
     ) => Promise<void>;
     handleTemplateUse?: (interaction: ButtonInteraction, templateId: number) => Promise<void>;
-    joinDetachHandler?: JoinDetachCommandHandler;
+    joinHandler?: JoinCommandHandler;
 }
 
 export function createInteractionCreateHandler(deps: InteractionCreateHandlerDeps) {
@@ -613,8 +613,8 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
             }
 
             try {
-                if (deps.joinDetachHandler) {
-                    await deps.joinDetachHandler.handleJoinSelect(interaction, deps.bridge);
+                if (deps.joinHandler) {
+                    await deps.joinHandler.handleJoinSelect(interaction, deps.bridge);
                 }
             } catch (error) {
                 logger.error('Session selection error:', error);

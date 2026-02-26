@@ -4,6 +4,13 @@ import { CdpService } from '../../src/services/cdpService';
 jest.mock('../../src/services/cdpService');
 const MockedCdpService = CdpService as jest.MockedClass<typeof CdpService>;
 
+/** Advance fake timers and flush microtasks */
+async function tick(ms: number): Promise<void> {
+    jest.advanceTimersByTime(ms);
+    await Promise.resolve();
+    await Promise.resolve();
+}
+
 describe('UserMessageDetector', () => {
     let mockCdpService: jest.Mocked<CdpService>;
 
@@ -17,10 +24,41 @@ describe('UserMessageDetector', () => {
         jest.useRealTimers();
     });
 
-    it('detects a new user message and calls onUserMessage', async () => {
+    it('first poll primes existing DOM state without firing callback', async () => {
         const onUserMessage = jest.fn();
         mockCdpService.call.mockResolvedValue({
-            result: { value: { text: 'Hello from PC' } },
+            result: { value: { text: 'Existing message' } },
+        });
+
+        const detector = new UserMessageDetector({
+            cdpService: mockCdpService,
+            pollIntervalMs: 100,
+            onUserMessage,
+        });
+
+        detector.start();
+
+        // First poll — priming, should NOT fire callback
+        await tick(100);
+        expect(onUserMessage).not.toHaveBeenCalled();
+
+        // Second poll — same message, still no callback (duplicate)
+        await tick(100);
+        expect(onUserMessage).not.toHaveBeenCalled();
+
+        await detector.stop();
+    });
+
+    it('detects a new user message after priming', async () => {
+        const onUserMessage = jest.fn();
+        let callCount = 0;
+        mockCdpService.call.mockImplementation(async () => {
+            callCount++;
+            if (callCount === 1) {
+                // Priming poll: existing message in DOM
+                return { result: { value: { text: 'Old message' } } };
+            }
+            return { result: { value: { text: 'Hello from PC' } } };
         });
 
         const detector = new UserMessageDetector({
@@ -32,21 +70,27 @@ describe('UserMessageDetector', () => {
         detector.start();
         expect(detector.isActive()).toBe(true);
 
-        // Advance timer to trigger first poll
-        jest.advanceTimersByTime(100);
-        await Promise.resolve(); // flush microtasks
-        await Promise.resolve();
+        // First poll — priming
+        await tick(100);
+        expect(onUserMessage).not.toHaveBeenCalled();
 
+        // Second poll — new message detected
+        await tick(100);
         expect(onUserMessage).toHaveBeenCalledWith({ text: 'Hello from PC' });
 
         await detector.stop();
         expect(detector.isActive()).toBe(false);
     });
 
-    it('does not call onUserMessage for duplicate messages', async () => {
+    it('primes with empty DOM and detects first real message', async () => {
         const onUserMessage = jest.fn();
-        mockCdpService.call.mockResolvedValue({
-            result: { value: { text: 'Same message' } },
+        let callCount = 0;
+        mockCdpService.call.mockImplementation(async () => {
+            callCount++;
+            if (callCount === 1) {
+                return { result: { value: null } }; // empty DOM
+            }
+            return { result: { value: { text: 'First message' } } };
         });
 
         const detector = new UserMessageDetector({
@@ -57,15 +101,44 @@ describe('UserMessageDetector', () => {
 
         detector.start();
 
-        // First poll
-        jest.advanceTimersByTime(100);
-        await Promise.resolve();
-        await Promise.resolve();
+        // First poll — priming with empty DOM
+        await tick(100);
+        expect(onUserMessage).not.toHaveBeenCalled();
 
-        // Second poll — same message
-        jest.advanceTimersByTime(100);
-        await Promise.resolve();
-        await Promise.resolve();
+        // Second poll — first real message
+        await tick(100);
+        expect(onUserMessage).toHaveBeenCalledWith({ text: 'First message' });
+
+        await detector.stop();
+    });
+
+    it('does not call onUserMessage for duplicate messages', async () => {
+        const onUserMessage = jest.fn();
+        let callCount = 0;
+        mockCdpService.call.mockImplementation(async () => {
+            callCount++;
+            if (callCount === 1) {
+                return { result: { value: null } }; // priming: empty
+            }
+            return { result: { value: { text: 'Same message' } } };
+        });
+
+        const detector = new UserMessageDetector({
+            cdpService: mockCdpService,
+            pollIntervalMs: 100,
+            onUserMessage,
+        });
+
+        detector.start();
+
+        // Priming poll
+        await tick(100);
+
+        // First real poll
+        await tick(100);
+
+        // Second real poll — same message
+        await tick(100);
 
         expect(onUserMessage).toHaveBeenCalledTimes(1);
 
@@ -74,8 +147,13 @@ describe('UserMessageDetector', () => {
 
     it('skips messages matching echo hashes', async () => {
         const onUserMessage = jest.fn();
-        mockCdpService.call.mockResolvedValue({
-            result: { value: { text: 'Echoed message' } },
+        let callCount = 0;
+        mockCdpService.call.mockImplementation(async () => {
+            callCount++;
+            if (callCount === 1) {
+                return { result: { value: null } }; // priming: empty
+            }
+            return { result: { value: { text: 'Echoed message' } } };
         });
 
         const detector = new UserMessageDetector({
@@ -88,9 +166,11 @@ describe('UserMessageDetector', () => {
         detector.addEchoHash('Echoed message');
         detector.start();
 
-        jest.advanceTimersByTime(100);
-        await Promise.resolve();
-        await Promise.resolve();
+        // Priming poll
+        await tick(100);
+
+        // Real poll — echo, should be skipped
+        await tick(100);
 
         expect(onUserMessage).not.toHaveBeenCalled();
 
@@ -109,9 +189,7 @@ describe('UserMessageDetector', () => {
 
         detector.start();
 
-        jest.advanceTimersByTime(100);
-        await Promise.resolve();
-        await Promise.resolve();
+        await tick(100);
 
         // Should not throw, detector should remain active
         expect(detector.isActive()).toBe(true);
@@ -134,9 +212,7 @@ describe('UserMessageDetector', () => {
 
         detector.start();
 
-        jest.advanceTimersByTime(100);
-        await Promise.resolve();
-        await Promise.resolve();
+        await tick(100);
 
         expect(onUserMessage).not.toHaveBeenCalled();
 
@@ -149,6 +225,9 @@ describe('UserMessageDetector', () => {
         mockCdpService.call.mockImplementation(async () => {
             callCount++;
             if (callCount === 1) {
+                return { result: { value: null } }; // priming: empty
+            }
+            if (callCount === 2) {
                 return { result: { value: { text: 'First message' } } };
             }
             return { result: { value: { text: 'Second message' } } };
@@ -162,15 +241,14 @@ describe('UserMessageDetector', () => {
 
         detector.start();
 
-        // First poll
-        jest.advanceTimersByTime(100);
-        await Promise.resolve();
-        await Promise.resolve();
+        // Priming poll
+        await tick(100);
 
-        // Second poll — different message
-        jest.advanceTimersByTime(100);
-        await Promise.resolve();
-        await Promise.resolve();
+        // First real message
+        await tick(100);
+
+        // Second real message — different
+        await tick(100);
 
         expect(onUserMessage).toHaveBeenCalledTimes(2);
         expect(onUserMessage).toHaveBeenNthCalledWith(1, { text: 'First message' });
@@ -193,5 +271,89 @@ describe('UserMessageDetector', () => {
         expect(detector.isActive()).toBe(true);
 
         detector.stop();
+    });
+
+    it('seenHashes prevents re-detection of old messages after a different message appears', async () => {
+        const onUserMessage = jest.fn();
+        let callCount = 0;
+        mockCdpService.call.mockImplementation(async () => {
+            callCount++;
+            if (callCount === 1) {
+                return { result: { value: null } }; // priming: empty
+            }
+            if (callCount === 2) {
+                return { result: { value: { text: 'Message A' } } };
+            }
+            if (callCount === 3) {
+                return { result: { value: { text: 'Message B' } } };
+            }
+            // Poll 4: DOM reverts back to Message A (e.g., transient DOM state)
+            return { result: { value: { text: 'Message A' } } };
+        });
+
+        const detector = new UserMessageDetector({
+            cdpService: mockCdpService,
+            pollIntervalMs: 100,
+            onUserMessage,
+        });
+
+        detector.start();
+
+        // Priming poll
+        await tick(100);
+
+        // Poll: Message A — detected
+        await tick(100);
+
+        // Poll: Message B — detected
+        await tick(100);
+
+        // Poll: Message A again — should be skipped by seenHashes
+        await tick(100);
+
+        expect(onUserMessage).toHaveBeenCalledTimes(2);
+        expect(onUserMessage).toHaveBeenNthCalledWith(1, { text: 'Message A' });
+        expect(onUserMessage).toHaveBeenNthCalledWith(2, { text: 'Message B' });
+
+        await detector.stop();
+    });
+
+    it('seenHashes are cleared on restart', async () => {
+        const onUserMessage = jest.fn();
+        let callCount = 0;
+        mockCdpService.call.mockImplementation(async () => {
+            callCount++;
+            if (callCount === 1) {
+                return { result: { value: null } }; // priming: empty (session 1)
+            }
+            if (callCount === 2) {
+                return { result: { value: { text: 'Restart message' } } };
+            }
+            if (callCount === 3) {
+                return { result: { value: null } }; // priming: empty (session 2)
+            }
+            return { result: { value: { text: 'Restart message' } } };
+        });
+
+        const detector = new UserMessageDetector({
+            cdpService: mockCdpService,
+            pollIntervalMs: 100,
+            onUserMessage,
+        });
+
+        // First session
+        detector.start();
+        await tick(100); // priming
+        await tick(100); // detect
+        expect(onUserMessage).toHaveBeenCalledTimes(1);
+        detector.stop();
+
+        // Second session — same message should be detected again after restart
+        detector.start();
+        await tick(100); // priming
+        await tick(100); // detect
+        expect(onUserMessage).toHaveBeenCalledTimes(2);
+
+        await detector.stop();
     });
 });

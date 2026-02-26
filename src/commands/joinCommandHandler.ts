@@ -24,12 +24,12 @@ import { logger } from '../utils/logger';
 const MAX_EMBED_DESC = 4000;
 
 /**
- * Handler for /join and /mirror commands.
+ * Handler for /join and /mirror commands
  *
  * /join   — List Antigravity sessions and connect to one via a select menu.
  * /mirror — Toggle PC-to-Discord message mirroring ON/OFF.
  */
-export class JoinDetachCommandHandler {
+export class JoinCommandHandler {
     private readonly chatSessionService: ChatSessionService;
     private readonly chatSessionRepo: ChatSessionRepository;
     private readonly bindingRepo: WorkspaceBindingRepository;

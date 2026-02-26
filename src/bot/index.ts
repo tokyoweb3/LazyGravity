@@ -35,7 +35,7 @@ import {
 } from '../commands/cleanupCommandHandler';
 import { ChannelManager } from '../services/channelManager';
 import { TitleGeneratorService } from '../services/titleGeneratorService';
-import { JoinDetachCommandHandler } from '../commands/joinDetachCommandHandler';
+import { JoinCommandHandler } from '../commands/joinCommandHandler';
 import { isSessionSelectId } from '../ui/sessionPickerUi';
 
 // CDP integration services
@@ -805,7 +805,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         sendPromptImpl: sendPromptToAntigravity,
     });
 
-    // Initialize command handlers (joinDetachHandler is created after client, see below)
+    // Initialize command handlers (joinHandler is created after client, see below)
     const wsHandler = new WorkspaceCommandHandler(workspaceBindingRepo, chatSessionRepo, workspaceService, channelManager);
     const chatHandler = new ChatCommandHandler(chatSessionService, chatSessionRepo, workspaceBindingRepo, channelManager, workspaceService, bridge.pool);
     const cleanupHandler = new CleanupCommandHandler(chatSessionRepo, workspaceBindingRepo);
@@ -820,7 +820,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         ]
     });
 
-    const joinDetachHandler = new JoinDetachCommandHandler(chatSessionService, chatSessionRepo, workspaceBindingRepo, channelManager, bridge.pool, client);
+    const joinHandler = new JoinCommandHandler(chatSessionService, chatSessionRepo, workspaceBindingRepo, channelManager, bridge.pool, client);
 
     client.once(Events.ClientReady, async (readyClient) => {
         logger.info(`Ready! Logged in as ${readyClient.user.tag} | extractionMode=${config.extractionMode}`);
@@ -894,7 +894,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         parseApprovalCustomId,
         parseErrorPopupCustomId,
         parsePlanningCustomId,
-        joinDetachHandler,
+        joinHandler,
         handleSlashInteraction: async (
             interaction,
             handler,
@@ -919,7 +919,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             clientArg,
             promptDispatcher,
             templateRepo,
-            joinDetachHandler,
+            joinHandler,
         ),
         handleTemplateUse: async (interaction, templateId) => {
             const template = templateRepo.findById(templateId);
@@ -1068,7 +1068,7 @@ async function handleSlashInteraction(
     _client: Client,
     promptDispatcher: PromptDispatcher,
     templateRepo: TemplateRepository,
-    joinDetachHandler?: JoinDetachCommandHandler,
+    joinHandler?: JoinCommandHandler,
 ): Promise<void> {
     const commandName = interaction.commandName;
 
@@ -1319,8 +1319,8 @@ async function handleSlashInteraction(
         }
 
         case 'join': {
-            if (joinDetachHandler) {
-                await joinDetachHandler.handleJoin(interaction, bridge);
+            if (joinHandler) {
+                await joinHandler.handleJoin(interaction, bridge);
             } else {
                 await interaction.editReply({ content: t('⚠️ Join handler not available.') });
             }
@@ -1328,8 +1328,8 @@ async function handleSlashInteraction(
         }
 
         case 'mirror': {
-            if (joinDetachHandler) {
-                await joinDetachHandler.handleMirror(interaction, bridge);
+            if (joinHandler) {
+                await joinHandler.handleMirror(interaction, bridge);
             } else {
                 await interaction.editReply({ content: t('⚠️ Mirror handler not available.') });
             }

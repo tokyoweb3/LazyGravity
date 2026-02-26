@@ -1,4 +1,4 @@
-import { JoinDetachCommandHandler } from '../../src/commands/joinDetachCommandHandler';
+import { JoinCommandHandler } from '../../src/commands/joinCommandHandler';
 import { ChatSessionService, SessionListItem } from '../../src/services/chatSessionService';
 import { ChatSessionRepository } from '../../src/database/chatSessionRepository';
 import { WorkspaceBindingRepository } from '../../src/database/workspaceBindingRepository';
@@ -22,8 +22,8 @@ jest.mock('../../src/services/responseMonitor', () => ({
     })),
 }));
 
-describe('JoinDetachCommandHandler', () => {
-    let handler: JoinDetachCommandHandler;
+describe('JoinCommandHandler', () => {
+    let handler: JoinCommandHandler;
     let mockService: jest.Mocked<ChatSessionService>;
     let mockPool: jest.Mocked<CdpConnectionPool>;
     let mockClient: any;
@@ -69,7 +69,7 @@ describe('JoinDetachCommandHandler', () => {
         bindingRepo = new WorkspaceBindingRepository(db);
         channelManager = new ChannelManager();
 
-        handler = new JoinDetachCommandHandler(
+        handler = new JoinCommandHandler(
             mockService,
             chatSessionRepo,
             bindingRepo,

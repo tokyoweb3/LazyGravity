@@ -38,17 +38,28 @@ const DETECT_USER_MESSAGE_SCRIPT = `(() => {
     const panel = document.querySelector('.antigravity-agent-side-panel');
     const scope = panel || document;
 
-    // User message bubbles: bg-gray-500/15 + rounded-lg + select-text
-    const userBubbles = scope.querySelectorAll(
-        '[class*="bg-gray-500/15"][class*="rounded-lg"][class*="select-text"]'
+    // Strategy A (primary): Query .whitespace-pre-wrap elements directly inside
+    // user bubble containers. This avoids the parent-container problem where
+    // querySelectorAll matches a wrapper that contains multiple bubbles.
+    const textEls = scope.querySelectorAll(
+        '[class*="bg-gray-500/15"][class*="select-text"] .whitespace-pre-wrap'
     );
+
+    if (textEls.length > 0) {
+        const lastTextEl = textEls[textEls.length - 1];
+        const text = (lastTextEl.textContent || '').trim();
+        if (text.length > 0) return { text };
+    }
+
+    // Strategy B (fallback): Find individual bubble containers, filtering out
+    // any element that itself contains nested bubble elements (i.e., a parent wrapper).
+    const userBubbles = Array.from(scope.querySelectorAll(
+        '[class*="bg-gray-500/15"][class*="rounded-lg"][class*="select-text"]'
+    )).filter(el => !el.querySelector('[class*="bg-gray-500/15"][class*="select-text"]'));
 
     if (userBubbles.length === 0) return null;
 
-    // Get the last (most recent) user message bubble
     const lastBubble = userBubbles[userBubbles.length - 1];
-
-    // Extract text from .whitespace-pre-wrap (the actual message content)
     const textEl = lastBubble.querySelector('.whitespace-pre-wrap')
         || lastBubble.querySelector('[style*="word-break"]');
 
@@ -91,6 +102,11 @@ export class UserMessageDetector {
     private lastDetectedHash: string | null = null;
     /** Set of echo hashes — messages sent by LazyGravity that should be ignored */
     private readonly echoHashes = new Set<string>();
+    /** Set of all previously detected message hashes (defense-in-depth dedup) */
+    private readonly seenHashes = new Set<string>();
+    private static readonly MAX_SEEN_HASHES = 50;
+    /** True during the first poll — seeds existing DOM state without firing callback */
+    private isPriming: boolean = false;
 
     constructor(options: UserMessageDetectorOptions) {
         this.cdpService = options.cdpService;
@@ -111,11 +127,15 @@ export class UserMessageDetector {
         }, 60000);
     }
 
-    /** Start monitoring. */
+    /** Start monitoring. The first poll seeds the current DOM state without firing the callback. */
     start(): void {
         if (this.isRunning) return;
         this.isRunning = true;
         this.lastDetectedHash = null;
+        this.seenHashes.clear();
+        this.isPriming = true;
+        // echoHashes are intentionally NOT cleared — they have their own 60s TTL
+        // and keeping them prevents false echo pickup during rapid stop/start cycles.
         this.schedulePoll();
     }
 
@@ -131,6 +151,18 @@ export class UserMessageDetector {
     /** Returns whether monitoring is currently active. */
     isActive(): boolean {
         return this.isRunning;
+    }
+
+    /** Add a hash to the seenHashes set, evicting the oldest entry if at capacity. */
+    private addToSeenHashes(hash: string): void {
+        if (this.seenHashes.size >= UserMessageDetector.MAX_SEEN_HASHES) {
+            // Evict the oldest entry (first inserted)
+            const oldest = this.seenHashes.values().next().value;
+            if (oldest !== undefined) {
+                this.seenHashes.delete(oldest);
+            }
+        }
+        this.seenHashes.add(hash);
     }
 
     /** Schedule the next poll. */
@@ -165,19 +197,47 @@ export class UserMessageDetector {
             const result = await this.cdpService.call('Runtime.evaluate', callParams);
             const info: UserMessageInfo | null = result?.result?.value ?? null;
 
+            // Clear priming flag even if DOM is empty (e.g., new/empty chat)
+            if (this.isPriming && (!info || !info.text)) {
+                this.isPriming = false;
+                logger.debug('[UserMessageDetector] Primed with empty DOM');
+                return;
+            }
+
             if (info && info.text) {
                 const hash = computeEchoHash(info.text);
+                const preview = info.text.slice(0, 40);
+
+                // First poll: seed the current DOM state without firing callback
+                if (this.isPriming) {
+                    this.isPriming = false;
+                    this.lastDetectedHash = hash;
+                    this.addToSeenHashes(hash);
+                    logger.debug(`[UserMessageDetector] Primed with existing message: "${preview}..."`);
+                    return;
+                }
 
                 // Skip if same as last detected message
                 if (hash === this.lastDetectedHash) return;
 
-                // Skip if this is an echo (sent by LazyGravity)
-                if (this.echoHashes.has(hash)) {
+                // Skip if already seen (defense-in-depth dedup)
+                if (this.seenHashes.has(hash)) {
+                    logger.debug(`[UserMessageDetector] seenHash hit, skipping: "${preview}..."`);
                     this.lastDetectedHash = hash;
                     return;
                 }
 
+                // Skip if this is an echo (sent by LazyGravity)
+                if (this.echoHashes.has(hash)) {
+                    logger.debug(`[UserMessageDetector] Echo hash match, skipping: "${preview}..."`);
+                    this.lastDetectedHash = hash;
+                    this.addToSeenHashes(hash);
+                    return;
+                }
+
                 this.lastDetectedHash = hash;
+                this.addToSeenHashes(hash);
+                logger.debug(`[UserMessageDetector] New message detected: "${preview}..."`);
                 this.onUserMessage(info);
             }
         } catch (error) {
