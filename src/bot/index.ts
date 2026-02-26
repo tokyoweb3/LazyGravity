@@ -820,7 +820,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         ]
     });
 
-    const joinHandler = new JoinCommandHandler(chatSessionService, chatSessionRepo, workspaceBindingRepo, channelManager, bridge.pool, client);
+    const joinHandler = new JoinCommandHandler(chatSessionService, chatSessionRepo, workspaceBindingRepo, channelManager, bridge.pool, workspaceService, client);
 
     client.once(Events.ClientReady, async (readyClient) => {
         logger.info(`Ready! Logged in as ${readyClient.user.tag} | extractionMode=${config.extractionMode}`);

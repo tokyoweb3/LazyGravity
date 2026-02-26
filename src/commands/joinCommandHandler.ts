@@ -17,6 +17,7 @@ import {
 } from '../services/cdpBridgeManager';
 import { CdpService } from '../services/cdpService';
 import { ResponseMonitor } from '../services/responseMonitor';
+import { WorkspaceService } from '../services/workspaceService';
 import { buildSessionPickerUI } from '../ui/sessionPickerUi';
 import { logger } from '../utils/logger';
 
@@ -35,6 +36,7 @@ export class JoinCommandHandler {
     private readonly bindingRepo: WorkspaceBindingRepository;
     private readonly channelManager: ChannelManager;
     private readonly pool: CdpConnectionPool;
+    private readonly workspaceService: WorkspaceService;
     private readonly client: Client;
 
     /** Active ResponseMonitors per workspace (for AI response mirroring) */
@@ -46,6 +48,7 @@ export class JoinCommandHandler {
         bindingRepo: WorkspaceBindingRepository,
         channelManager: ChannelManager,
         pool: CdpConnectionPool,
+        workspaceService: WorkspaceService,
         client: Client,
     ) {
         this.chatSessionService = chatSessionService;
@@ -53,7 +56,16 @@ export class JoinCommandHandler {
         this.bindingRepo = bindingRepo;
         this.channelManager = channelManager;
         this.pool = pool;
+        this.workspaceService = workspaceService;
         this.client = client;
+    }
+
+    /**
+     * Resolve a workspace name (from DB) to its full absolute path.
+     * The DB stores only the directory name; CDP needs the full path for launching.
+     */
+    private resolveWorkspacePath(workspaceName: string): string {
+        return this.workspaceService.getWorkspacePath(workspaceName);
     }
 
     /**
@@ -74,9 +86,11 @@ export class JoinCommandHandler {
             return;
         }
 
+        const workspacePath = this.resolveWorkspacePath(workspaceName);
+
         let cdp;
         try {
-            cdp = await this.pool.getOrConnect(workspaceName);
+            cdp = await this.pool.getOrConnect(workspacePath);
         } catch (e: any) {
             await interaction.editReply({
                 content: t(`⚠️ Failed to connect to project: ${e.message}`),
@@ -119,6 +133,8 @@ export class JoinCommandHandler {
             return;
         }
 
+        const workspacePath = this.resolveWorkspacePath(workspaceName);
+
         // Step 1: Check if a channel already exists for this session
         const existingSession = this.chatSessionRepo.findByDisplayName(workspaceName, selectedTitle);
         if (existingSession) {
@@ -134,7 +150,7 @@ export class JoinCommandHandler {
         // Step 2: Connect to CDP
         let cdp;
         try {
-            cdp = await this.pool.getOrConnect(workspaceName);
+            cdp = await this.pool.getOrConnect(workspacePath);
         } catch (e: any) {
             await interaction.editReply({ content: t(`⚠️ Failed to connect to project: ${e.message}`) });
             return;
@@ -173,7 +189,7 @@ export class JoinCommandHandler {
         this.chatSessionRepo.updateDisplayName(newChannelId, selectedTitle);
 
         // Step 6: Start mirroring (routes dynamically to all bound session channels)
-        this.startMirroring(bridge, cdp, workspaceName);
+        this.startMirroring(bridge, cdp, workspacePath);
 
         const embed = new EmbedBuilder()
             .setTitle(t('🔗 Joined Session'))
@@ -207,6 +223,7 @@ export class JoinCommandHandler {
             return;
         }
 
+        const workspacePath = this.resolveWorkspacePath(workspaceName);
         const detector = this.pool.getUserMessageDetector(dirName);
 
         if (detector?.isActive()) {
@@ -228,7 +245,7 @@ export class JoinCommandHandler {
             // Turn ON
             let cdp;
             try {
-                cdp = await this.pool.getOrConnect(workspaceName);
+                cdp = await this.pool.getOrConnect(workspacePath);
             } catch (e: any) {
                 await interaction.editReply({
                     content: t(`⚠️ Failed to connect to project: ${e.message}`),
@@ -236,7 +253,7 @@ export class JoinCommandHandler {
                 return;
             }
 
-            this.startMirroring(bridge, cdp, workspaceName);
+            this.startMirroring(bridge, cdp, workspacePath);
 
             const embed = new EmbedBuilder()
                 .setTitle(t('📡 Mirroring ON'))

@@ -4,6 +4,7 @@ import { ChatSessionRepository } from '../../src/database/chatSessionRepository'
 import { WorkspaceBindingRepository } from '../../src/database/workspaceBindingRepository';
 import { ChannelManager } from '../../src/services/channelManager';
 import { CdpConnectionPool } from '../../src/services/cdpConnectionPool';
+import { WorkspaceService } from '../../src/services/workspaceService';
 import Database from 'better-sqlite3';
 
 // Mock ensureUserMessageDetector and getCurrentChatTitle to prevent real polling in tests
@@ -26,6 +27,7 @@ describe('JoinCommandHandler', () => {
     let handler: JoinCommandHandler;
     let mockService: jest.Mocked<ChatSessionService>;
     let mockPool: jest.Mocked<CdpConnectionPool>;
+    let mockWorkspaceService: jest.Mocked<WorkspaceService>;
     let mockClient: any;
     let db: Database.Database;
     let chatSessionRepo: ChatSessionRepository;
@@ -58,6 +60,15 @@ describe('JoinCommandHandler', () => {
             extractDirName: jest.fn((path: string) => path.split('/').filter(Boolean).pop() || path),
         } as any;
 
+        mockWorkspaceService = {
+            getWorkspacePath: jest.fn((name: string) => `/workspace/base/${name}`),
+            getBaseDir: jest.fn().mockReturnValue('/workspace/base'),
+            exists: jest.fn().mockReturnValue(true),
+            validatePath: jest.fn((name: string) => `/workspace/base/${name}`),
+            scanWorkspaces: jest.fn().mockReturnValue([]),
+            ensureBaseDir: jest.fn(),
+        } as any;
+
         mockClient = {
             channels: {
                 cache: { get: jest.fn().mockReturnValue({ send: jest.fn().mockResolvedValue(undefined) }) },
@@ -75,6 +86,7 @@ describe('JoinCommandHandler', () => {
             bindingRepo,
             channelManager,
             mockPool,
+            mockWorkspaceService,
             mockClient,
         );
     });

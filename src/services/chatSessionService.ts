@@ -426,7 +426,7 @@ function buildActivateViaPastConversationsScript(title: string): string {
 export class ChatSessionService {
     private static readonly ACTIVATE_SESSION_MAX_WAIT_MS = 30000;
     private static readonly ACTIVATE_SESSION_RETRY_INTERVAL_MS = 800;
-    private static readonly LIST_SESSIONS_TARGET = 10;
+    private static readonly LIST_SESSIONS_TARGET = 20;
 
     /**
      * List recent sessions by opening the Past Conversations panel.

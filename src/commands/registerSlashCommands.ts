@@ -143,7 +143,7 @@ const helpCommand = new SlashCommandBuilder()
 /** /join command definition */
 const joinCommand = new SlashCommandBuilder()
     .setName('join')
-    .setDescription(t('Join an existing Antigravity session from the side panel'));
+    .setDescription(t('Join an existing Antigravity session (shows up to 20 recent sessions)'));
 
 /** /mirror command definition */
 const mirrorCommand = new SlashCommandBuilder()
