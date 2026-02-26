@@ -523,4 +523,49 @@ describe('ErrorPopupDetector - error popup detection and remote execution', () =
 
         consoleErrorSpy.mockRestore();
     });
+
+    // ──────────────────────────────────────────────────────
+    // onResolved callback tests
+    // ──────────────────────────────────────────────────────
+    it('calls onResolved when error popup disappears after detection', async () => {
+        const onResolved = jest.fn();
+        const mockInfo = makeErrorPopupInfo();
+
+        mockCdpService.call
+            .mockResolvedValueOnce({ result: { value: mockInfo } })  // detected
+            .mockResolvedValueOnce({ result: { value: null } });     // disappeared
+
+        detector = new ErrorPopupDetector({
+            cdpService: mockCdpService,
+            pollIntervalMs: 500,
+            onErrorPopup: jest.fn(),
+            onResolved,
+        });
+        detector.start();
+
+        await jest.advanceTimersByTimeAsync(500); // detection
+        expect(onResolved).not.toHaveBeenCalled();
+
+        await jest.advanceTimersByTimeAsync(500); // disappearance
+        expect(onResolved).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not call onResolved when popup was never detected', async () => {
+        const onResolved = jest.fn();
+
+        mockCdpService.call.mockResolvedValue({ result: { value: null } });
+
+        detector = new ErrorPopupDetector({
+            cdpService: mockCdpService,
+            pollIntervalMs: 500,
+            onErrorPopup: jest.fn(),
+            onResolved,
+        });
+        detector.start();
+
+        await jest.advanceTimersByTimeAsync(500);
+        await jest.advanceTimersByTimeAsync(500);
+
+        expect(onResolved).not.toHaveBeenCalled();
+    });
 });

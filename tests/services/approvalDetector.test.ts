@@ -429,4 +429,52 @@ describe('ApprovalDetector - approval button detection and remote execution', ()
             expect.not.objectContaining({ contextId: expect.anything() })
         );
     });
+
+    // ──────────────────────────────────────────────────────
+    // Test 13: onResolved fires when detected buttons disappear
+    // ──────────────────────────────────────────────────────
+    it('calls onResolved when buttons disappear after detection', async () => {
+        const onResolved = jest.fn();
+        const mockInfo = makeApprovalInfo();
+
+        mockCdpService.call
+            .mockResolvedValueOnce({ result: { value: mockInfo } })  // detected
+            .mockResolvedValueOnce({ result: { value: null } });     // disappeared
+
+        detector = new ApprovalDetector({
+            cdpService: mockCdpService,
+            pollIntervalMs: 500,
+            onApprovalRequired: jest.fn(),
+            onResolved,
+        });
+        detector.start();
+
+        await jest.advanceTimersByTimeAsync(500); // detection
+        expect(onResolved).not.toHaveBeenCalled();
+
+        await jest.advanceTimersByTimeAsync(500); // disappearance
+        expect(onResolved).toHaveBeenCalledTimes(1);
+    });
+
+    // ──────────────────────────────────────────────────────
+    // Test 14: onResolved does not fire when no prior detection
+    // ──────────────────────────────────────────────────────
+    it('does not call onResolved when buttons were never detected', async () => {
+        const onResolved = jest.fn();
+
+        mockCdpService.call.mockResolvedValue({ result: { value: null } });
+
+        detector = new ApprovalDetector({
+            cdpService: mockCdpService,
+            pollIntervalMs: 500,
+            onApprovalRequired: jest.fn(),
+            onResolved,
+        });
+        detector.start();
+
+        await jest.advanceTimersByTimeAsync(500);
+        await jest.advanceTimersByTimeAsync(500);
+
+        expect(onResolved).not.toHaveBeenCalled();
+    });
 });

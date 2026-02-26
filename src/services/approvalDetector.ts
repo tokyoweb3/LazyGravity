@@ -20,6 +20,8 @@ export interface ApprovalDetectorOptions {
     pollIntervalMs?: number;
     /** Callback when an approval button is detected */
     onApprovalRequired: (info: ApprovalInfo) => void;
+    /** Callback when a previously detected approval is resolved (buttons disappeared) */
+    onResolved?: () => void;
 }
 
 /**
@@ -228,6 +230,7 @@ export class ApprovalDetector {
     private cdpService: CdpService;
     private pollIntervalMs: number;
     private onApprovalRequired: (info: ApprovalInfo) => void;
+    private onResolved?: () => void;
 
     private pollTimer: NodeJS.Timeout | null = null;
     private isRunning: boolean = false;
@@ -240,6 +243,7 @@ export class ApprovalDetector {
         this.cdpService = options.cdpService;
         this.pollIntervalMs = options.pollIntervalMs ?? 1500;
         this.onApprovalRequired = options.onApprovalRequired;
+        this.onResolved = options.onResolved;
     }
 
     /**
@@ -314,8 +318,12 @@ export class ApprovalDetector {
                 }
             } else {
                 // Reset when buttons disappear (prepare for next approval detection)
+                const wasDetected = this.lastDetectedKey !== null;
                 this.lastDetectedKey = null;
                 this.lastDetectedInfo = null;
+                if (wasDetected && this.onResolved) {
+                    this.onResolved();
+                }
             }
         } catch (error) {
             // Ignore CDP errors and continue monitoring

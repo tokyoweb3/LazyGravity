@@ -19,6 +19,8 @@ export interface ErrorPopupDetectorOptions {
     pollIntervalMs?: number;
     /** Callback when an error popup is detected */
     onErrorPopup: (info: ErrorPopupInfo) => void;
+    /** Callback when a previously detected error popup is resolved (popup disappeared) */
+    onResolved?: () => void;
 }
 
 /**
@@ -118,6 +120,7 @@ export class ErrorPopupDetector {
     private cdpService: CdpService;
     private pollIntervalMs: number;
     private onErrorPopup: (info: ErrorPopupInfo) => void;
+    private onResolved?: () => void;
 
     private pollTimer: NodeJS.Timeout | null = null;
     private isRunning: boolean = false;
@@ -134,6 +137,7 @@ export class ErrorPopupDetector {
         this.cdpService = options.cdpService;
         this.pollIntervalMs = options.pollIntervalMs ?? 3000;
         this.onErrorPopup = options.onErrorPopup;
+        this.onResolved = options.onResolved;
     }
 
     /** Start monitoring. */
@@ -252,8 +256,12 @@ export class ErrorPopupDetector {
                 }
             } else {
                 // Reset when popup disappears (prepare for next detection)
+                const wasDetected = this.lastDetectedKey !== null;
                 this.lastDetectedKey = null;
                 this.lastDetectedInfo = null;
+                if (wasDetected && this.onResolved) {
+                    this.onResolved();
+                }
             }
         } catch (error) {
             // Ignore CDP errors and continue monitoring
