@@ -122,8 +122,8 @@ function resolveExtractionMode(
     persistedValue: 'legacy' | 'structured' | undefined,
 ): ExtractionMode {
     const raw = envValue ?? persistedValue;
-    if (raw === 'structured') return 'structured';
-    return 'legacy';
+    if (raw === 'legacy') return 'legacy';
+    return 'structured';
 }
 
 function resolveBoolean(

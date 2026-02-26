@@ -63,6 +63,7 @@ describe('Lean ResponseMonitor (new API)', () => {
             cdpService: cdpService as any,
             pollIntervalMs: 2000,
             stopGoneConfirmCount: 3,
+            extractionMode: 'legacy',
             ...overrides,
         } as any);
     }
