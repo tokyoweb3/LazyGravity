@@ -127,103 +127,125 @@ export function classifyAssistantSegments(payload: unknown): ClassifyResult {
 export function extractAssistantSegmentsPayloadScript(): string {
     // The IIFE is a plain string evaluated in the browser context via CDP.
     // It MUST NOT reference any Node.js module or import.
+    //
+    // Uses the same multi-selector strategy as RESPONSE_TEXT to find
+    // assistant content nodes in Antigravity's DOM.
     return `(() => {
     var panel = document.querySelector('.antigravity-agent-side-panel');
     var scope = panel || document;
 
-    var messages = scope.querySelectorAll('[data-message-role="assistant"]');
-    if (!messages || messages.length === 0) return null;
+    // Same selectors as RESPONSE_TEXT — ordered by specificity
+    var selectors = [
+        '.rendered-markdown',
+        '.leading-relaxed.select-text',
+        '.flex.flex-col.gap-y-3',
+        '[data-message-author-role="assistant"]',
+        '[data-message-role="assistant"]',
+        '[class*="assistant-message"]',
+        '[class*="message-content"]',
+        '[class*="markdown-body"]',
+        '.prose',
+    ];
+
+    var looksLikeActivityLog = function(text) {
+        var normalized = (text || '').trim().toLowerCase();
+        if (!normalized) return false;
+        if (/^(?:analy[sz]ing|reading|writing|running|searching|planning|thinking|processing|loading|executing|testing|debugging|analyzed|read|wrote|ran)/i.test(normalized) && normalized.length <= 220) return true;
+        if (/^initiating\\s/i.test(normalized) && normalized.length <= 500) return true;
+        if (/^thought for\\s/i.test(normalized) && normalized.length <= 500) return true;
+        return false;
+    };
+
+    var looksLikeFeedbackFooter = function(text) {
+        var normalized = (text || '').trim().toLowerCase().replace(/\\s+/g, ' ');
+        return normalized === 'good bad' || normalized === 'good' || normalized === 'bad';
+    };
+
+    var looksLikeToolOutput = function(text) {
+        var first = (text || '').trim().split('\\n')[0] || '';
+        if (/^[a-z0-9._-]+\\s*\\/\\s*[a-z0-9._-]+$/i.test(first)) return true;
+        if (/^full output written to\\b/i.test(first)) return true;
+        if (/^output\\.[a-z0-9._-]+(?:#l\\d+(?:-\\d+)?)?$/i.test(first)) return true;
+        return false;
+    };
+
+    var isInsideExcludedContainer = function(node) {
+        if (node.closest('details')) return true;
+        if (node.closest('[class*="feedback"], footer')) return true;
+        if (node.closest('.notify-user-container')) return true;
+        return false;
+    };
 
     var segments = [];
+    var seen = new Set();
+    var bodyFound = false;
 
-    for (var mi = 0; mi < messages.length; mi++) {
-        var msg = messages[mi];
-        var basePath = '[data-message-role="assistant"]:nth-of-type(' + (mi + 1) + ')';
+    // Pass 1: Find assistant body — last non-excluded content node (recency first)
+    var combinedSelector = selectors.join(', ');
+    var nodes = scope.querySelectorAll(combinedSelector);
 
-        // Extract thinking / tool-call / tool-result from <details>
-        var details = msg.querySelectorAll('details');
-        for (var di = 0; di < details.length; di++) {
-            var detail = details[di];
+    for (var i = nodes.length - 1; i >= 0; i--) {
+        var node = nodes[i];
+        if (!node || seen.has(node)) continue;
+        seen.add(node);
+        if (isInsideExcludedContainer(node)) continue;
 
-            // Summary → thinking
-            var summary = detail.querySelector('summary');
-            if (summary) {
-                var summaryText = (summary.textContent || '').trim();
-                if (summaryText) {
-                    segments.push({
-                        kind: 'thinking',
-                        text: summaryText,
-                        role: 'assistant',
-                        messageIndex: mi,
-                        domPath: basePath + ' details summary'
-                    });
-                }
-            }
+        var text = (node.innerText || node.textContent || '').replace(/\\r/g, '').trim();
+        if (!text || text.length < 2) continue;
+        if (looksLikeActivityLog(text)) continue;
+        if (looksLikeFeedbackFooter(text)) continue;
+        if (looksLikeToolOutput(text)) continue;
 
-            // Tool calls inside details
-            var toolCalls = detail.querySelectorAll('.tool-call, [class*="tool-call"]');
-            for (var ti = 0; ti < toolCalls.length; ti++) {
-                var tcText = (toolCalls[ti].textContent || '').trim();
-                if (tcText) {
-                    segments.push({
-                        kind: 'tool-call',
-                        text: tcText,
-                        role: 'assistant',
-                        messageIndex: mi,
-                        domPath: basePath + ' details div.tool-call'
-                    });
-                }
-            }
-
-            // Tool results inside details
-            var toolResults = detail.querySelectorAll('.tool-result, [class*="tool-result"]');
-            for (var ri = 0; ri < toolResults.length; ri++) {
-                var trText = (toolResults[ri].textContent || '').trim();
-                if (trText) {
-                    segments.push({
-                        kind: 'tool-result',
-                        text: trText,
-                        role: 'assistant',
-                        messageIndex: mi,
-                        domPath: basePath + ' details div.tool-result'
-                    });
-                }
-            }
-        }
-
-        // Extract feedback from buttons
-        var feedbackBtns = msg.querySelectorAll('[class*="feedback"] button, footer button');
-        for (var fi = 0; fi < feedbackBtns.length; fi++) {
-            var btnText = (feedbackBtns[fi].textContent || '').trim();
-            if (btnText === 'Good' || btnText === 'Bad') {
-                segments.push({
-                    kind: 'feedback',
-                    text: btnText,
-                    role: 'assistant',
-                    messageIndex: mi,
-                    domPath: basePath + ' footer.feedback button.' + btnText.toLowerCase()
-                });
-            }
-        }
-
-        // Extract assistant body: clone message, remove details and feedback, get innerHTML
-        var clone = msg.cloneNode(true);
-        var toRemove = clone.querySelectorAll('details, [class*="feedback"], footer');
-        for (var ri2 = 0; ri2 < toRemove.length; ri2++) {
-            toRemove[ri2].parentNode.removeChild(toRemove[ri2]);
-        }
-
-        var bodyHtml = clone.innerHTML;
+        // This is the assistant body — extract innerHTML for Markdown conversion
+        var bodyHtml = node.innerHTML;
         if (bodyHtml && bodyHtml.trim()) {
             segments.push({
                 kind: 'assistant-body',
                 text: bodyHtml,
                 role: 'assistant',
-                messageIndex: mi,
-                domPath: basePath
+                messageIndex: 0,
+                domPath: 'multi-selector'
+            });
+            bodyFound = true;
+            break; // Only take the last (most recent) output node
+        }
+    }
+
+    // Pass 2: Extract thinking segments from <details> summaries
+    var details = scope.querySelectorAll('details');
+    for (var di = 0; di < details.length; di++) {
+        var detail = details[di];
+        var summary = detail.querySelector('summary');
+        if (summary) {
+            var summaryText = (summary.textContent || '').trim();
+            if (summaryText) {
+                segments.push({
+                    kind: 'thinking',
+                    text: summaryText,
+                    role: 'assistant',
+                    messageIndex: 0,
+                    domPath: 'details:nth(' + di + ') summary'
+                });
+            }
+        }
+    }
+
+    // Pass 3: Extract feedback buttons
+    var feedbackBtns = scope.querySelectorAll('[class*="feedback"] button, footer button');
+    for (var fi = 0; fi < feedbackBtns.length; fi++) {
+        var btnText = (feedbackBtns[fi].textContent || '').trim();
+        if (btnText === 'Good' || btnText === 'Bad') {
+            segments.push({
+                kind: 'feedback',
+                text: btnText,
+                role: 'assistant',
+                messageIndex: 0,
+                domPath: 'feedback button.' + btnText.toLowerCase()
             });
         }
     }
+
+    if (!bodyFound && segments.length === 0) return null;
 
     return {
         source: 'dom-structured',
