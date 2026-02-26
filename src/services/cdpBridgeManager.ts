@@ -9,6 +9,7 @@ import {
 
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
+import { disableAllButtons } from '../utils/discordButtonUtils';
 import { ApprovalDetector, ApprovalInfo } from './approvalDetector';
 import { AutoAcceptService } from './autoAcceptService';
 import { CdpConnectionPool } from './cdpConnectionPool';
@@ -283,9 +284,31 @@ export function ensureApprovalDetector(
     const existing = bridge.pool.getApprovalDetector(workspaceDirName);
     if (existing && existing.isActive()) return;
 
+    // Track the most recent button message for auto-disable on resolve.
+    // Only the latest message is tracked; if a new detection fires before the previous
+    // is resolved, the older message reference is overwritten. This is acceptable because
+    // the detector's lastDetectedKey deduplication prevents rapid successive notifications.
+    let lastButtonMessage: Message | null = null;
+
     const detector = new ApprovalDetector({
         cdpService: cdp,
         pollIntervalMs: 2000,
+        onResolved: () => {
+            if (!lastButtonMessage) return;
+            const msg = lastButtonMessage;
+            lastButtonMessage = null;
+            const originalEmbed = msg.embeds[0];
+            const updatedEmbed = originalEmbed
+                ? EmbedBuilder.from(originalEmbed)
+                : new EmbedBuilder().setTitle(t('Approval Required'));
+            updatedEmbed
+                .setColor(0x95A5A6)
+                .addFields({ name: t('Status'), value: t('Resolved in Antigravity'), inline: false });
+            msg.edit({
+                embeds: [updatedEmbed],
+                components: disableAllButtons(msg.components),
+            }).catch(logger.error);
+        },
         onApprovalRequired: async (info: ApprovalInfo) => {
             logger.debug(`[ApprovalDetector:${workspaceDirName}] Approval button detected (allow="${info.approveText}", deny="${info.denyText}")`);
 
@@ -306,14 +329,20 @@ export function ensureApprovalDetector(
 
                 const autoEmbed = new EmbedBuilder()
                     .setTitle(accepted ? t('Auto-approved') : t('Auto-approve failed'))
-                    .setDescription(info.description || t('Antigravity is requesting approval for an action'))
+                    .setDescription(accepted ? t('An action was automatically approved.') : t('Auto-approve attempted but failed. Manual approval required.'))
                     .setColor(accepted ? 0x2ECC71 : 0xF39C12)
                     .addFields(
                         { name: t('Auto-approve mode'), value: t('ON'), inline: true },
                         { name: t('Workspace'), value: workspaceDirName, inline: true },
                         { name: t('Result'), value: accepted ? t('Executed Always Allow/Allow') : t('Manual approval required'), inline: true },
-                    )
-                    .setTimestamp();
+                    );
+                if (info.description) {
+                    autoEmbed.addFields({ name: t('Action Detail'), value: info.description.substring(0, 1024), inline: false });
+                }
+                if (info.approveText) {
+                    autoEmbed.addFields({ name: t('Approved via'), value: info.approveText, inline: true });
+                }
+                autoEmbed.setTimestamp();
                 await (targetChannel as any).send({ embeds: [autoEmbed] }).catch(logger.error);
 
                 if (accepted) {
@@ -350,10 +379,13 @@ export function ensureApprovalDetector(
 
             const row = new ActionRowBuilder<ButtonBuilder>().addComponents(approveBtn, alwaysAllowBtn, denyBtn);
 
-            (targetChannel as any).send({
+            const sent = await (targetChannel as any).send({
                 embeds: [embed],
                 components: [row],
-            }).catch(logger.error);
+            }).catch((err: any) => { logger.error(err); return null; });
+            if (sent) {
+                lastButtonMessage = sent;
+            }
         },
     });
 
@@ -375,9 +407,29 @@ export function ensurePlanningDetector(
     const existing = bridge.pool.getPlanningDetector(workspaceDirName);
     if (existing && existing.isActive()) return;
 
+    // Track the most recent planning message for auto-disable on resolve.
+    // See ensureApprovalDetector comment for tracking limitation rationale.
+    let lastPlanningMessage: Message | null = null;
+
     const detector = new PlanningDetector({
         cdpService: cdp,
         pollIntervalMs: 2000,
+        onResolved: () => {
+            if (!lastPlanningMessage) return;
+            const msg = lastPlanningMessage;
+            lastPlanningMessage = null;
+            const originalEmbed = msg.embeds[0];
+            const updatedEmbed = originalEmbed
+                ? EmbedBuilder.from(originalEmbed)
+                : new EmbedBuilder().setTitle(t('Planning Mode'));
+            updatedEmbed
+                .setColor(0x95A5A6)
+                .addFields({ name: t('Status'), value: t('Resolved in Antigravity'), inline: false });
+            msg.edit({
+                embeds: [updatedEmbed],
+                components: disableAllButtons(msg.components),
+            }).catch(logger.error);
+        },
         onPlanningRequired: async (info: PlanningInfo) => {
             logger.debug(`[PlanningDetector:${workspaceDirName}] Planning buttons detected (title="${info.planTitle}")`);
 
@@ -421,10 +473,13 @@ export function ensurePlanningDetector(
 
             const row = new ActionRowBuilder<ButtonBuilder>().addComponents(openBtn, proceedBtn);
 
-            (targetChannel as any).send({
+            const sent = await (targetChannel as any).send({
                 embeds: [embed],
                 components: [row],
-            }).catch(logger.error);
+            }).catch((err: any) => { logger.error(err); return null; });
+            if (sent) {
+                lastPlanningMessage = sent;
+            }
         },
     });
 
@@ -446,9 +501,29 @@ export function ensureErrorPopupDetector(
     const existing = bridge.pool.getErrorPopupDetector(workspaceDirName);
     if (existing && existing.isActive()) return;
 
+    // Track the most recent error message for auto-disable on resolve.
+    // See ensureApprovalDetector comment for tracking limitation rationale.
+    let lastErrorMessage: Message | null = null;
+
     const detector = new ErrorPopupDetector({
         cdpService: cdp,
         pollIntervalMs: 3000,
+        onResolved: () => {
+            if (!lastErrorMessage) return;
+            const msg = lastErrorMessage;
+            lastErrorMessage = null;
+            const originalEmbed = msg.embeds[0];
+            const updatedEmbed = originalEmbed
+                ? EmbedBuilder.from(originalEmbed)
+                : new EmbedBuilder().setTitle(t('Agent Error'));
+            updatedEmbed
+                .setColor(0x95A5A6)
+                .addFields({ name: t('Status'), value: t('Resolved in Antigravity'), inline: false });
+            msg.edit({
+                embeds: [updatedEmbed],
+                components: disableAllButtons(msg.components),
+            }).catch(logger.error);
+        },
         onErrorPopup: async (info: ErrorPopupInfo) => {
             logger.debug(`[ErrorPopupDetector:${workspaceDirName}] Error popup detected (title="${info.title}")`);
 
@@ -493,10 +568,13 @@ export function ensureErrorPopupDetector(
 
             const row = new ActionRowBuilder<ButtonBuilder>().addComponents(dismissBtn, copyDebugBtn, retryBtn);
 
-            (targetChannel as any).send({
+            const sent = await (targetChannel as any).send({
                 embeds: [embed],
                 components: [row],
-            }).catch(logger.error);
+            }).catch((err: any) => { logger.error(err); return null; });
+            if (sent) {
+                lastErrorMessage = sent;
+            }
         },
     });
 
