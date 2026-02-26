@@ -17,7 +17,9 @@ const markRan = <T extends (...args: any[]) => any>(fn: T): T =>
 const program = new Command()
     .name('lazy-gravity')
     .description('Control your AI coding assistant from Discord')
-    .version(version);
+    .version(version)
+    .option('--verbose', 'Show debug-level logs')
+    .option('--quiet', 'Only show errors');
 
 program
     .command('start')

@@ -752,6 +752,7 @@ async function sendPromptToAntigravity(
 
 export const startBot = async () => {
     const config = loadConfig();
+    logger.setLogLevel(config.logLevel);
 
     const dbPath = process.env.NODE_ENV === 'test' ? ':memory:' : 'antigravity.db';
     const db = new Database(dbPath);

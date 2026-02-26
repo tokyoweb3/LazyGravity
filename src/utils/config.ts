@@ -1,4 +1,5 @@
 import { ConfigLoader } from './configLoader';
+import type { LogLevel } from './logger';
 
 export interface AppConfig {
     discordToken: string;
@@ -7,6 +8,7 @@ export interface AppConfig {
     allowedUserIds: string[];
     workspaceBaseDir: string;
     autoApproveFileEdits: boolean;
+    logLevel: LogLevel;
 }
 
 export type ResponseDeliveryMode = 'stream';

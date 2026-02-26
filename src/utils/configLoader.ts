@@ -3,6 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as dotenv from 'dotenv';
 import type { AppConfig } from './config';
+import type { LogLevel } from './logger';
 
 // Load .env at module init time (same as the original config.ts behavior).
 // dotenv will NOT override already-set env vars by default.
@@ -23,6 +24,7 @@ export interface PersistedConfig {
     allowedUserIds?: string[];
     workspaceBaseDir?: string;
     autoApproveFileEdits?: boolean;
+    logLevel?: LogLevel;
 }
 
 // ---------------------------------------------------------------------------
@@ -86,6 +88,11 @@ function mergeConfig(persisted: PersistedConfig): AppConfig {
         false,
     );
 
+    const logLevel = resolveLogLevel(
+        process.env.LOG_LEVEL,
+        persisted.logLevel,
+    );
+
     return {
         discordToken: token,
         clientId,
@@ -93,6 +100,7 @@ function mergeConfig(persisted: PersistedConfig): AppConfig {
         allowedUserIds,
         workspaceBaseDir,
         autoApproveFileEdits,
+        logLevel,
     };
 }
 
@@ -108,6 +116,19 @@ function resolveAllowedUserIds(persisted: PersistedConfig): string[] {
         return [...persisted.allowedUserIds];
     }
     return [];
+}
+
+const VALID_LOG_LEVELS: readonly LogLevel[] = ['debug', 'info', 'warn', 'error', 'none'];
+
+function resolveLogLevel(
+    envValue: string | undefined,
+    persistedValue: LogLevel | undefined,
+): LogLevel {
+    const raw = envValue?.toLowerCase() ?? persistedValue;
+    if (raw && VALID_LOG_LEVELS.includes(raw as LogLevel)) {
+        return raw as LogLevel;
+    }
+    return 'info';
 }
 
 function resolveBoolean(
