@@ -6,6 +6,11 @@ import {
     MODE_DISPLAY_NAMES,
     ModeService,
 } from '../services/modeService';
+import { CdpService } from '../services/cdpService';
+
+export interface ModeUiDeps {
+    getCurrentCdp?: () => CdpService | null;
+}
 
 /**
  * Build and send the interactive UI for the /mode command (dropdown style)
@@ -13,7 +18,19 @@ import {
 export async function sendModeUI(
     target: { editReply: (opts: any) => Promise<any> },
     modeService: ModeService,
+    deps?: ModeUiDeps,
 ): Promise<void> {
+    // If CDP is available, query the live mode and sync modeService
+    if (deps?.getCurrentCdp) {
+        const cdp = deps.getCurrentCdp();
+        if (cdp) {
+            const liveMode = await cdp.getCurrentMode();
+            if (liveMode) {
+                modeService.setMode(liveMode);
+            }
+        }
+    }
+
     const currentMode = modeService.getCurrentMode();
 
     const embed = new EmbedBuilder()

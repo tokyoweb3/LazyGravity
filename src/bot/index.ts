@@ -1119,7 +1119,7 @@ async function handleSlashInteraction(
         }
 
         case 'mode': {
-            await sendModeUI(interaction, modeService);
+            await sendModeUI(interaction, modeService, { getCurrentCdp: () => getCurrentCdp(bridge) });
             break;
         }
 
