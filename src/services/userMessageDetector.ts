@@ -19,22 +19,43 @@ export interface UserMessageDetectorOptions {
 
 /**
  * Script to detect the latest user message in the Antigravity chat.
- * Returns the text content of the most recent user-authored message.
+ *
+ * Antigravity user message DOM structure:
+ *   <div class="bg-gray-500/15 p-2 rounded-lg w-full text-sm select-text">
+ *     <div class="flex flex-row items-end gap-2">
+ *       <div class="flex-1 flex flex-col gap-2">
+ *         <div>
+ *           <div class="whitespace-pre-wrap text-sm" style="word-break: break-word;">
+ *             {user message text}
+ *           </div>
+ *         </div>
+ *       </div>
+ *       <div> <!-- undo button --> </div>
+ *     </div>
+ *   </div>
  */
 const DETECT_USER_MESSAGE_SCRIPT = `(() => {
     const panel = document.querySelector('.antigravity-agent-side-panel');
     const scope = panel || document;
 
-    // Look for user messages by role attribute or class patterns
-    const userMessages = scope.querySelectorAll(
-        '[data-message-author-role="user"], [data-message-role="user"]'
+    // User message bubbles: bg-gray-500/15 + rounded-lg + select-text
+    const userBubbles = scope.querySelectorAll(
+        '[class*="bg-gray-500/15"][class*="rounded-lg"][class*="select-text"]'
     );
 
-    if (userMessages.length === 0) return null;
+    if (userBubbles.length === 0) return null;
 
-    // Get the last (most recent) user message
-    const lastMsg = userMessages[userMessages.length - 1];
-    const text = (lastMsg.innerText || lastMsg.textContent || '').trim();
+    // Get the last (most recent) user message bubble
+    const lastBubble = userBubbles[userBubbles.length - 1];
+
+    // Extract text from .whitespace-pre-wrap (the actual message content)
+    const textEl = lastBubble.querySelector('.whitespace-pre-wrap')
+        || lastBubble.querySelector('[style*="word-break"]');
+
+    const text = textEl
+        ? (textEl.textContent || '').trim()
+        : (lastBubble.textContent || '').trim();
+
     if (!text || text.length < 1) return null;
 
     return { text };
