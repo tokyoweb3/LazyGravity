@@ -107,7 +107,7 @@ export function htmlToDiscordMarkdown(html: string): string {
             (_m, content) => {
                 const items = content.replace(
                     /<li[^>]*>([\s\S]*?)<\/li>/gi,
-                    (_lm: string, text: string) => `- ${stripTags(text).trim()}\n`,
+                    (_lm: string, text: string) => formatListItem('- ', text),
                 );
                 return `\n${items}`;
             },
@@ -122,7 +122,7 @@ export function htmlToDiscordMarkdown(html: string): string {
                     /<li[^>]*>([\s\S]*?)<\/li>/gi,
                     (_lm: string, text: string) => {
                         counter++;
-                        return `${counter}. ${stripTags(text).trim()}\n`;
+                        return formatListItem(`${counter}. `, text);
                     },
                 );
                 return `\n${items}`;
@@ -145,6 +145,37 @@ export function htmlToDiscordMarkdown(html: string): string {
     result = result.trim();
 
     return result;
+}
+
+/**
+ * Format a list item: strip tags, then indent any lines that are
+ * already-processed nested list items (starting with - or 1.).
+ */
+function formatListItem(prefix: string, rawContent: string): string {
+    const cleaned = stripTags(rawContent).trim();
+    if (!cleaned) return '';
+
+    const lines = cleaned.split('\n').filter((l) => l.trim());
+    if (lines.length === 0) return '';
+
+    // First line gets the bullet prefix
+    const result = [prefix + lines[0]];
+    // Subsequent lines: indent by 2 spaces (nested content)
+    for (let i = 1; i < lines.length; i++) {
+        const trimmed = lines[i].trimStart();
+        // Already a list marker from inner processing — indent it
+        if (/^[-•]/.test(trimmed) || /^\d+\.\s/.test(trimmed)) {
+            result.push('  ' + trimmed);
+        } else if (trimmed.startsWith('```')) {
+            // Code block fence — indent
+            result.push('  ' + trimmed);
+        } else {
+            // Continuation text — indent
+            result.push('  ' + trimmed);
+        }
+    }
+
+    return result.join('\n') + '\n';
 }
 
 /** Check if a string looks like a file path */
