@@ -524,4 +524,49 @@ describe('PlanningDetector - planning button detection and remote execution', ()
 
         consoleErrorSpy.mockRestore();
     });
+
+    // ──────────────────────────────────────────────────────
+    // onResolved callback tests
+    // ──────────────────────────────────────────────────────
+    it('calls onResolved when planning buttons disappear after detection', async () => {
+        const onResolved = jest.fn();
+        const mockInfo = makePlanningInfo();
+
+        mockCdpService.call
+            .mockResolvedValueOnce({ result: { value: mockInfo } })  // detected
+            .mockResolvedValueOnce({ result: { value: null } });     // disappeared
+
+        detector = new PlanningDetector({
+            cdpService: mockCdpService,
+            pollIntervalMs: 500,
+            onPlanningRequired: jest.fn(),
+            onResolved,
+        });
+        detector.start();
+
+        await jest.advanceTimersByTimeAsync(500); // detection
+        expect(onResolved).not.toHaveBeenCalled();
+
+        await jest.advanceTimersByTimeAsync(500); // disappearance
+        expect(onResolved).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not call onResolved when buttons were never detected', async () => {
+        const onResolved = jest.fn();
+
+        mockCdpService.call.mockResolvedValue({ result: { value: null } });
+
+        detector = new PlanningDetector({
+            cdpService: mockCdpService,
+            pollIntervalMs: 500,
+            onPlanningRequired: jest.fn(),
+            onResolved,
+        });
+        detector.start();
+
+        await jest.advanceTimersByTimeAsync(500);
+        await jest.advanceTimersByTimeAsync(500);
+
+        expect(onResolved).not.toHaveBeenCalled();
+    });
 });

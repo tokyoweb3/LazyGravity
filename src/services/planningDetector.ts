@@ -23,6 +23,8 @@ export interface PlanningDetectorOptions {
     pollIntervalMs?: number;
     /** Callback when planning buttons are detected */
     onPlanningRequired: (info: PlanningInfo) => void;
+    /** Callback when a previously detected planning state is resolved (buttons disappeared) */
+    onResolved?: () => void;
 }
 
 /**
@@ -173,6 +175,7 @@ export class PlanningDetector {
     private cdpService: CdpService;
     private pollIntervalMs: number;
     private onPlanningRequired: (info: PlanningInfo) => void;
+    private onResolved?: () => void;
 
     private pollTimer: NodeJS.Timeout | null = null;
     private isRunning: boolean = false;
@@ -189,6 +192,7 @@ export class PlanningDetector {
         this.cdpService = options.cdpService;
         this.pollIntervalMs = options.pollIntervalMs ?? 2000;
         this.onPlanningRequired = options.onPlanningRequired;
+        this.onResolved = options.onResolved;
     }
 
     /** Start monitoring. */
@@ -302,8 +306,12 @@ export class PlanningDetector {
                 }
             } else {
                 // Reset when buttons disappear (prepare for next planning detection)
+                const wasDetected = this.lastDetectedKey !== null;
                 this.lastDetectedKey = null;
                 this.lastDetectedInfo = null;
+                if (wasDetected && this.onResolved) {
+                    this.onResolved();
+                }
             }
         } catch (error) {
             // Ignore CDP errors and continue monitoring

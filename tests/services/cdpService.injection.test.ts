@@ -192,11 +192,23 @@ describe('CdpService - Message Injection (Step 5)', () => {
         expect(insertTextCalls).toHaveLength(1);
         expect(insertTextCalls[0].params.text).toBe(targetText);
 
-        // Verify that Enter key events (down/up) are dispatched
+        // Verify that key events are dispatched:
+        //   clearInputField: Meta+A (keyDown/keyUp) + Backspace (keyDown/keyUp) = 4 events
+        //   pressEnterToSend: Enter (keyDown/keyUp) = 2 events
         const keyCalls = receivedMessages.filter(m => m.method === 'Input.dispatchKeyEvent');
-        expect(keyCalls).toHaveLength(2);
-        expect(keyCalls[0].params.type).toBe('keyDown');
-        expect(keyCalls[1].params.type).toBe('keyUp');
+        expect(keyCalls).toHaveLength(6);
+        // clearInputField: Meta+A select all
+        expect(keyCalls[0].params.key).toBe('a');
+        expect(keyCalls[0].params.modifiers).toBe(4);
+        expect(keyCalls[1].params.key).toBe('a');
+        // clearInputField: Backspace delete
+        expect(keyCalls[2].params.key).toBe('Backspace');
+        expect(keyCalls[3].params.key).toBe('Backspace');
+        // pressEnterToSend: Enter
+        expect(keyCalls[4].params.key).toBe('Enter');
+        expect(keyCalls[4].params.type).toBe('keyDown');
+        expect(keyCalls[5].params.key).toBe('Enter');
+        expect(keyCalls[5].params.type).toBe('keyUp');
     });
 
     // ---------------------------------------------------------

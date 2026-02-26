@@ -792,6 +792,47 @@ export class CdpService extends EventEmitter {
     }
 
     /**
+     * Select all text in the focused input and delete it to ensure a clean state.
+     * Uses Meta+A (select all) then Backspace (delete) via CDP key events.
+     */
+    private async clearInputField(): Promise<void> {
+        // Meta+A to select all content
+        await this.call('Input.dispatchKeyEvent', {
+            type: 'keyDown',
+            key: 'a',
+            code: 'KeyA',
+            modifiers: 4, // Meta (Cmd on macOS)
+            windowsVirtualKeyCode: 65,
+            nativeVirtualKeyCode: 65,
+        });
+        await this.call('Input.dispatchKeyEvent', {
+            type: 'keyUp',
+            key: 'a',
+            code: 'KeyA',
+            modifiers: 4,
+            windowsVirtualKeyCode: 65,
+            nativeVirtualKeyCode: 65,
+        });
+        // Backspace to delete selected content
+        await this.call('Input.dispatchKeyEvent', {
+            type: 'keyDown',
+            key: 'Backspace',
+            code: 'Backspace',
+            windowsVirtualKeyCode: 8,
+            nativeVirtualKeyCode: 8,
+        });
+        await this.call('Input.dispatchKeyEvent', {
+            type: 'keyUp',
+            key: 'Backspace',
+            code: 'Backspace',
+            windowsVirtualKeyCode: 8,
+            nativeVirtualKeyCode: 8,
+        });
+        // Wait for DOM to settle
+        await new Promise(r => setTimeout(r, 50));
+    }
+
+    /**
      * Send Enter key to submit the message.
      */
     private async pressEnterToSend(): Promise<void> {
@@ -952,6 +993,9 @@ export class CdpService extends EventEmitter {
             return { ok: false, error: focusResult.error || 'Chat input field not found' };
         }
 
+        // Clear any existing text in the input field before injecting
+        await this.clearInputField();
+
         // 1. Input text via CDP Input.insertText
         await this.call('Input.insertText', { text });
         await new Promise(r => setTimeout(r, 200));
@@ -974,6 +1018,9 @@ export class CdpService extends EventEmitter {
         if (!focusResult.ok) {
             return { ok: false, error: focusResult.error || 'Chat input field not found' };
         }
+
+        // Clear any existing text in the input field before injecting
+        await this.clearInputField();
 
         const attachResult = await this.attachImageFiles(imageFilePaths, focusResult.contextId);
         if (!attachResult.ok) {
@@ -1171,6 +1218,47 @@ export class CdpService extends EventEmitter {
             return [];
         }
 
+    }
+
+    /**
+     * Get the currently selected mode from the Antigravity UI.
+     * Reads the mode toggle button text and maps it back to internal mode name.
+     *
+     * @returns Internal mode name (e.g., 'fast', 'plan') or null if not found
+     */
+    async getCurrentMode(): Promise<string | null> {
+        if (!this.isConnectedFlag || !this.ws) {
+            return null;
+        }
+        const expression = '(() => {'
+            + ' const uiNameMap = { fast: "Fast", plan: "Planning" };'
+            + ' const knownModes = Object.values(uiNameMap).map(n => n.toLowerCase());'
+            + ' const reverseMap = {};'
+            + ' Object.entries(uiNameMap).forEach(([k, v]) => { reverseMap[v.toLowerCase()] = k; });'
+            + ' const allBtns = Array.from(document.querySelectorAll("button"));'
+            + ' const visibleBtns = allBtns.filter(b => b.offsetParent !== null);'
+            + ' const modeToggleBtn = visibleBtns.find(b => {'
+            + '   const text = (b.textContent || "").trim().toLowerCase();'
+            + '   const hasChevron = b.querySelector("svg[class*=\\"chevron\\"]");'
+            + '   return knownModes.some(m => text === m) && hasChevron;'
+            + ' });'
+            + ' if (!modeToggleBtn) return null;'
+            + ' const currentModeText = (modeToggleBtn.textContent || "").trim().toLowerCase();'
+            + ' return reverseMap[currentModeText] || null;'
+            + '})()';
+        try {
+            const contextId = this.getPrimaryContextId();
+            const callParams: any = {
+                expression,
+                returnByValue: true,
+                awaitPromise: false,
+            };
+            if (contextId !== null) callParams.contextId = contextId;
+            const res = await this.call('Runtime.evaluate', callParams);
+            return res?.result?.value || null;
+        } catch {
+            return null;
+        }
     }
 
     /**
