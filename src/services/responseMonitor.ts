@@ -500,7 +500,7 @@ export class ResponseMonitor {
             }, this.maxDurationMs);
         }
 
-        logger.info(
+        logger.debug(
             `── Monitoring started | poll=${this.pollIntervalMs}ms timeout=${this.maxDurationMs / 1000}s baseline=${this.baselineText?.length ?? 0}ch`,
         );
 

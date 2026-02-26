@@ -98,6 +98,8 @@ lazy-gravity setup        # Interactive setup wizard
 lazy-gravity open         # Open Antigravity with CDP (auto-selects available port)
 lazy-gravity start        # Start the Discord bot
 lazy-gravity doctor       # Check environment and dependencies
+lazy-gravity --verbose    # Show debug-level logs (CDP details, detector events, etc.)
+lazy-gravity --quiet      # Only show errors
 lazy-gravity --version    # Show version
 lazy-gravity --help       # Show help
 ```

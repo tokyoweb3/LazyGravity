@@ -18,10 +18,6 @@ const LEVEL_PRIORITY: Record<LogLevel, number> = {
     none: 4,
 };
 
-export interface LogFileTransport {
-    write(level: string, timestamp: string, message: string): void;
-}
-
 export interface Logger {
     info(...args: any[]): void;
     warn(...args: any[]): void;
@@ -32,7 +28,6 @@ export interface Logger {
     divider(label?: string): void;
     setLogLevel(level: LogLevel): void;
     getLogLevel(): LogLevel;
-    enableFileLogging(transport: LogFileTransport): void;
 }
 
 const getTimestamp = () => {
@@ -41,33 +36,11 @@ const getTimestamp = () => {
     return `${COLORS.dim}[${timeString}]${COLORS.reset}`;
 };
 
-function getPlainTimestamp(): string {
-    return new Date().toISOString();
-}
-
-function stripAnsi(text: string): string {
-    return text.replace(/\x1b\[[0-9;]*m/g, '');
-}
-
-function formatArgs(args: any[]): string {
-    return args
-        .map((a) => (typeof a === 'string' ? a : JSON.stringify(a)))
-        .join(' ');
-}
-
 export function createLogger(initialLevel: LogLevel = 'info'): Logger {
     let currentLevel: LogLevel = initialLevel;
-    let fileTransport: LogFileTransport | null = null;
 
     function shouldLog(methodLevel: LogLevel): boolean {
         return LEVEL_PRIORITY[methodLevel] >= LEVEL_PRIORITY[currentLevel];
-    }
-
-    function writeToFile(level: string, args: any[]): void {
-        if (!fileTransport) return;
-        const timestamp = getPlainTimestamp();
-        const message = stripAnsi(formatArgs(args));
-        fileTransport.write(level, timestamp, message);
     }
 
     return {
@@ -75,39 +48,33 @@ export function createLogger(initialLevel: LogLevel = 'info'): Logger {
             if (shouldLog('info')) {
                 console.info(`${getTimestamp()} ${COLORS.cyan}[INFO]${COLORS.reset}`, ...args);
             }
-            writeToFile('INFO', args);
         },
         warn(...args: any[]) {
             if (shouldLog('warn')) {
                 console.warn(`${getTimestamp()} ${COLORS.yellow}[WARN]${COLORS.reset}`, ...args);
             }
-            writeToFile('WARN', args);
         },
         error(...args: any[]) {
             if (shouldLog('error')) {
                 console.error(`${getTimestamp()} ${COLORS.red}[ERROR]${COLORS.reset}`, ...args);
             }
-            writeToFile('ERROR', args);
         },
         debug(...args: any[]) {
             if (shouldLog('debug')) {
                 console.debug(`${getTimestamp()} ${COLORS.dim}[DEBUG]${COLORS.reset}`, ...args);
             }
-            writeToFile('DEBUG', args);
         },
         /** Important state transitions - stands out in logs */
         phase(...args: any[]) {
             if (shouldLog('info')) {
                 console.info(`${getTimestamp()} ${COLORS.magenta}[PHASE]${COLORS.reset}`, ...args);
             }
-            writeToFile('PHASE', args);
         },
         /** Completion-related events - green for success */
         done(...args: any[]) {
             if (shouldLog('info')) {
                 console.info(`${getTimestamp()} ${COLORS.green}[DONE]${COLORS.reset}`, ...args);
             }
-            writeToFile('DONE', args);
         },
         /** Section divider with optional label for structured output */
         divider(label?: string) {
@@ -119,16 +86,12 @@ export function createLogger(initialLevel: LogLevel = 'info'): Logger {
                     console.info(`${COLORS.green}[DONE]${COLORS.reset} ${COLORS.dim}${'─'.repeat(50)}${COLORS.reset}`);
                 }
             }
-            writeToFile('DONE', label ? [`── ${label}`] : ['──────────']);
         },
         setLogLevel(level: LogLevel) {
             currentLevel = level;
         },
         getLogLevel(): LogLevel {
             return currentLevel;
-        },
-        enableFileLogging(transport: LogFileTransport) {
-            fileTransport = transport;
         },
     };
 }

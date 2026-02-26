@@ -287,7 +287,7 @@ export function ensureApprovalDetector(
         cdpService: cdp,
         pollIntervalMs: 2000,
         onApprovalRequired: async (info: ApprovalInfo) => {
-            logger.info(`[ApprovalDetector:${workspaceDirName}] Approval button detected (allow="${info.approveText}", deny="${info.denyText}")`);
+            logger.debug(`[ApprovalDetector:${workspaceDirName}] Approval button detected (allow="${info.approveText}", deny="${info.denyText}")`);
 
             const currentChatTitle = await getCurrentChatTitle(cdp);
             const targetChannel = resolveApprovalChannelForCurrentChat(bridge, workspaceDirName, currentChatTitle);
@@ -359,7 +359,7 @@ export function ensureApprovalDetector(
 
     detector.start();
     bridge.pool.registerApprovalDetector(workspaceDirName, detector);
-    logger.info(`[ApprovalDetector:${workspaceDirName}] Started approval button detection`);
+    logger.debug(`[ApprovalDetector:${workspaceDirName}] Started approval button detection`);
 }
 
 /**
@@ -379,7 +379,7 @@ export function ensurePlanningDetector(
         cdpService: cdp,
         pollIntervalMs: 2000,
         onPlanningRequired: async (info: PlanningInfo) => {
-            logger.info(`[PlanningDetector:${workspaceDirName}] Planning buttons detected (title="${info.planTitle}")`);
+            logger.debug(`[PlanningDetector:${workspaceDirName}] Planning buttons detected (title="${info.planTitle}")`);
 
             const currentChatTitle = await getCurrentChatTitle(cdp);
             const targetChannel = resolveApprovalChannelForCurrentChat(bridge, workspaceDirName, currentChatTitle);
@@ -430,7 +430,7 @@ export function ensurePlanningDetector(
 
     detector.start();
     bridge.pool.registerPlanningDetector(workspaceDirName, detector);
-    logger.info(`[PlanningDetector:${workspaceDirName}] Started planning button detection`);
+    logger.debug(`[PlanningDetector:${workspaceDirName}] Started planning button detection`);
 }
 
 /**
@@ -450,7 +450,7 @@ export function ensureErrorPopupDetector(
         cdpService: cdp,
         pollIntervalMs: 3000,
         onErrorPopup: async (info: ErrorPopupInfo) => {
-            logger.info(`[ErrorPopupDetector:${workspaceDirName}] Error popup detected (title="${info.title}")`);
+            logger.debug(`[ErrorPopupDetector:${workspaceDirName}] Error popup detected (title="${info.title}")`);
 
             const currentChatTitle = await getCurrentChatTitle(cdp);
             const targetChannel = resolveApprovalChannelForCurrentChat(bridge, workspaceDirName, currentChatTitle);
@@ -502,5 +502,5 @@ export function ensureErrorPopupDetector(
 
     detector.start();
     bridge.pool.registerErrorPopupDetector(workspaceDirName, detector);
-    logger.info(`[ErrorPopupDetector:${workspaceDirName}] Started error popup detection`);
+    logger.debug(`[ErrorPopupDetector:${workspaceDirName}] Started error popup detection`);
 }

@@ -4,7 +4,6 @@ import { acquireLock } from '../../utils/lockfile';
 import { startBot } from '../../bot';
 import { logger } from '../../utils/logger';
 import type { LogLevel } from '../../utils/logger';
-import { LogFileTransportImpl } from '../../utils/logFileTransport';
 
 /**
  * Resolve log level from CLI flags on the root program.
@@ -28,11 +27,9 @@ export async function startAction(
         logger.setLogLevel(cliLevel);
     }
 
-    logger.enableFileLogging(new LogFileTransportImpl());
-
     console.log(LOGO);
     acquireLock();
-    await startBot().catch((err) => {
+    await startBot(cliLevel).catch((err) => {
         logger.error('Failed to start bot:', err);
         process.exit(1);
     });

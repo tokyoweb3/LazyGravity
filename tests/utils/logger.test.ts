@@ -1,5 +1,4 @@
 import { createLogger, COLORS } from '../../src/utils/logger';
-import type { LogLevel, LogFileTransport } from '../../src/utils/logger';
 
 describe('createLogger', () => {
     let consoleSpy: {
@@ -238,61 +237,6 @@ describe('createLogger', () => {
             const output = consoleSpy.info.mock.calls[0][0] as string;
             expect(output).toContain('[DONE]');
             expect(output).toContain(COLORS.green);
-        });
-    });
-
-    describe('enableFileLogging', () => {
-        it('writes to file transport when enabled', () => {
-            const log = createLogger('info');
-            const transport: LogFileTransport = {
-                write: jest.fn(),
-            };
-
-            log.enableFileLogging(transport);
-            log.info('file message');
-
-            expect(transport.write).toHaveBeenCalledTimes(1);
-            expect(transport.write).toHaveBeenCalledWith(
-                'INFO',
-                expect.any(String),
-                'file message',
-            );
-        });
-
-        it('writes all levels to file regardless of console log level', () => {
-            const log = createLogger('error');
-            const transport: LogFileTransport = {
-                write: jest.fn(),
-            };
-
-            log.enableFileLogging(transport);
-            log.debug('debug msg');
-            log.info('info msg');
-            log.warn('warn msg');
-            log.error('error msg');
-
-            // File transport receives all messages regardless of console level
-            expect(transport.write).toHaveBeenCalledTimes(4);
-        });
-
-        it('strips ANSI color codes in file output', () => {
-            const log = createLogger('info');
-            const transport: LogFileTransport = {
-                write: jest.fn(),
-            };
-
-            log.enableFileLogging(transport);
-            log.info(`${COLORS.red}colored text${COLORS.reset}`);
-
-            const writtenMessage = (transport.write as jest.Mock).mock.calls[0][2];
-            expect(writtenMessage).toBe('colored text');
-            expect(writtenMessage).not.toContain('\x1b[');
-        });
-
-        it('does not write to file when transport is not enabled', () => {
-            const log = createLogger('info');
-            // No transport enabled - should not throw
-            expect(() => log.info('no transport')).not.toThrow();
         });
     });
 
