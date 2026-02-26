@@ -62,7 +62,7 @@ const GET_CURRENT_CHAT_TITLE_SCRIPT = `(() => {
     return title;
 })()`;
 
-async function getCurrentChatTitle(cdp: CdpService): Promise<string | null> {
+export async function getCurrentChatTitle(cdp: CdpService): Promise<string | null> {
     const contexts = cdp.getContexts();
     for (const ctx of contexts) {
         try {

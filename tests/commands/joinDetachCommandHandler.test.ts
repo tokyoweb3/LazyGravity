@@ -6,10 +6,27 @@ import { ChannelManager } from '../../src/services/channelManager';
 import { CdpConnectionPool } from '../../src/services/cdpConnectionPool';
 import Database from 'better-sqlite3';
 
+// Mock ensureUserMessageDetector and getCurrentChatTitle to prevent real polling in tests
+jest.mock('../../src/services/cdpBridgeManager', () => ({
+    ...jest.requireActual('../../src/services/cdpBridgeManager'),
+    ensureUserMessageDetector: jest.fn(),
+    getCurrentChatTitle: jest.fn().mockResolvedValue(null),
+}));
+
+// Mock ResponseMonitor to prevent real polling in tests
+jest.mock('../../src/services/responseMonitor', () => ({
+    ResponseMonitor: jest.fn().mockImplementation(() => ({
+        startPassive: jest.fn().mockResolvedValue(undefined),
+        stop: jest.fn().mockResolvedValue(undefined),
+        isActive: jest.fn().mockReturnValue(false),
+    })),
+}));
+
 describe('JoinDetachCommandHandler', () => {
     let handler: JoinDetachCommandHandler;
     let mockService: jest.Mocked<ChatSessionService>;
     let mockPool: jest.Mocked<CdpConnectionPool>;
+    let mockClient: any;
     let db: Database.Database;
     let chatSessionRepo: ChatSessionRepository;
     let bindingRepo: WorkspaceBindingRepository;
@@ -37,8 +54,15 @@ describe('JoinDetachCommandHandler', () => {
             getActiveWorkspaceNames: jest.fn().mockReturnValue([]),
             getApprovalDetector: jest.fn(),
             getUserMessageDetector: jest.fn(),
+            registerUserMessageDetector: jest.fn(),
             extractDirName: jest.fn((path: string) => path.split('/').filter(Boolean).pop() || path),
         } as any;
+
+        mockClient = {
+            channels: {
+                cache: { get: jest.fn().mockReturnValue({ send: jest.fn().mockResolvedValue(undefined) }) },
+            },
+        };
 
         db = new Database(':memory:');
         chatSessionRepo = new ChatSessionRepository(db);
@@ -51,6 +75,7 @@ describe('JoinDetachCommandHandler', () => {
             bindingRepo,
             channelManager,
             mockPool,
+            mockClient,
         );
     });
 
@@ -246,18 +271,48 @@ describe('JoinDetachCommandHandler', () => {
         });
     });
 
-    describe('handleDetach()', () => {
-        it('shows detach confirmation embed', async () => {
-            const interaction = makeMockInteraction();
+    describe('handleMirror()', () => {
+        it('turns mirroring OFF when detector is active', async () => {
+            bindingRepo.upsert({ channelId: 'ch-1', workspacePath: 'my-project', guildId: 'guild-1' });
+            const mockDetector = { isActive: jest.fn().mockReturnValue(true), stop: jest.fn() };
+            mockPool.getUserMessageDetector.mockReturnValue(mockDetector as any);
 
-            await handler.handleDetach(interaction as any);
+            const interaction = makeMockInteraction();
+            const bridge = { pool: mockPool } as any;
+
+            await handler.handleMirror(interaction as any, bridge);
+
+            expect(mockDetector.stop).toHaveBeenCalled();
+            expect(interaction.editReply).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    embeds: expect.arrayContaining([
+                        expect.objectContaining({
+                            data: expect.objectContaining({
+                                title: expect.stringContaining('OFF'),
+                            }),
+                        }),
+                    ]),
+                }),
+            );
+        });
+
+        it('turns mirroring ON when no detector is active', async () => {
+            bindingRepo.upsert({ channelId: 'ch-1', workspacePath: 'my-project', guildId: 'guild-1' });
+            mockPool.getUserMessageDetector.mockReturnValue(undefined);
+            const mockCdp = { isConnected: () => true, getPrimaryContextId: () => 42 } as any;
+            mockPool.getOrConnect.mockResolvedValue(mockCdp);
+
+            const interaction = makeMockInteraction();
+            const bridge = { pool: mockPool } as any;
+
+            await handler.handleMirror(interaction as any, bridge);
 
             expect(interaction.editReply).toHaveBeenCalledWith(
                 expect.objectContaining({
                     embeds: expect.arrayContaining([
                         expect.objectContaining({
                             data: expect.objectContaining({
-                                title: expect.stringContaining('Detach'),
+                                title: expect.stringContaining('ON'),
                             }),
                         }),
                     ]),

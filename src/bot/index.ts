@@ -805,10 +805,9 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         sendPromptImpl: sendPromptToAntigravity,
     });
 
-    // Initialize command handlers
+    // Initialize command handlers (joinDetachHandler is created after client, see below)
     const wsHandler = new WorkspaceCommandHandler(workspaceBindingRepo, chatSessionRepo, workspaceService, channelManager);
     const chatHandler = new ChatCommandHandler(chatSessionService, chatSessionRepo, workspaceBindingRepo, channelManager, workspaceService, bridge.pool);
-    const joinDetachHandler = new JoinDetachCommandHandler(chatSessionService, chatSessionRepo, workspaceBindingRepo, channelManager, bridge.pool);
     const cleanupHandler = new CleanupCommandHandler(chatSessionRepo, workspaceBindingRepo);
 
     const slashCommandHandler = new SlashCommandHandler(templateRepo);
@@ -820,6 +819,8 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             GatewayIntentBits.MessageContent,
         ]
     });
+
+    const joinDetachHandler = new JoinDetachCommandHandler(chatSessionService, chatSessionRepo, workspaceBindingRepo, channelManager, bridge.pool, client);
 
     client.once(Events.ClientReady, async (readyClient) => {
         logger.info(`Ready! Logged in as ${readyClient.user.tag} | extractionMode=${config.extractionMode}`);
@@ -1087,7 +1088,7 @@ async function handleSlashInteraction(
                     {
                         name: '🔗 Session', value: [
                             '`/join` — Join an existing Antigravity session',
-                            '`/detach` — Detach from session monitoring',
+                            '`/mirror` — Toggle PC→Discord mirroring ON/OFF',
                         ].join('\n')
                     },
                     {
@@ -1197,6 +1198,13 @@ async function handleSlashInteraction(
             })();
             const currentMode = modeService.getCurrentMode();
 
+            const mirroringWorkspaces = activeNames.filter(
+                (name) => bridge.pool.getUserMessageDetector(name)?.isActive(),
+            );
+            const mirrorStatus = mirroringWorkspaces.length > 0
+                ? `📡 ON (${mirroringWorkspaces.join(', ')})`
+                : '⚪ OFF';
+
             const embed = new EmbedBuilder()
                 .setTitle('🔧 Bot Status')
                 .setColor(activeNames.length > 0 ? 0x00CC88 : 0x888888)
@@ -1204,6 +1212,7 @@ async function handleSlashInteraction(
                     { name: 'CDP Connection', value: activeNames.length > 0 ? `🟢 ${activeNames.length} project(s) connected` : '⚪ Disconnected', inline: true },
                     { name: 'Mode', value: MODE_DISPLAY_NAMES[currentMode] || currentMode, inline: true },
                     { name: 'Auto Approve', value: autoAcceptService.isEnabled() ? '🟢 ON' : '⚪ OFF', inline: true },
+                    { name: 'Mirroring', value: mirrorStatus, inline: true },
                 )
                 .setTimestamp();
 
@@ -1212,7 +1221,8 @@ async function handleSlashInteraction(
                     const cdp = bridge.pool.getConnected(name);
                     const contexts = cdp ? cdp.getContexts().length : 0;
                     const detectorActive = bridge.pool.getApprovalDetector(name)?.isActive() ? ' [Detecting]' : '';
-                    return `• **${name}** — Contexts: ${contexts}${detectorActive}`;
+                    const mirrorActive = bridge.pool.getUserMessageDetector(name)?.isActive() ? ' [Mirror]' : '';
+                    return `• **${name}** — Contexts: ${contexts}${detectorActive}${mirrorActive}`;
                 });
                 embed.setDescription(`**Connected Projects:**\n${lines.join('\n')}`);
             } else {
@@ -1317,11 +1327,11 @@ async function handleSlashInteraction(
             break;
         }
 
-        case 'detach': {
+        case 'mirror': {
             if (joinDetachHandler) {
-                await joinDetachHandler.handleDetach(interaction);
+                await joinDetachHandler.handleMirror(interaction, bridge);
             } else {
-                await interaction.editReply({ content: t('⚠️ Detach handler not available.') });
+                await interaction.editReply({ content: t('⚠️ Mirror handler not available.') });
             }
             break;
         }
