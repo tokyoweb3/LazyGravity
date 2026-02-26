@@ -51,6 +51,6 @@ if (!commandRan) {
     if (!hasConfig && !hasEnv) {
         setupAction();
     } else {
-        startAction();
+        startAction(program.opts(), program);
     }
 }
