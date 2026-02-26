@@ -9,11 +9,6 @@ import { setupAction } from './commands/setup';
 import { openAction } from './commands/open';
 import { ConfigLoader } from '../utils/configLoader';
 
-let commandRan = false;
-
-const markRan = <T extends (...args: any[]) => any>(fn: T): T =>
-    ((...args: any[]) => { commandRan = true; return fn(...args); }) as unknown as T;
-
 const program = new Command()
     .name('lazy-gravity')
     .description('Control your AI coding assistant from Discord')
@@ -21,30 +16,8 @@ const program = new Command()
     .option('--verbose', 'Show debug-level logs')
     .option('--quiet', 'Only show errors');
 
-program
-    .command('start')
-    .description('Start the Discord bot')
-    .action(markRan(startAction));
-
-program
-    .command('doctor')
-    .description('Check environment and dependencies')
-    .action(markRan(doctorAction));
-
-program
-    .command('setup')
-    .description('Interactive setup wizard')
-    .action(markRan(setupAction));
-
-program
-    .command('open')
-    .description('Open Antigravity with CDP enabled (auto-selects available port)')
-    .action(markRan(openAction));
-
-program.parse();
-
-// Default behavior: if no subcommand was matched, decide what to run
-if (!commandRan) {
+// Default action: no subcommand → start or setup
+program.action(() => {
     const hasConfig = ConfigLoader.configExists();
     const hasEnv = fs.existsSync(path.resolve(process.cwd(), '.env'));
 
@@ -53,4 +26,26 @@ if (!commandRan) {
     } else {
         startAction(program.opts(), program);
     }
-}
+});
+
+program
+    .command('start')
+    .description('Start the Discord bot')
+    .action((_opts, cmd) => startAction(cmd.parent.opts(), cmd.parent));
+
+program
+    .command('doctor')
+    .description('Check environment and dependencies')
+    .action(doctorAction);
+
+program
+    .command('setup')
+    .description('Interactive setup wizard')
+    .action(setupAction);
+
+program
+    .command('open')
+    .description('Open Antigravity with CDP enabled (auto-selects available port)')
+    .action(openAction);
+
+program.parse();
