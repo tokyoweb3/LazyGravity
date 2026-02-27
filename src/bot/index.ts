@@ -43,6 +43,7 @@ import { CdpService } from '../services/cdpService';
 import { ChatSessionService } from '../services/chatSessionService';
 import { ResponseMonitor, RESPONSE_SELECTORS } from '../services/responseMonitor';
 import { ensureAntigravityRunning } from '../services/antigravityLauncher';
+import { getAntigravityCdpHint } from '../utils/pathUtils';
 import { AutoAcceptService } from '../services/autoAcceptService';
 import { PromptDispatcher } from '../services/promptDispatcher';
 import {
@@ -291,7 +292,7 @@ async function sendPromptToAntigravity(
     if (!cdp.isConnected()) {
         await sendEmbed(
             `${PHASE_ICONS.error} Connection Error`,
-            'Not connected to Antigravity.\nStart with `open -a Antigravity --args --remote-debugging-port=9223`, then send a message to auto-connect.',
+            `Not connected to Antigravity.\nStart with \`${getAntigravityCdpHint(9223)}\`, then send a message to auto-connect.`,
             PHASE_COLORS.error,
         );
         await clearWatchingReaction();

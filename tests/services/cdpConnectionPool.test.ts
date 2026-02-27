@@ -28,6 +28,18 @@ describe('CdpConnectionPool', () => {
         it('returns a simple name as-is', () => {
             expect(pool.extractProjectName('MyProject')).toBe('MyProject');
         });
+
+        it('handles Windows backslash paths', () => {
+            expect(pool.extractProjectName('D:\\Code\\MyProject')).toBe('MyProject');
+        });
+
+        it('handles Windows drive root paths', () => {
+            expect(pool.extractProjectName('D:\\categorizer')).toBe('categorizer');
+        });
+
+        it('handles mixed separators', () => {
+            expect(pool.extractProjectName('C:\\Users\\test/Code/MyProject')).toBe('MyProject');
+        });
     });
 
     describe('getOrConnect()', () => {

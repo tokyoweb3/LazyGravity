@@ -57,7 +57,7 @@ describe('JoinCommandHandler', () => {
             getApprovalDetector: jest.fn(),
             getUserMessageDetector: jest.fn(),
             registerUserMessageDetector: jest.fn(),
-            extractProjectName: jest.fn((path: string) => path.split('/').filter(Boolean).pop() || path),
+            extractProjectName: jest.fn((path: string) => path.split(/[/\\]/).filter(Boolean).pop() || path),
         } as any;
 
         mockWorkspaceService = {
