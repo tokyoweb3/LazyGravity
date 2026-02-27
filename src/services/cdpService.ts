@@ -3,6 +3,7 @@ import { CDP_PORTS } from '../utils/cdpPorts';
 import { EventEmitter } from 'events';
 import * as http from 'http';
 import { spawn } from 'child_process';
+import { getAntigravityCliPath, extractProjectNameFromPath } from '../utils/pathUtils';
 import WebSocket from 'ws';
 
 export interface CdpServiceOptions {
@@ -267,7 +268,7 @@ export class CdpService extends EventEmitter {
      * @returns true on successful connection
      */
     async discoverAndConnectForWorkspace(workspacePath: string): Promise<boolean> {
-        const projectName = workspacePath.split('/').filter(Boolean).pop() || '';
+        const projectName = extractProjectNameFromPath(workspacePath);
         this.currentWorkspacePath = workspacePath;
 
         // Re-validate existing connection before skipping reconnect.
@@ -303,7 +304,7 @@ export class CdpService extends EventEmitter {
                 returnByValue: true,
             });
             const liveTitle = String(titleResult?.result?.value || '');
-            if (liveTitle.includes(projectName)) {
+            if (liveTitle.toLowerCase().includes(projectName.toLowerCase())) {
                 this.currentWorkspaceName = projectName;
                 return true;
             }
@@ -423,16 +424,18 @@ export class CdpService extends EventEmitter {
                     expression: 'document.title',
                     returnByValue: true,
                 });
-                const liveTitle = result?.result?.value || '';
+                const liveTitle = String(result?.result?.value || '');
+                const normalizedLiveTitle = liveTitle.toLowerCase();
+                const normalizedProject = projectName.toLowerCase();
 
-                if (liveTitle.includes(projectName)) {
+                if (normalizedLiveTitle.includes(normalizedProject)) {
                     this.currentWorkspaceName = projectName;
                     logger.debug(`[CdpService] Probe success: detected "${projectName}"`);
                     return true;
                 }
 
                 // If title is "Untitled (Workspace)", verify by folder path
-                if (liveTitle.includes('Untitled') && workspacePath) {
+                if (normalizedLiveTitle.includes('untitled') && workspacePath) {
                     const folderMatch = await this.probeWorkspaceFolderPath(projectName, workspacePath);
                     if (folderMatch) {
                         return true;
@@ -498,9 +501,13 @@ export class CdpService extends EventEmitter {
             if (value?.found && value?.value) {
                 const detectedValue = value.value as string;
 
+                const normalizedDetected = detectedValue.toLowerCase();
+                const normalizedProject = projectName.toLowerCase();
+                const normalizedWorkspace = workspacePath.toLowerCase();
+
                 if (
-                    detectedValue.includes(projectName) ||
-                    detectedValue.includes(workspacePath)
+                    normalizedDetected.includes(normalizedProject) ||
+                    normalizedDetected.includes(normalizedWorkspace)
                 ) {
                     this.currentWorkspaceName = projectName;
                     logger.debug(`[CdpService] Folder path match success: "${projectName}"`);
@@ -513,8 +520,9 @@ export class CdpService extends EventEmitter {
                 expression: 'window.location.href',
                 returnByValue: true,
             });
-            const pageUrl = urlResult?.result?.value || '';
-            if (pageUrl.includes(encodeURIComponent(workspacePath)) || pageUrl.includes(projectName)) {
+            const pageUrl = (urlResult?.result?.value || '').toLowerCase();
+            const normalizedWorkspaceUri = encodeURIComponent(workspacePath).toLowerCase();
+            if (pageUrl.includes(normalizedWorkspaceUri) || pageUrl.includes(projectName.toLowerCase())) {
                 this.currentWorkspaceName = projectName;
                 logger.debug(`[CdpService] URL parameter match success: "${projectName}"`);
                 return true;
@@ -537,14 +545,19 @@ export class CdpService extends EventEmitter {
         // Open as folder using Antigravity CLI (not as workspace mode).
         // `open -a Antigravity` may open as workspace, resulting in title "Untitled (Workspace)".
         // CLI --new-window opens as folder, immediately reflecting directory name in title.
-        const antigravityCli = '/Applications/Antigravity.app/Contents/Resources/app/bin/antigravity';
+        const antigravityCli = getAntigravityCliPath();
+
         logger.debug(`[CdpService] Launching Antigravity: ${antigravityCli} --new-window ${workspacePath}`);
         try {
             await this.runCommand(antigravityCli, ['--new-window', workspacePath]);
         } catch (error: any) {
-            // Fall back to open -a if CLI not found
-            logger.warn(`[CdpService] CLI launch failed, falling back to open -a: ${error?.message || String(error)}`);
-            await this.runCommand('open', ['-a', 'Antigravity', workspacePath]);
+            // Fall back to open -a if CLI not found (macOS only)
+            logger.warn(`[CdpService] CLI launch failed, falling back to open -a (if macOS): ${error?.message || String(error)}`);
+            if (process.platform === 'darwin') {
+                await this.runCommand('open', ['-a', 'Antigravity', workspacePath]);
+            } else {
+                throw error;
+            }
         }
 
         // Poll until a new workbench page appears (max 30 seconds)
@@ -589,7 +602,7 @@ export class CdpService extends EventEmitter {
             );
 
             // Title match
-            const titleMatch = workbenchPages.find((t: any) => t.title?.includes(projectName));
+            const titleMatch = workbenchPages.find((t: any) => t.title?.toLowerCase().includes(projectName.toLowerCase()));
             if (titleMatch) {
                 return this.connectToPage(titleMatch, projectName);
             }
