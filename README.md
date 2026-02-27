@@ -147,6 +147,7 @@ DISCORD_BOT_TOKEN=your_bot_token_here
 GUILD_ID=your_guild_id_here
 ALLOWED_USER_IDS=123456789,987654321
 WORKSPACE_BASE_DIR=~/Code
+# ANTIGRAVITY_PATH=/path/to/antigravity.AppImage  # Optional: For Linux users or custom installations
 ```
 
 Then start the bot:
@@ -183,6 +184,13 @@ Double-click **`start_antigravity_mac.command`** in the repo root.
 Double-click **`start_antigravity_win.bat`** in the repo root.
 
 - **If it doesn't launch**: the executable may not be in your PATH. Right-click the file, edit it, and replace `"Antigravity.exe"` with the full install path (e.g. `"%LOCALAPPDATA%\Programs\Antigravity\Antigravity.exe"`).
+
+#### Linux
+On Linux (especially when using AppImages), the `antigravity` command might not be globally available.
+You can specify the exact path to your executable by setting the `ANTIGRAVITY_PATH` environment variable in your `.env` file:
+```env
+ANTIGRAVITY_PATH=/opt/applications/antigravity.AppImage
+```
 
 > **Tip**: CDP ports are auto-scanned from candidates (9222, 9223, 9333, 9444, 9555, 9666).
 > Launch Antigravity first, then start the bot — it connects automatically.
