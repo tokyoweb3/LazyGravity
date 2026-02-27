@@ -4,6 +4,7 @@
 
 <p align="center">
   <img src="https://img.shields.io/badge/version-0.1.0-blue?style=flat-square" alt="Version" />
+  <img src="https://img.shields.io/badge/Antigravity-1.19.5-ff6b35?style=flat-square" alt="Antigravity" />
   <img src="https://img.shields.io/badge/node-18.x+-brightgreen?style=flat-square&logo=node.js" alt="Node.js" />
   <img src="https://img.shields.io/badge/discord.js-14.x-5865F2?style=flat-square&logo=discord&logoColor=white" alt="discord.js" />
   <img src="https://img.shields.io/badge/protocol-CDP%20%2F%20WebSocket-orange?style=flat-square" alt="CDP/WebSocket" />
@@ -17,7 +18,9 @@
 Send natural language instructions like "fix that bug" or "start designing the new feature" from your phone. Antigravity executes them locally on your home PC using its full resources, and reports results back to Discord.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/tokyoweb3/LazyGravity/main/docs/assets/demo.gif" alt="LazyGravity Demo" width="100%" />
+  <a href="https://github.com/user-attachments/assets/c9e57ac2-a62b-4ed1-afc1-cd47e8caf022">
+    <img src="https://raw.githubusercontent.com/tokyoweb3/LazyGravity/main/docs/assets/thumbnail.png" alt="LazyGravity Demo Video" width="100%" />
+  </a>
 </p>
 
 
