@@ -1,5 +1,6 @@
 import { logger } from '../utils/logger';
 import { CDP_PORTS } from '../utils/cdpPorts';
+import { getAntigravityCdpHint } from '../utils/pathUtils';
 import * as http from 'http';
 
 /**
@@ -50,7 +51,7 @@ export async function ensureAntigravityRunning(): Promise<void> {
     logger.warn('  Please run AntigravityDebug.command before starting the Bot');
     logger.warn('');
     logger.warn('  Or manually:');
-    logger.warn('    open -a Antigravity --args --remote-debugging-port=9222');
+    logger.warn(`    ${getAntigravityCdpHint(9222)}`);
     logger.warn('='.repeat(70));
     logger.warn('');
 }

@@ -1,4 +1,5 @@
 import { logger } from '../utils/logger';
+import { extractProjectNameFromPath } from '../utils/pathUtils';
 import { CdpService, CdpServiceOptions } from './cdpService';
 import { ApprovalDetector } from './approvalDetector';
 import { ErrorPopupDetector } from './errorPopupDetector';
@@ -212,7 +213,7 @@ export class CdpConnectionPool {
      * Extract the project name from a workspace path.
      */
     extractProjectName(workspacePath: string): string {
-        return workspacePath.split('/').filter(Boolean).pop() || workspacePath;
+        return extractProjectNameFromPath(workspacePath) || workspacePath;
     }
 
     /**
