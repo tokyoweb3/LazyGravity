@@ -1,5 +1,6 @@
 import { logger } from '../utils/logger';
 import { CDP_PORTS } from '../utils/cdpPorts';
+import { getAntigravityCliPath, getAntigravityFallback } from '../utils/antigravityPaths';
 import { EventEmitter } from 'events';
 import * as http from 'http';
 import { spawn } from 'child_process';
@@ -537,14 +538,15 @@ export class CdpService extends EventEmitter {
         // Open as folder using Antigravity CLI (not as workspace mode).
         // `open -a Antigravity` may open as workspace, resulting in title "Untitled (Workspace)".
         // CLI --new-window opens as folder, immediately reflecting directory name in title.
-        const antigravityCli = '/Applications/Antigravity.app/Contents/Resources/app/bin/antigravity';
+        const antigravityCli = getAntigravityCliPath();
         logger.debug(`[CdpService] Launching Antigravity: ${antigravityCli} --new-window ${workspacePath}`);
         try {
             await this.runCommand(antigravityCli, ['--new-window', workspacePath]);
         } catch (error: any) {
-            // Fall back to open -a if CLI not found
-            logger.warn(`[CdpService] CLI launch failed, falling back to open -a: ${error?.message || String(error)}`);
-            await this.runCommand('open', ['-a', 'Antigravity', workspacePath]);
+            // Fall back to platform-specific launch method
+            const fallback = getAntigravityFallback(workspacePath);
+            logger.warn(`[CdpService] CLI launch failed, falling back to ${fallback.command}: ${error?.message || String(error)}`);
+            await this.runCommand(fallback.command, fallback.args);
         }
 
         // Poll until a new workbench page appears (max 30 seconds)

@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { CDP_PORTS } from '../../utils/cdpPorts';
 import { ConfigLoader } from '../../utils/configLoader';
+import { getAntigravityCdpHint } from '../../utils/antigravityPaths';
 import { COLORS } from '../../utils/logger';
 
 const ok = (msg: string) => console.log(`  ${COLORS.green}[OK]${COLORS.reset} ${msg}`);
@@ -104,7 +105,7 @@ export async function doctorAction(): Promise<void> {
     }
     if (!cdpOk) {
         fail('No CDP ports responding');
-        hint('Run: open -a Antigravity --args --remote-debugging-port=9222');
+        hint(`Run: ${getAntigravityCdpHint(9222)}`);
         allOk = false;
     }
 
