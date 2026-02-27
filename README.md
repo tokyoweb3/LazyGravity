@@ -17,7 +17,7 @@
 
 Send natural language instructions like "fix that bug" or "start designing the new feature" from your phone. Antigravity executes them locally on your home PC using its full resources, and reports results back to Discord.
 
-https://github.com/user-attachments/assets/c9e57ac2-a62b-4ed1-afc1-cd47e8caf022
+https://github.com/user-attachments/assets/08eac63e-5ede-469b-ac6c-1c40ec77b0c0
 
 
 ## Quick Setup
