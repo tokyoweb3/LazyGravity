@@ -438,7 +438,7 @@ export const RESPONSE_SELECTORS = {
 };
 
 /** Response generation phases */
-export type ResponsePhase = 'waiting' | 'thinking' | 'generating' | 'complete' | 'timeout' | 'quotaReached';
+export type ResponsePhase = 'waiting' | 'thinking' | 'generating' | 'complete' | 'timeout' | 'quotaReached' | 'disconnected';
 
 export interface ResponseMonitorOptions {
     /** CDP service instance */
@@ -484,7 +484,6 @@ export class ResponseMonitor {
     private readonly onProcessLog?: (text: string) => void;
 
     private pollTimer: ReturnType<typeof setTimeout> | null = null;
-    private timeoutTimer: ReturnType<typeof setTimeout> | null = null;
     private isRunning: boolean = false;
     private lastText: string | null = null;
     private baselineText: string | null = null;
@@ -494,6 +493,15 @@ export class ResponseMonitor {
     private quotaDetected: boolean = false;
     private seenProcessLogKeys: Set<string> = new Set();
     private structuredDiagLogged: boolean = false;
+
+    // CDP disconnect handling (#48)
+    private isPaused: boolean = false;
+    private onCdpDisconnected: (() => void) | null = null;
+    private onCdpReconnected: (() => void) | null = null;
+    private onCdpReconnectFailed: ((err: Error) => void | Promise<void>) | null = null;
+
+    // Activity-based timeout (#49)
+    private lastActivityTime: number = 0;
 
     constructor(options: ResponseMonitorOptions) {
         this.cdpService = options.cdpService;
@@ -528,6 +536,7 @@ export class ResponseMonitor {
     private async initMonitoring(passive: boolean): Promise<void> {
         if (this.isRunning) return;
         this.isRunning = true;
+        this.isPaused = false;
         this.lastText = null;
         this.baselineText = null;
         this.generationStarted = passive;
@@ -592,23 +601,15 @@ export class ResponseMonitor {
             }
         }
 
-        // Set timeout timer
-        if (this.maxDurationMs > 0) {
-            this.timeoutTimer = setTimeout(async () => {
-                const lastText = this.lastText ?? '';
-                this.setPhase('timeout', lastText);
-                await this.stop();
-                try {
-                    await Promise.resolve(this.onTimeout?.(lastText));
-                } catch (error) {
-                    logger.error('[ResponseMonitor] timeout callback failed:', error);
-                }
-            }, this.maxDurationMs);
-        }
+        // Activity-based timeout: track last activity time instead of fixed timer (#49)
+        this.lastActivityTime = Date.now();
+
+        // Register CDP connection event listeners (#48)
+        this.registerCdpConnectionListeners();
 
         const mode = passive ? 'Passive monitoring' : 'Monitoring';
         logger.debug(
-            `── ${mode} started | poll=${this.pollIntervalMs}ms timeout=${this.maxDurationMs / 1000}s baseline=${this.baselineText?.length ?? 0}ch`,
+            `── ${mode} started | poll=${this.pollIntervalMs}ms inactivityTimeout=${this.maxDurationMs / 1000}s baseline=${this.baselineText?.length ?? 0}ch`,
         );
 
         this.schedulePoll();
@@ -617,13 +618,11 @@ export class ResponseMonitor {
     /** Stop monitoring */
     async stop(): Promise<void> {
         this.isRunning = false;
+        this.isPaused = false;
+        this.unregisterCdpConnectionListeners();
         if (this.pollTimer) {
             clearTimeout(this.pollTimer);
             this.pollTimer = null;
-        }
-        if (this.timeoutTimer) {
-            clearTimeout(this.timeoutTimer);
-            this.timeoutTimer = null;
         }
     }
 
@@ -686,6 +685,9 @@ export class ResponseMonitor {
                 case 'quotaReached':
                     logger.warn('Quota Reached');
                     break;
+                case 'disconnected':
+                    logger.warn(`CDP Disconnected — paused (${len} chars captured)`);
+                    break;
                 default:
                     logger.phase(`${phase}`);
             }
@@ -693,8 +695,63 @@ export class ResponseMonitor {
         }
     }
 
+    private registerCdpConnectionListeners(): void {
+        this.onCdpDisconnected = () => {
+            if (!this.isRunning) return;
+            logger.warn('[ResponseMonitor] CDP disconnected — pausing poll');
+            this.isPaused = true;
+            if (this.pollTimer) {
+                clearTimeout(this.pollTimer);
+                this.pollTimer = null;
+            }
+            this.setPhase('disconnected', this.lastText);
+        };
+
+        this.onCdpReconnected = () => {
+            if (!this.isRunning) return;
+            logger.warn('[ResponseMonitor] CDP reconnected — resuming poll');
+            this.isPaused = false;
+            this.lastActivityTime = Date.now();
+            const resumePhase = this.generationStarted ? 'generating' : 'waiting';
+            this.setPhase(resumePhase, this.lastText);
+            this.schedulePoll();
+        };
+
+        this.onCdpReconnectFailed = async (err: Error) => {
+            if (!this.isRunning) return;
+            logger.error('[ResponseMonitor] CDP reconnection failed — stopping monitor:', err.message);
+            const lastText = this.lastText ?? '';
+            this.setPhase('disconnected', lastText);
+            await this.stop();
+            try {
+                await Promise.resolve(this.onTimeout?.(lastText));
+            } catch (error) {
+                logger.error('[ResponseMonitor] timeout callback failed:', error);
+            }
+        };
+
+        this.cdpService.on('disconnected', this.onCdpDisconnected);
+        this.cdpService.on('reconnected', this.onCdpReconnected);
+        this.cdpService.on('reconnectFailed', this.onCdpReconnectFailed);
+    }
+
+    private unregisterCdpConnectionListeners(): void {
+        if (this.onCdpDisconnected) {
+            this.cdpService.removeListener('disconnected', this.onCdpDisconnected);
+            this.onCdpDisconnected = null;
+        }
+        if (this.onCdpReconnected) {
+            this.cdpService.removeListener('reconnected', this.onCdpReconnected);
+            this.onCdpReconnected = null;
+        }
+        if (this.onCdpReconnectFailed) {
+            this.cdpService.removeListener('reconnectFailed', this.onCdpReconnectFailed);
+            this.onCdpReconnectFailed = null;
+        }
+    }
+
     private schedulePoll(): void {
-        if (!this.isRunning) return;
+        if (!this.isRunning || this.isPaused) return;
         this.pollTimer = setTimeout(async () => {
             await this.poll();
             if (this.isRunning) {
@@ -730,6 +787,7 @@ export class ResponseMonitor {
             newEntries.push(normalized.slice(0, 300));
         }
         if (newEntries.length > 0) {
+            this.lastActivityTime = Date.now();
             try {
                 this.onProcessLog?.(newEntries.join('\n\n'));
             } catch {
@@ -833,6 +891,7 @@ export class ResponseMonitor {
 
             // Handle stop button appearing
             if (isGenerating) {
+                this.lastActivityTime = Date.now();
                 if (!this.generationStarted) {
                     this.generationStarted = true;
                     this.setPhase('thinking', null);
@@ -870,6 +929,7 @@ export class ResponseMonitor {
             // Text change handling
             const textChanged = effectiveText !== null && effectiveText !== this.lastText;
             if (textChanged) {
+                this.lastActivityTime = Date.now();
                 this.lastText = effectiveText;
 
                 if (this.currentPhase === 'waiting' || this.currentPhase === 'thinking') {
@@ -896,6 +956,19 @@ export class ResponseMonitor {
                     }
                     return;
                 }
+            }
+
+            // Activity-based inactivity timeout (#49)
+            if (this.maxDurationMs > 0 && Date.now() - this.lastActivityTime >= this.maxDurationMs) {
+                const lastText = this.lastText ?? '';
+                this.setPhase('timeout', lastText);
+                await this.stop();
+                try {
+                    await Promise.resolve(this.onTimeout?.(lastText));
+                } catch (error) {
+                    logger.error('[ResponseMonitor] timeout callback failed:', error);
+                }
+                return;
             }
         } catch (error) {
             logger.error('[ResponseMonitor] poll error:', error);

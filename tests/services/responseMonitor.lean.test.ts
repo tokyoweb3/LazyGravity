@@ -9,7 +9,7 @@
  *   - Constructor accepts only: cdpService, pollIntervalMs (default 2000),
  *     maxDurationMs, stopGoneConfirmCount (default 3), onProgress, onComplete,
  *     onTimeout, onPhaseChange
- *   - NO network event subscription (no on/removeListener on cdpService)
+ *   - NO network event subscription, but subscribes to CDP connection events (disconnected/reconnected/reconnectFailed)
  *   - NO onActivity, networkCompleteDelayMs, textStabilityCompleteMs, etc.
  *   - NO getLastExtractionSource(), getLastDomActivityLines()
  *   - Each poll makes exactly 3 CDP calls: stop button, quota, text extraction
@@ -38,11 +38,13 @@ interface LeanResponseMonitorOptions {
     //          noUpdateTimeoutMs, noTextCompletionDelayMs, completionStabilityMs
 }
 
-// Minimal mock: only call, getPrimaryContextId. NO on/removeListener.
+// Minimal mock: call, getPrimaryContextId, on, removeListener (for CDP connection events).
 function createMockCdpService() {
     return {
         call: jest.fn().mockResolvedValue({ result: { value: null } }),
         getPrimaryContextId: jest.fn().mockReturnValue(1),
+        on: jest.fn(),
+        removeListener: jest.fn(),
     };
 }
 
@@ -452,22 +454,30 @@ describe('Lean ResponseMonitor (new API)', () => {
     });
 
     // ---------------------------------------------------------------
-    // Test 11: NO network event subscription (cdpService.on should NOT be called)
+    // Test 11: Subscribes to CDP connection events (not network events)
     // ---------------------------------------------------------------
-    it('does NOT subscribe to network events (no cdpService.on calls)', async () => {
+    it('subscribes to CDP connection events on start and removes them on stop', async () => {
         const monitor = createMonitor();
 
         cdpService.call.mockResolvedValueOnce(cdpResult(null));
         await monitor.start();
 
-        // The new lean monitor should NOT call on() on the cdpService
-        expect(cdpService).not.toHaveProperty('on');
-        // If it has an 'on' mock somehow, ensure it was never called
-        if (typeof (cdpService as any).on === 'function') {
-            expect((cdpService as any).on).not.toHaveBeenCalled();
-        }
+        // Should subscribe to CDP connection events (disconnected, reconnected, reconnectFailed)
+        expect(cdpService.on).toHaveBeenCalledWith('disconnected', expect.any(Function));
+        expect(cdpService.on).toHaveBeenCalledWith('reconnected', expect.any(Function));
+        expect(cdpService.on).toHaveBeenCalledWith('reconnectFailed', expect.any(Function));
+        expect(cdpService.on).toHaveBeenCalledTimes(3);
+
+        // Should NOT subscribe to network events
+        expect(cdpService.on).not.toHaveBeenCalledWith('Network.requestWillBeSent', expect.any(Function));
+        expect(cdpService.on).not.toHaveBeenCalledWith('Network.loadingFinished', expect.any(Function));
 
         await monitor.stop();
+
+        // Should unregister all CDP connection listeners
+        expect(cdpService.removeListener).toHaveBeenCalledWith('disconnected', expect.any(Function));
+        expect(cdpService.removeListener).toHaveBeenCalledWith('reconnected', expect.any(Function));
+        expect(cdpService.removeListener).toHaveBeenCalledWith('reconnectFailed', expect.any(Function));
     });
 
     // ---------------------------------------------------------------
@@ -551,6 +561,184 @@ describe('Lean ResponseMonitor (new API)', () => {
         await jest.advanceTimersByTimeAsync(2000);
 
         expect(cdpService.call.mock.calls.length - callsBefore).toBe(4);
+
+        await monitor.stop();
+    });
+
+    // ---------------------------------------------------------------
+    // CDP disconnect handling tests (#48)
+    // ---------------------------------------------------------------
+
+    it('pauses polling on CDP disconnect and resumes on reconnect', async () => {
+        const onProgress = jest.fn();
+        const onPhaseChange = jest.fn();
+
+        const monitor = createMonitor({ onProgress, onPhaseChange });
+
+        cdpService.call.mockResolvedValueOnce(cdpResult(null)); // baseline
+        await monitor.start();
+
+        // Poll 1: detect generation with text
+        cdpService.call
+            .mockResolvedValueOnce(cdpResult({ isGenerating: true }))
+            .mockResolvedValueOnce(cdpResult(false))
+            .mockResolvedValueOnce(cdpResult('Hello'))
+            .mockResolvedValueOnce(cdpResult([])); // process logs
+        await jest.advanceTimersByTimeAsync(2000);
+        expect(onProgress).toHaveBeenCalledWith('Hello');
+
+        // Simulate CDP disconnect
+        const disconnectHandler = cdpService.on.mock.calls.find(
+            (c: any[]) => c[0] === 'disconnected',
+        )?.[1];
+        expect(disconnectHandler).toBeDefined();
+        disconnectHandler!();
+
+        expect(onPhaseChange).toHaveBeenCalledWith('disconnected', 'Hello');
+
+        // Advance 4 seconds — no polls should fire while paused
+        const callCountAtDisconnect = cdpService.call.mock.calls.length;
+        await jest.advanceTimersByTimeAsync(4000);
+        expect(cdpService.call.mock.calls.length).toBe(callCountAtDisconnect);
+
+        // Simulate CDP reconnect
+        const reconnectHandler = cdpService.on.mock.calls.find(
+            (c: any[]) => c[0] === 'reconnected',
+        )?.[1];
+        expect(reconnectHandler).toBeDefined();
+        reconnectHandler!();
+
+        // Phase should be restored
+        expect(onPhaseChange).toHaveBeenCalledWith('generating', 'Hello');
+
+        // Polling resumes — set up mock for next poll
+        cdpService.call
+            .mockResolvedValueOnce(cdpResult({ isGenerating: true }))
+            .mockResolvedValueOnce(cdpResult(false))
+            .mockResolvedValueOnce(cdpResult('Hello World'))
+            .mockResolvedValueOnce(cdpResult([]));
+        await jest.advanceTimersByTimeAsync(2000);
+        expect(onProgress).toHaveBeenCalledWith('Hello World');
+
+        await monitor.stop();
+    });
+
+    it('calls onTimeout when CDP reconnection fails', async () => {
+        const onTimeout = jest.fn();
+        const monitor = createMonitor({ onTimeout });
+
+        cdpService.call.mockResolvedValueOnce(cdpResult(null)); // baseline
+        await monitor.start();
+
+        // Poll 1: detect text
+        cdpService.call
+            .mockResolvedValueOnce(cdpResult({ isGenerating: true }))
+            .mockResolvedValueOnce(cdpResult(false))
+            .mockResolvedValueOnce(cdpResult('Partial'))
+            .mockResolvedValueOnce(cdpResult([]));
+        await jest.advanceTimersByTimeAsync(2000);
+
+        // Simulate disconnect + reconnect failure
+        const disconnectHandler = cdpService.on.mock.calls.find(
+            (c: any[]) => c[0] === 'disconnected',
+        )?.[1];
+        disconnectHandler!();
+
+        const reconnectFailedHandler = cdpService.on.mock.calls.find(
+            (c: any[]) => c[0] === 'reconnectFailed',
+        )?.[1];
+        reconnectFailedHandler!(new Error('Max retries'));
+
+        // Let the stop() promise resolve
+        await jest.advanceTimersByTimeAsync(0);
+
+        expect(onTimeout).toHaveBeenCalledWith('Partial');
+        expect(monitor.isActive()).toBe(false);
+    });
+
+    // ---------------------------------------------------------------
+    // Activity-based timeout tests (#49)
+    // ---------------------------------------------------------------
+
+    it('does not timeout while text is actively changing', async () => {
+        let timedOutText: string | null = null;
+        const monitor = createMonitor({
+            maxDurationMs: 6000,
+            onTimeout: (text) => { timedOutText = text; },
+        });
+
+        cdpService.call.mockResolvedValueOnce(cdpResult(null)); // baseline
+        await monitor.start();
+
+        // Poll 1 at 2s: text changes → activity resets
+        cdpService.call
+            .mockResolvedValueOnce(cdpResult({ isGenerating: true }))
+            .mockResolvedValueOnce(cdpResult(false))
+            .mockResolvedValueOnce(cdpResult('Line 1'))
+            .mockResolvedValueOnce(cdpResult([]));
+        await jest.advanceTimersByTimeAsync(2000);
+
+        // Poll 2 at 4s: text changes again → activity resets
+        cdpService.call
+            .mockResolvedValueOnce(cdpResult({ isGenerating: true }))
+            .mockResolvedValueOnce(cdpResult(false))
+            .mockResolvedValueOnce(cdpResult('Line 1\nLine 2'))
+            .mockResolvedValueOnce(cdpResult([]));
+        await jest.advanceTimersByTimeAsync(2000);
+
+        // Poll 3 at 6s: text changes again → activity resets
+        cdpService.call
+            .mockResolvedValueOnce(cdpResult({ isGenerating: true }))
+            .mockResolvedValueOnce(cdpResult(false))
+            .mockResolvedValueOnce(cdpResult('Line 1\nLine 2\nLine 3'))
+            .mockResolvedValueOnce(cdpResult([]));
+        await jest.advanceTimersByTimeAsync(2000);
+
+        // 6 seconds have passed (exceeds maxDurationMs), but activity kept resetting
+        expect(timedOutText).toBeNull();
+
+        await monitor.stop();
+    });
+
+    it('activity-based timeout fires only after inactivity, not fixed duration', async () => {
+        let timedOutText: string | null = null;
+        const monitor = createMonitor({
+            maxDurationMs: 4000, // 4s inactivity timeout
+            onTimeout: (text) => { timedOutText = text; },
+        });
+
+        cdpService.call.mockResolvedValueOnce(cdpResult(null)); // baseline
+        await monitor.start();
+
+        // Poll 1 at 2s: text appears → activity resets
+        cdpService.call
+            .mockResolvedValueOnce(cdpResult({ isGenerating: true }))
+            .mockResolvedValueOnce(cdpResult(false))
+            .mockResolvedValueOnce(cdpResult('Line 1'))
+            .mockResolvedValueOnce(cdpResult([]));
+        await jest.advanceTimersByTimeAsync(2000);
+
+        // Poll 2 at 4s: text changes → activity resets (would be fixed timeout here)
+        cdpService.call
+            .mockResolvedValueOnce(cdpResult({ isGenerating: true }))
+            .mockResolvedValueOnce(cdpResult(false))
+            .mockResolvedValueOnce(cdpResult('Line 1\nLine 2'))
+            .mockResolvedValueOnce(cdpResult([]));
+        await jest.advanceTimersByTimeAsync(2000);
+
+        // At 4s: fixed timeout would have fired, but activity-based should NOT
+        expect(timedOutText).toBeNull();
+
+        // Poll 3 at 6s: text changes again → activity resets
+        cdpService.call
+            .mockResolvedValueOnce(cdpResult({ isGenerating: true }))
+            .mockResolvedValueOnce(cdpResult(false))
+            .mockResolvedValueOnce(cdpResult('Line 1\nLine 2\nLine 3'))
+            .mockResolvedValueOnce(cdpResult([]));
+        await jest.advanceTimersByTimeAsync(2000);
+
+        // At 6s: 2x maxDurationMs, but still no timeout thanks to activity
+        expect(timedOutText).toBeNull();
 
         await monitor.stop();
     });
