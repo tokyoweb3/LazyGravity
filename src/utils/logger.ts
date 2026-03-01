@@ -1,3 +1,5 @@
+import { logBuffer } from './logBuffer';
+
 export const COLORS = {
     red: '\x1b[31m',
     yellow: '\x1b[33m',
@@ -46,34 +48,46 @@ export function createLogger(initialLevel: LogLevel = 'info'): Logger {
     return {
         info(...args: any[]) {
             if (shouldLog('info')) {
-                console.info(`${getTimestamp()} ${COLORS.cyan}[INFO]${COLORS.reset}`, ...args);
+                const formatted = `${getTimestamp()} ${COLORS.cyan}[INFO]${COLORS.reset}`;
+                console.info(formatted, ...args);
+                logBuffer.append('info', `[INFO] ${args.join(' ')}`);
             }
         },
         warn(...args: any[]) {
             if (shouldLog('warn')) {
-                console.warn(`${getTimestamp()} ${COLORS.yellow}[WARN]${COLORS.reset}`, ...args);
+                const formatted = `${getTimestamp()} ${COLORS.yellow}[WARN]${COLORS.reset}`;
+                console.warn(formatted, ...args);
+                logBuffer.append('warn', `[WARN] ${args.join(' ')}`);
             }
         },
         error(...args: any[]) {
             if (shouldLog('error')) {
-                console.error(`${getTimestamp()} ${COLORS.red}[ERROR]${COLORS.reset}`, ...args);
+                const formatted = `${getTimestamp()} ${COLORS.red}[ERROR]${COLORS.reset}`;
+                console.error(formatted, ...args);
+                logBuffer.append('error', `[ERROR] ${args.join(' ')}`);
             }
         },
         debug(...args: any[]) {
             if (shouldLog('debug')) {
-                console.debug(`${getTimestamp()} ${COLORS.dim}[DEBUG]${COLORS.reset}`, ...args);
+                const formatted = `${getTimestamp()} ${COLORS.dim}[DEBUG]${COLORS.reset}`;
+                console.debug(formatted, ...args);
+                logBuffer.append('debug', `[DEBUG] ${args.join(' ')}`);
             }
         },
         /** Important state transitions - stands out in logs */
         phase(...args: any[]) {
             if (shouldLog('info')) {
-                console.info(`${getTimestamp()} ${COLORS.magenta}[PHASE]${COLORS.reset}`, ...args);
+                const formatted = `${getTimestamp()} ${COLORS.magenta}[PHASE]${COLORS.reset}`;
+                console.info(formatted, ...args);
+                logBuffer.append('info', `[PHASE] ${args.join(' ')}`);
             }
         },
         /** Completion-related events - green for success */
         done(...args: any[]) {
             if (shouldLog('info')) {
-                console.info(`${getTimestamp()} ${COLORS.green}[DONE]${COLORS.reset}`, ...args);
+                const formatted = `${getTimestamp()} ${COLORS.green}[DONE]${COLORS.reset}`;
+                console.info(formatted, ...args);
+                logBuffer.append('info', `[DONE] ${args.join(' ')}`);
             }
         },
         /** Section divider with optional label for structured output */

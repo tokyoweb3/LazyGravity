@@ -1,6 +1,7 @@
 import { t } from "../utils/i18n";
 import { logger } from '../utils/logger';
 import type { LogLevel } from '../utils/logger';
+import { logBuffer } from '../utils/logBuffer';
 import {
     Client, GatewayIntentBits, Events, Message,
     ChatInputCommandInteraction, Interaction,
@@ -1121,6 +1122,7 @@ async function handleSlashInteraction(
                         name: '🔧 System', value: [
                             '`/status` — Display overall bot status',
                             '`/autoaccept` — Toggle auto-approve mode for approval dialogs via buttons',
+                            '`/logs [lines] [level]` — View recent bot logs',
                             '`/cleanup [days]` — Clean up unused channels/categories',
                             '`/help` — Show this help',
                         ].join('\n')
@@ -1345,6 +1347,29 @@ async function handleSlashInteraction(
         case 'ping': {
             const apiLatency = interaction.client.ws.ping;
             await interaction.editReply({ content: `🏓 Pong! API Latency is **${apiLatency}ms**.` });
+            break;
+        }
+
+        case 'logs': {
+            const lines = interaction.options.getInteger('lines') ?? 50;
+            const level = interaction.options.getString('level') as LogLevel | null;
+            const entries = logBuffer.getRecent(lines, level ?? undefined);
+
+            if (entries.length === 0) {
+                await interaction.editReply({ content: 'No log entries found.' });
+                break;
+            }
+
+            const formatted = entries
+                .map((e) => `${e.timestamp.slice(11, 19)} ${e.message}`)
+                .join('\n');
+
+            const MAX_CONTENT = 1900;
+            const codeBlock = formatted.length <= MAX_CONTENT
+                ? `\`\`\`\n${formatted}\n\`\`\``
+                : `\`\`\`\n${formatted.slice(0, MAX_CONTENT)}\n\`\`\`\n(truncated — showing ${MAX_CONTENT} chars of ${formatted.length})`;
+
+            await interaction.editReply({ content: codeBlock });
             break;
         }
 
