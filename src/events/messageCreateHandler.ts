@@ -82,6 +82,26 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
     const cleanupInboundImageAttachments = deps.cleanupInboundImageAttachments ?? cleanupInboundImageAttachmentsFn;
     const isImageAttachment = deps.isImageAttachment ?? isImageAttachmentFn;
 
+    // Per-workspace prompt queue: serializes send→response cycles
+    const workspaceQueues = new Map<string, Promise<void>>();
+    const workspaceQueueDepths = new Map<string, number>();
+
+    function enqueueForWorkspace(
+        workspacePath: string,
+        task: () => Promise<void>,
+    ): Promise<void> {
+        const current = workspaceQueues.get(workspacePath) ?? Promise.resolve();
+        const next = current.then(async () => {
+            try {
+                await task();
+            } catch (err: any) {
+                logger.error('[WorkspaceQueue] task error:', err?.message || err);
+            }
+        });
+        workspaceQueues.set(workspacePath, next);
+        return next;
+    }
+
     return async (message: Message): Promise<void> => {
         if (message.author.bot) return;
 
@@ -197,71 +217,104 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
 
             try {
                 if (workspacePath) {
-                    try {
-                        const cdp = await deps.bridge.pool.getOrConnect(workspacePath);
-                        const projectName = deps.bridge.pool.extractProjectName(workspacePath);
+                    // Track queue depth for hourglass reactions
+                    const currentDepth = workspaceQueueDepths.get(workspacePath) ?? 0;
+                    workspaceQueueDepths.set(workspacePath, currentDepth + 1);
+                    if (currentDepth > 0) {
+                        await message.react('⏳').catch(() => { });
+                    }
 
-                        deps.bridge.lastActiveWorkspace = projectName;
-                        deps.bridge.lastActiveChannel = message.channel;
-                        registerApprovalWorkspaceChannel(deps.bridge, projectName, message.channel);
-
-                        ensureApprovalDetector(deps.bridge, cdp, projectName, deps.client);
-                        ensureErrorPopupDetector(deps.bridge, cdp, projectName, deps.client);
-                        ensurePlanningDetector(deps.bridge, cdp, projectName, deps.client);
-
-                        const session = deps.chatSessionRepo.findByChannelId(message.channelId);
-                        if (session?.displayName) {
-                            registerApprovalSessionChannel(deps.bridge, projectName, session.displayName, message.channel);
+                    await enqueueForWorkspace(workspacePath, async () => {
+                        // Remove hourglass when task starts processing
+                        const botId = message.client.user?.id;
+                        if (botId) {
+                            await message.reactions.resolve('⏳')?.users.remove(botId).catch(() => { });
                         }
 
-                        if (session?.isRenamed && session.displayName) {
-                            const activationResult = await deps.chatSessionService.activateSessionByTitle(cdp, session.displayName);
-                            if (!activationResult.ok) {
-                                const reason = activationResult.error ? ` (${activationResult.error})` : '';
-                                await message.reply(
-                                    `⚠️ Could not route this message to the bound session (${session.displayName}). ` +
-                                    `Please open /chat and verify the session${reason}.`,
-                                ).catch(() => { });
-                                return;
+                        try {
+                            const cdp = await deps.bridge.pool.getOrConnect(workspacePath);
+                            const projectName = deps.bridge.pool.extractProjectName(workspacePath);
+
+                            deps.bridge.lastActiveWorkspace = projectName;
+                            deps.bridge.lastActiveChannel = message.channel;
+                            registerApprovalWorkspaceChannel(deps.bridge, projectName, message.channel);
+
+                            ensureApprovalDetector(deps.bridge, cdp, projectName, deps.client);
+                            ensureErrorPopupDetector(deps.bridge, cdp, projectName, deps.client);
+                            ensurePlanningDetector(deps.bridge, cdp, projectName, deps.client);
+
+                            const session = deps.chatSessionRepo.findByChannelId(message.channelId);
+                            if (session?.displayName) {
+                                registerApprovalSessionChannel(deps.bridge, projectName, session.displayName, message.channel);
                             }
-                        } else if (session && !session.isRenamed) {
-                            try {
-                                const chatResult = await deps.chatSessionService.startNewChat(cdp);
-                                if (!chatResult.ok) {
-                                    logger.warn('[MessageCreate] Failed to start new chat in Antigravity:', chatResult.error);
+
+                            if (session?.isRenamed && session.displayName) {
+                                const activationResult = await deps.chatSessionService.activateSessionByTitle(cdp, session.displayName);
+                                if (!activationResult.ok) {
+                                    const reason = activationResult.error ? ` (${activationResult.error})` : '';
+                                    await message.reply(
+                                        `⚠️ Could not route this message to the bound session (${session.displayName}). ` +
+                                        `Please open /chat and verify the session${reason}.`,
+                                    ).catch(() => { });
+                                    return;
+                                }
+                            } else if (session && !session.isRenamed) {
+                                try {
+                                    const chatResult = await deps.chatSessionService.startNewChat(cdp);
+                                    if (!chatResult.ok) {
+                                        logger.warn('[MessageCreate] Failed to start new chat in Antigravity:', chatResult.error);
+                                        (message.channel as any).send(`⚠️ Could not open a new chat in Antigravity. Sending to existing chat.`).catch(() => { });
+                                    }
+                                } catch (err) {
+                                    logger.error('[MessageCreate] startNewChat error:', err);
                                     (message.channel as any).send(`⚠️ Could not open a new chat in Antigravity. Sending to existing chat.`).catch(() => { });
                                 }
-                            } catch (err) {
-                                logger.error('[MessageCreate] startNewChat error:', err);
-                                (message.channel as any).send(`⚠️ Could not open a new chat in Antigravity. Sending to existing chat.`).catch(() => { });
                             }
+
+                            await deps.autoRenameChannel(message, deps.chatSessionRepo, deps.titleGenerator, deps.channelManager, cdp);
+
+                            // Re-register session channel after autoRenameChannel sets displayName
+                            const updatedSession = deps.chatSessionRepo.findByChannelId(message.channelId);
+                            if (updatedSession?.displayName) {
+                                registerApprovalSessionChannel(deps.bridge, projectName, updatedSession.displayName, message.channel);
+                            }
+
+                            // Register echo hash so UserMessageDetector skips this message
+                            const userMsgDetector = deps.bridge.pool.getUserMessageDetector?.(projectName);
+                            if (userMsgDetector) {
+                                userMsgDetector.addEchoHash(promptText);
+                            }
+
+                            // Wait for full response cycle (onComplete/onTimeout) before releasing the queue.
+                            // Safety timeout (360s) prevents permanent queue deadlock if onFullCompletion
+                            // is never called due to a bug.
+                            const QUEUE_SAFETY_TIMEOUT_MS = 360_000;
+                            await new Promise<void>((resolve) => {
+                                const safetyTimer = setTimeout(() => {
+                                    logger.warn('[WorkspaceQueue] Safety timeout — releasing queue after 360s');
+                                    resolve();
+                                }, QUEUE_SAFETY_TIMEOUT_MS);
+                                deps.sendPromptToAntigravity(deps.bridge, message, promptText, cdp, deps.modeService, deps.modelService, inboundImages, {
+                                    chatSessionService: deps.chatSessionService,
+                                    chatSessionRepo: deps.chatSessionRepo,
+                                    channelManager: deps.channelManager,
+                                    titleGenerator: deps.titleGenerator,
+                                    userPrefRepo: deps.userPrefRepo,
+                                    onFullCompletion: () => {
+                                        clearTimeout(safetyTimer);
+                                        resolve();
+                                    },
+                                });
+                            });
+                        } catch (e: any) {
+                            await message.reply(`Failed to connect to workspace: ${e.message}`);
+                        } finally {
+                            workspaceQueueDepths.set(
+                                workspacePath,
+                                (workspaceQueueDepths.get(workspacePath) ?? 1) - 1,
+                            );
                         }
-
-                        await deps.autoRenameChannel(message, deps.chatSessionRepo, deps.titleGenerator, deps.channelManager, cdp);
-
-                        // Re-register session channel after autoRenameChannel sets displayName
-                        const updatedSession = deps.chatSessionRepo.findByChannelId(message.channelId);
-                        if (updatedSession?.displayName) {
-                            registerApprovalSessionChannel(deps.bridge, projectName, updatedSession.displayName, message.channel);
-                        }
-
-                        // Register echo hash so UserMessageDetector skips this message
-                        const userMsgDetector = deps.bridge.pool.getUserMessageDetector?.(projectName);
-                        if (userMsgDetector) {
-                            userMsgDetector.addEchoHash(promptText);
-                        }
-
-                        await deps.sendPromptToAntigravity(deps.bridge, message, promptText, cdp, deps.modeService, deps.modelService, inboundImages, {
-                            chatSessionService: deps.chatSessionService,
-                            chatSessionRepo: deps.chatSessionRepo,
-                            channelManager: deps.channelManager,
-                            titleGenerator: deps.titleGenerator,
-                            userPrefRepo: deps.userPrefRepo,
-                        });
-                    } catch (e: any) {
-                        await message.reply(`Failed to connect to workspace: ${e.message}`);
-                        return;
-                    }
+                    });
                 } else {
                     await message.reply('No project is configured for this channel. Please create or select one with `/project`.');
                 }
