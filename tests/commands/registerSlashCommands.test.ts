@@ -18,6 +18,7 @@ jest.mock('discord.js', () => {
                 setName: jest.fn().mockReturnThis(),
                 setDescription: jest.fn().mockReturnThis(),
                 setRequired: jest.fn().mockReturnThis(),
+                addChoices: jest.fn().mockReturnThis(),
             };
             fn(option);
             return this;
@@ -84,6 +85,11 @@ describe('registerSlashCommands', () => {
         const names = slashCommands.map((cmd) => cmd.toJSON().name);
         expect(names).toContain('join');
         expect(names).toContain('mirror');
+    });
+
+    it('includes the output command in registration targets', () => {
+        const names = slashCommands.map((cmd) => cmd.toJSON().name);
+        expect(names).toContain('output');
     });
 
     beforeEach(() => {

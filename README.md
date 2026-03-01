@@ -82,10 +82,15 @@ Just type in any bound channel:
 - `📝 /template list` — Display registered templates with execute buttons
 - `📝 /template add <name> <prompt>` — Register a new prompt template
 - `📝 /template delete <name>` — Delete a template
+- `🔗 /join` — Join an existing Antigravity session (shows up to 20 recent sessions)
+- `🔗 /mirror` — Toggle PC→Discord message mirroring for the current session
 - `🛑 /stop` — Force-stop a running Antigravity task
 - `📸 /screenshot` — Capture and send Antigravity's current screen
 - `🔧 /status` — Show bot connection status, current mode, and active project
 - `✅ /autoaccept [on|off|status]` — Toggle auto-approval of file edit dialogs
+- `📝 /output [embed|plain]` — Toggle output format between Embed and Plain Text (plain text is easier to copy on mobile)
+- `📋 /logs [lines] [level]` — View recent bot logs (ephemeral)
+- `🏓 /ping` — Check bot latency
 - `🧹 /cleanup [days]` — Scan and clean up inactive session channels (default: 7 days)
 - `❓ /help` — Display list of available commands
 

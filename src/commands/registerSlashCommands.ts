@@ -150,6 +150,42 @@ const mirrorCommand = new SlashCommandBuilder()
     .setName('mirror')
     .setDescription(t('Toggle PC-to-Discord message mirroring for the current session'));
 
+/** /output command definition */
+const outputCommand = new SlashCommandBuilder()
+    .setName('output')
+    .setDescription(t('Toggle output format between Embed and Plain Text'))
+    .addStringOption((option) =>
+        option
+            .setName('format')
+            .setDescription(t('embed / plain (optional direct switch)'))
+            .setRequired(false)
+    );
+
+/** /logs command definition */
+const logsCommand = new SlashCommandBuilder()
+    .setName('logs')
+    .setDescription(t('View recent bot logs'))
+    .addIntegerOption((option) =>
+        option
+            .setName('lines')
+            .setDescription(t('Number of recent log lines (default: 50)'))
+            .setRequired(false)
+            .setMinValue(1)
+            .setMaxValue(100)
+    )
+    .addStringOption((option) =>
+        option
+            .setName('level')
+            .setDescription(t('Filter by log level'))
+            .setRequired(false)
+            .addChoices(
+                { name: 'debug', value: 'debug' },
+                { name: 'info', value: 'info' },
+                { name: 'warn', value: 'warn' },
+                { name: 'error', value: 'error' },
+            )
+    );
+
 /** /ping command definition */
 const pingCommand = new SlashCommandBuilder()
     .setName('ping')
@@ -171,7 +207,9 @@ export const slashCommands = [
     cleanupCommand,
     joinCommand,
     mirrorCommand,
+    outputCommand,
     pingCommand,
+    logsCommand,
 ];
 
 /**

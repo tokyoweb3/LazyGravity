@@ -9,12 +9,14 @@ import { ModeService } from './modeService';
 import { ModelService } from './modelService';
 import { TitleGeneratorService } from './titleGeneratorService';
 import { InboundImageAttachment } from '../utils/imageHandler';
+import { UserPreferenceRepository } from '../database/userPreferenceRepository';
 
 export interface PromptDispatchOptions {
     chatSessionService: ChatSessionService;
     chatSessionRepo: ChatSessionRepository;
     channelManager: ChannelManager;
     titleGenerator: TitleGeneratorService;
+    userPrefRepo?: UserPreferenceRepository;
 }
 
 export interface PromptDispatchRequest {

@@ -18,6 +18,12 @@ import {
     AUTOACCEPT_BTN_ON,
     AUTOACCEPT_BTN_REFRESH,
 } from '../ui/autoAcceptUi';
+import {
+    OUTPUT_BTN_EMBED,
+    OUTPUT_BTN_PLAIN,
+    sendOutputUI,
+} from '../ui/outputUi';
+import { UserPreferenceRepository, OutputFormat } from '../database/userPreferenceRepository';
 import { ChatCommandHandler } from '../commands/chatCommandHandler';
 import {
     CleanupCommandHandler,
@@ -74,6 +80,7 @@ export interface InteractionCreateHandlerDeps {
     ) => Promise<void>;
     handleTemplateUse?: (interaction: ButtonInteraction, templateId: number) => Promise<void>;
     joinHandler?: JoinCommandHandler;
+    userPrefRepo?: UserPreferenceRepository;
 }
 
 export function createInteractionCreateHandler(deps: InteractionCreateHandlerDeps) {
@@ -516,6 +523,27 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                         content: result.message,
                         flags: MessageFlags.Ephemeral,
                     });
+                    return;
+                }
+
+                if (interaction.customId === OUTPUT_BTN_EMBED || interaction.customId === OUTPUT_BTN_PLAIN) {
+                    if (deps.userPrefRepo) {
+                        await interaction.deferUpdate();
+
+                        const format: OutputFormat = interaction.customId === OUTPUT_BTN_PLAIN ? 'plain' : 'embed';
+                        deps.userPrefRepo.setOutputFormat(interaction.user.id, format);
+
+                        await sendOutputUI(
+                            { editReply: async (data: any) => await interaction.editReply(data) },
+                            format,
+                        );
+
+                        const label = format === 'plain' ? 'Plain Text' : 'Embed';
+                        await interaction.followUp({
+                            content: `Output format changed to **${label}**.`,
+                            flags: MessageFlags.Ephemeral,
+                        });
+                    }
                     return;
                 }
 
