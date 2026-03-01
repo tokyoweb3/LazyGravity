@@ -240,9 +240,20 @@ describe('messageCreateHandler', () => {
             expect(sendPromptToAntigravity).toHaveBeenCalled();
         });
 
-        it('does not recover when current session belongs to another channel', async () => {
-            const sendPromptToAntigravity = jest.fn();
-            const reply = jest.fn().mockResolvedValue(undefined);
+        it('recovers with warning when title collides with another channel', async () => {
+            const sendPromptToAntigravity = jest.fn().mockResolvedValue(undefined);
+            const updateDisplayName = jest.fn().mockReturnValue(true);
+            const findByChannelId = jest.fn()
+                .mockReturnValueOnce({
+                    isRenamed: true,
+                    displayName: 'My Session',
+                    categoryId: 'cat-1',
+                    sessionNumber: 1,
+                })
+                .mockReturnValueOnce({
+                    isRenamed: true,
+                    displayName: 'Colliding Title',
+                });
 
             const handler = createMessageCreateHandler({
                 config: { allowedUserIds: ['u1'] },
@@ -261,25 +272,22 @@ describe('messageCreateHandler', () => {
                     activateSessionByTitle: jest.fn().mockResolvedValue({ ok: false, error: 'not found' }),
                     getCurrentSessionInfo: jest.fn().mockResolvedValue({
                         hasActiveChat: true,
-                        title: 'Other Channel Session',
+                        title: 'Colliding Title',
                     }),
                 } as any,
                 chatSessionRepo: {
-                    findByChannelId: jest.fn().mockReturnValue({
-                        isRenamed: true,
-                        displayName: 'My Session',
-                        categoryId: 'cat-1',
-                    }),
+                    findByChannelId,
                     findByCategoryId: jest.fn().mockReturnValue([
                         { channelId: 'ch-1', displayName: 'My Session' },
-                        { channelId: 'ch-2', displayName: 'Other Channel Session' },
+                        { channelId: 'ch-2', displayName: 'Colliding Title' },
                     ]),
+                    updateDisplayName,
                 } as any,
-                channelManager: {} as any,
-                titleGenerator: {} as any,
+                channelManager: { renameChannel: jest.fn().mockResolvedValue(undefined) } as any,
+                titleGenerator: { sanitizeForChannelName: jest.fn().mockReturnValue('colliding-title') } as any,
                 client: {} as any,
                 sendPromptToAntigravity,
-                autoRenameChannel: jest.fn(),
+                autoRenameChannel: jest.fn().mockResolvedValue(undefined),
                 handleScreenshot: jest.fn(),
                 getCurrentCdp: jest.fn(),
                 ensureApprovalDetector: jest.fn(),
@@ -297,12 +305,15 @@ describe('messageCreateHandler', () => {
                 content: 'hello',
                 channelId: 'ch-1',
                 channel: { id: 'ch-1', send: jest.fn().mockResolvedValue(undefined) },
+                guild: { id: 'guild-1' },
                 attachments: { values: () => [] },
-                reply,
+                reply: jest.fn().mockResolvedValue(undefined),
             } as any);
 
-            expect(sendPromptToAntigravity).not.toHaveBeenCalled();
-            expect(reply).toHaveBeenCalled();
+            // Should still adopt the title despite collision
+            expect(updateDisplayName).toHaveBeenCalledWith('ch-1', 'Colliding Title');
+            // Should still send the prompt
+            expect(sendPromptToAntigravity).toHaveBeenCalled();
         });
 
         it('does not recover when hasActiveChat is false', async () => {

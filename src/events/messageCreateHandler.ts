@@ -225,39 +225,41 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                                     && currentInfo.title !== session.displayName;
 
                                 if (isRecoverable) {
-                                    // Check if current session belongs to another channel in the same workspace
+                                    // Check if current session title collides with another channel in the same workspace
                                     const siblings = deps.chatSessionRepo.findByCategoryId(session.categoryId);
-                                    const ownedByOther = siblings.some(
+                                    const collidingSibling = siblings.find(
                                         (s) => s.channelId !== message.channelId && s.displayName === currentInfo.title,
                                     );
 
-                                    if (!ownedByOther) {
-                                        // Session was renamed — adopt the new title
-                                        const oldTitle = session.displayName;
-                                        deps.chatSessionRepo.updateDisplayName(message.channelId, currentInfo.title);
-                                        registerApprovalSessionChannel(
-                                            deps.bridge, projectName, currentInfo.title, message.channel, oldTitle,
+                                    if (collidingSibling) {
+                                        // Title collision: another channel has the same displayName.
+                                        // This can happen when similar prompts produce identical titles.
+                                        // Adopt anyway — the active session is most likely ours (just renamed),
+                                        // and onComplete will correct any mismatch later.
+                                        logger.warn(
+                                            `[MessageCreate] Session title recovery with collision: ` +
+                                            `"${session.displayName}" → "${currentInfo.title}" ` +
+                                            `(also bound to channel ${collidingSibling.channelId})`,
                                         );
-                                        if (message.guild) {
-                                            const newName = deps.titleGenerator.sanitizeForChannelName(currentInfo.title);
-                                            const formattedName = `${session.sessionNumber}-${newName}`;
-                                            await deps.channelManager.renameChannel(
-                                                message.guild, message.channelId, formattedName,
-                                            ).catch(() => {});
-                                        }
-                                        logger.info(
-                                            `[MessageCreate] Session title recovery: "${oldTitle}" → "${currentInfo.title}"`,
-                                        );
-                                        // Fall through to send prompt — session is already active
-                                    } else {
-                                        // Current session belongs to another channel
-                                        const reason = activationResult.error ? ` (${activationResult.error})` : '';
-                                        await message.reply(
-                                            `⚠️ Could not route this message to the bound session (${session.displayName}). ` +
-                                            `Please open /chat and verify the session${reason}.`,
-                                        ).catch(() => {});
-                                        return;
                                     }
+
+                                    // Session was renamed — adopt the new title
+                                    const oldTitle = session.displayName;
+                                    deps.chatSessionRepo.updateDisplayName(message.channelId, currentInfo.title);
+                                    registerApprovalSessionChannel(
+                                        deps.bridge, projectName, currentInfo.title, message.channel, oldTitle,
+                                    );
+                                    if (message.guild) {
+                                        const newName = deps.titleGenerator.sanitizeForChannelName(currentInfo.title);
+                                        const formattedName = `${session.sessionNumber}-${newName}`;
+                                        await deps.channelManager.renameChannel(
+                                            message.guild, message.channelId, formattedName,
+                                        ).catch(() => {});
+                                    }
+                                    logger.info(
+                                        `[MessageCreate] Session title recovery: "${oldTitle}" → "${currentInfo.title}"`,
+                                    );
+                                    // Fall through to send prompt — session is already active
                                 } else {
                                     const reason = activationResult.error ? ` (${activationResult.error})` : '';
                                     await message.reply(
