@@ -150,6 +150,18 @@ const mirrorCommand = new SlashCommandBuilder()
     .setName('mirror')
     .setDescription(t('Toggle PC-to-Discord message mirroring for the current session'));
 
+/** /output command definition */
+const outputCommand = new SlashCommandBuilder()
+    .setName('output')
+    .setDescription(t('Toggle output format between Embed and Plain Text'))
+    .addStringOption((option) =>
+        option
+            .setName('format')
+            .setDescription(t('embed / plain (optional direct switch)'))
+            .setRequired(false)
+    );
+
+
 /** /logs command definition */
 const logsCommand = new SlashCommandBuilder()
     .setName('logs')
@@ -196,6 +208,7 @@ export const slashCommands = [
     cleanupCommand,
     joinCommand,
     mirrorCommand,
+    outputCommand,
     pingCommand,
     logsCommand,
 ];

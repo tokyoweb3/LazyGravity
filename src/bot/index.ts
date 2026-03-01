@@ -76,7 +76,10 @@ import { sendModeUI } from '../ui/modeUi';
 import { sendModelsUI, buildModelsUI } from '../ui/modelsUi';
 import { sendTemplateUI } from '../ui/templateUi';
 import { sendAutoAcceptUI } from '../ui/autoAcceptUi';
+import { sendOutputUI, OUTPUT_BTN_EMBED, OUTPUT_BTN_PLAIN } from '../ui/outputUi';
 import { handleScreenshot } from '../ui/screenshotUi';
+import { UserPreferenceRepository, OutputFormat } from '../database/userPreferenceRepository';
+import { formatAsPlainText, splitPlainText } from '../utils/plainTextFormatter';
 import { createInteractionCreateHandler } from '../events/interactionCreateHandler';
 import { createMessageCreateHandler } from '../events/messageCreateHandler';
 
@@ -152,8 +155,12 @@ async function sendPromptToAntigravity(
         chatSessionRepo: ChatSessionRepository;
         channelManager: ChannelManager;
         titleGenerator: TitleGeneratorService;
+        userPrefRepo?: UserPreferenceRepository;
     }
 ): Promise<void> {
+    // Resolve output format once at the start (no mid-response switches)
+    const outputFormat: OutputFormat = options?.userPrefRepo?.getOutputFormat(message.author.id) ?? 'embed';
+
     // Add reaction to acknowledge command receipt
     await message.react('👀').catch(() => { });
 
@@ -171,6 +178,15 @@ async function sendPromptToAntigravity(
         footerText?: string,
     ): Promise<void> => enqueueGeneral(async () => {
         if (!channel) return;
+
+        if (outputFormat === 'plain') {
+            const chunks = formatAsPlainText({ title, description, fields, footerText });
+            for (const chunk of chunks) {
+                await channel.send({ content: chunk }).catch(() => { });
+            }
+            return;
+        }
+
         const embed = new EmbedBuilder()
             .setTitle(title)
             .setDescription(description)
@@ -367,6 +383,33 @@ async function sendPromptToAntigravity(
         if (opts?.skipWhenFinalized && isFinalized) return;
         if (opts?.expectedVersion !== undefined && opts.expectedVersion !== liveResponseUpdateVersion) return;
         if (!channel) return;
+
+        if (outputFormat === 'plain') {
+            const formatted = formatForDiscord((rawText || '').trim());
+            const plainChunks = splitPlainText(
+                `**${title}**\n${formatted}\n_${footerText}_`,
+            );
+            const renderKey = `${title}|plain|${footerText}|${plainChunks.join('\n<<<PAGE_BREAK>>>\n')}`;
+            if (renderKey === lastLiveResponseKey && liveResponseMessages.length > 0) return;
+            lastLiveResponseKey = renderKey;
+
+            for (let i = 0; i < plainChunks.length; i++) {
+                if (!liveResponseMessages[i]) {
+                    liveResponseMessages[i] = await channel.send({ content: plainChunks[i] }).catch(() => null);
+                    continue;
+                }
+                await liveResponseMessages[i].edit({ content: plainChunks[i] }).catch(async () => {
+                    liveResponseMessages[i] = await channel.send({ content: plainChunks[i] }).catch(() => null);
+                });
+            }
+            while (liveResponseMessages.length > plainChunks.length) {
+                const extra = liveResponseMessages.pop();
+                if (!extra) continue;
+                await extra.delete().catch(() => { });
+            }
+            return;
+        }
+
         const descriptions = buildLiveResponseDescriptions(rawText);
         const renderKey = `${title}|${color}|${footerText}|${descriptions.join('\n<<<PAGE_BREAK>>>\n')}`;
         if (renderKey === lastLiveResponseKey && liveResponseMessages.length > 0) {
@@ -414,6 +457,31 @@ async function sendPromptToAntigravity(
         if (opts?.skipWhenFinalized && isFinalized) return;
         if (opts?.expectedVersion !== undefined && opts.expectedVersion !== liveActivityUpdateVersion) return;
         if (!channel) return;
+
+        if (outputFormat === 'plain') {
+            const formatted = formatForDiscord((rawText || '').trim());
+            const plainContent = `**${title}**\n${formatted}\n_${footerText}_`;
+            const plainChunks = splitPlainText(plainContent);
+            const renderKey = `${title}|plain|${footerText}|${plainChunks.join('\n<<<PAGE_BREAK>>>\n')}`;
+            if (renderKey === lastLiveActivityKey && liveActivityMessages.length > 0) return;
+            lastLiveActivityKey = renderKey;
+
+            for (let i = 0; i < plainChunks.length; i++) {
+                if (!liveActivityMessages[i]) {
+                    liveActivityMessages[i] = await channel.send({ content: plainChunks[i] }).catch(() => null);
+                    continue;
+                }
+                await liveActivityMessages[i].edit({ content: plainChunks[i] }).catch(async () => {
+                    liveActivityMessages[i] = await channel.send({ content: plainChunks[i] }).catch(() => null);
+                });
+            }
+            while (liveActivityMessages.length > plainChunks.length) {
+                const extra = liveActivityMessages.pop();
+                if (!extra) continue;
+                await extra.delete().catch(() => { });
+            }
+            return;
+        }
 
         const descriptions = buildLiveActivityDescriptions(rawText);
         const renderKey = `${title}|${color}|${footerText}|${descriptions.join('\n<<<PAGE_BREAK>>>\n')}`;
@@ -786,6 +854,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
     const modeService = new ModeService();
     const modelService = new ModelService();
     const templateRepo = new TemplateRepository(db);
+    const userPrefRepo = new UserPreferenceRepository(db);
     const workspaceBindingRepo = new WorkspaceBindingRepository(db);
     const chatSessionRepo = new ChatSessionRepository(db);
     const workspaceService = new WorkspaceService(config.workspaceBaseDir);
@@ -897,6 +966,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         parseErrorPopupCustomId,
         parsePlanningCustomId,
         joinHandler,
+        userPrefRepo,
         handleSlashInteraction: async (
             interaction,
             handler,
@@ -922,6 +992,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             promptDispatcher,
             templateRepo,
             joinHandler,
+            userPrefRepo,
         ),
         handleTemplateUse: async (interaction, templateId) => {
             const template = templateRepo.findById(templateId);
@@ -986,6 +1057,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                         chatSessionRepo,
                         channelManager,
                         titleGenerator,
+                        userPrefRepo,
                     },
                 });
             }
@@ -1023,6 +1095,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         }),
         autoRenameChannel,
         handleScreenshot,
+        userPrefRepo,
     }));
 
     await client.login(config.discordToken);
@@ -1071,63 +1144,79 @@ async function handleSlashInteraction(
     promptDispatcher: PromptDispatcher,
     templateRepo: TemplateRepository,
     joinHandler?: JoinCommandHandler,
+    userPrefRepo?: UserPreferenceRepository,
 ): Promise<void> {
     const commandName = interaction.commandName;
 
     switch (commandName) {
         case 'help': {
+            const helpFields = [
+                {
+                    name: '💬 Chat', value: [
+                        '`/new` — Start a new chat session',
+                        '`/chat` — Show current session info + list',
+                    ].join('\n')
+                },
+                {
+                    name: '🔗 Session', value: [
+                        '`/join` — Join an existing Antigravity session',
+                        '`/mirror` — Toggle PC→Discord mirroring ON/OFF',
+                    ].join('\n')
+                },
+                {
+                    name: '⏹️ Control', value: [
+                        '`/stop` — Interrupt active LLM generation',
+                        '`/screenshot` — Capture Antigravity screen',
+                    ].join('\n')
+                },
+                {
+                    name: '⚙️ Settings', value: [
+                        '`/mode` — Display and change execution mode',
+                        '`/model [name]` — Display and change LLM model',
+                        '`/output [format]` — Toggle Embed / Plain Text output',
+                    ].join('\n')
+                },
+                {
+                    name: '📁 Projects', value: [
+                        '`/project` — Display project list',
+                        '`/project create <name>` — Create a new project',
+                    ].join('\n')
+                },
+                {
+                    name: '📝 Templates', value: [
+                        '`/template list` — Show templates with execute buttons (click to run)',
+                        '`/template add <name> <prompt>` — Register a template',
+                        '`/template delete <name>` — Delete a template',
+                    ].join('\n')
+                },
+                {
+                    name: '🔧 System', value: [
+                        '`/status` — Display overall bot status',
+                        '`/autoaccept` — Toggle auto-approve mode for approval dialogs via buttons',
+                        '`/logs [lines] [level]` — View recent bot logs',
+                        '`/cleanup [days]` — Clean up unused channels/categories',
+                        '`/help` — Show this help',
+                    ].join('\n')
+                },
+            ];
+
+            const helpOutputFormat = userPrefRepo?.getOutputFormat(interaction.user.id) ?? 'embed';
+            if (helpOutputFormat === 'plain') {
+                const chunks = formatAsPlainText({
+                    title: '📖 LazyGravity Commands',
+                    description: 'Commands for controlling Antigravity from Discord.',
+                    fields: helpFields,
+                    footerText: 'Text messages are sent directly to Antigravity',
+                });
+                await interaction.editReply({ content: chunks[0] });
+                break;
+            }
+
             const embed = new EmbedBuilder()
                 .setTitle('📖 LazyGravity Commands')
                 .setColor(0x5865F2)
                 .setDescription('Commands for controlling Antigravity from Discord.')
-                .addFields(
-                    {
-                        name: '💬 Chat', value: [
-                            '`/new` — Start a new chat session',
-                            '`/chat` — Show current session info + list',
-                        ].join('\n')
-                    },
-                    {
-                        name: '🔗 Session', value: [
-                            '`/join` — Join an existing Antigravity session',
-                            '`/mirror` — Toggle PC→Discord mirroring ON/OFF',
-                        ].join('\n')
-                    },
-                    {
-                        name: '⏹️ Control', value: [
-                            '`/stop` — Interrupt active LLM generation',
-                            '`/screenshot` — Capture Antigravity screen',
-                        ].join('\n')
-                    },
-                    {
-                        name: '⚙️ Settings', value: [
-                            '`/mode` — Display and change execution mode',
-                            '`/model [name]` — Display and change LLM model',
-                        ].join('\n')
-                    },
-                    {
-                        name: '📁 Projects', value: [
-                            '`/project` — Display project list',
-                            '`/project create <name>` — Create a new project',
-                        ].join('\n')
-                    },
-                    {
-                        name: '📝 Templates', value: [
-                            '`/template list` — Show templates with execute buttons (click to run)',
-                            '`/template add <name> <prompt>` — Register a template',
-                            '`/template delete <name>` — Delete a template',
-                        ].join('\n')
-                    },
-                    {
-                        name: '🔧 System', value: [
-                            '`/status` — Display overall bot status',
-                            '`/autoaccept` — Toggle auto-approve mode for approval dialogs via buttons',
-                            '`/logs [lines] [level]` — View recent bot logs',
-                            '`/cleanup [days]` — Clean up unused channels/categories',
-                            '`/help` — Show this help',
-                        ].join('\n')
-                    },
-                )
+                .addFields(...helpFields)
                 .setFooter({ text: 'Text messages are sent directly to Antigravity' })
                 .setTimestamp();
             await interaction.editReply({ embeds: [embed] });
@@ -1208,17 +1297,14 @@ async function handleSlashInteraction(
                 ? `📡 ON (${mirroringWorkspaces.join(', ')})`
                 : '⚪ OFF';
 
-            const embed = new EmbedBuilder()
-                .setTitle('🔧 Bot Status')
-                .setColor(activeNames.length > 0 ? 0x00CC88 : 0x888888)
-                .addFields(
-                    { name: 'CDP Connection', value: activeNames.length > 0 ? `🟢 ${activeNames.length} project(s) connected` : '⚪ Disconnected', inline: true },
-                    { name: 'Mode', value: MODE_DISPLAY_NAMES[currentMode] || currentMode, inline: true },
-                    { name: 'Auto Approve', value: autoAcceptService.isEnabled() ? '🟢 ON' : '⚪ OFF', inline: true },
-                    { name: 'Mirroring', value: mirrorStatus, inline: true },
-                )
-                .setTimestamp();
+            const statusFields = [
+                { name: 'CDP Connection', value: activeNames.length > 0 ? `🟢 ${activeNames.length} project(s) connected` : '⚪ Disconnected', inline: true },
+                { name: 'Mode', value: MODE_DISPLAY_NAMES[currentMode] || currentMode, inline: true },
+                { name: 'Auto Approve', value: autoAcceptService.isEnabled() ? '🟢 ON' : '⚪ OFF', inline: true },
+                { name: 'Mirroring', value: mirrorStatus, inline: true },
+            ];
 
+            let statusDescription = '';
             if (activeNames.length > 0) {
                 const lines = activeNames.map((name) => {
                     const cdp = bridge.pool.getConnected(name);
@@ -1227,10 +1313,28 @@ async function handleSlashInteraction(
                     const mirrorActive = bridge.pool.getUserMessageDetector(name)?.isActive() ? ' [Mirror]' : '';
                     return `• **${name}** — Contexts: ${contexts}${detectorActive}${mirrorActive}`;
                 });
-                embed.setDescription(`**Connected Projects:**\n${lines.join('\n')}`);
+                statusDescription = `**Connected Projects:**\n${lines.join('\n')}`;
             } else {
-                embed.setDescription('Send a message to auto-connect to a project.');
+                statusDescription = 'Send a message to auto-connect to a project.';
             }
+
+            const statusOutputFormat = userPrefRepo?.getOutputFormat(interaction.user.id) ?? 'embed';
+            if (statusOutputFormat === 'plain') {
+                const chunks = formatAsPlainText({
+                    title: '🔧 Bot Status',
+                    description: statusDescription,
+                    fields: statusFields,
+                });
+                await interaction.editReply({ content: chunks[0] });
+                break;
+            }
+
+            const embed = new EmbedBuilder()
+                .setTitle('🔧 Bot Status')
+                .setColor(activeNames.length > 0 ? 0x00CC88 : 0x888888)
+                .addFields(...statusFields)
+                .setDescription(statusDescription)
+                .setTimestamp();
 
             await interaction.editReply({ embeds: [embed] });
             break;
@@ -1245,6 +1349,26 @@ async function handleSlashInteraction(
 
             const result = autoAcceptService.handle(requestedMode);
             await interaction.editReply({ content: result.message });
+            break;
+        }
+
+        case 'output': {
+            if (!userPrefRepo) {
+                await interaction.editReply({ content: 'Output preference service not available.' });
+                break;
+            }
+
+            const requestedFormat = interaction.options.getString('format');
+            if (!requestedFormat) {
+                const currentFormat = userPrefRepo.getOutputFormat(interaction.user.id);
+                await sendOutputUI(interaction, currentFormat);
+                break;
+            }
+
+            const format: OutputFormat = requestedFormat === 'plain' ? 'plain' : 'embed';
+            userPrefRepo.setOutputFormat(interaction.user.id, format);
+            const label = format === 'plain' ? 'Plain Text' : 'Embed';
+            await interaction.editReply({ content: `Output format changed to **${label}**.` });
             break;
         }
 

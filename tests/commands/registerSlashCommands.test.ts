@@ -87,6 +87,11 @@ describe('registerSlashCommands', () => {
         expect(names).toContain('mirror');
     });
 
+    it('includes the output command in registration targets', () => {
+        const names = slashCommands.map((cmd) => cmd.toJSON().name);
+        expect(names).toContain('output');
+    });
+
     beforeEach(() => {
         jest.clearAllMocks();
     });

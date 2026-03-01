@@ -4,6 +4,8 @@ import { parseMessageContent } from '../commands/messageParser';
 import { SlashCommandHandler } from '../commands/slashCommandHandler';
 import { WorkspaceCommandHandler } from '../commands/workspaceCommandHandler';
 import { ChatSessionRepository } from '../database/chatSessionRepository';
+import { UserPreferenceRepository } from '../database/userPreferenceRepository';
+import { formatAsPlainText } from '../utils/plainTextFormatter';
 import {
     CdpBridge,
     ensureApprovalDetector as ensureApprovalDetectorFn,
@@ -66,6 +68,7 @@ export interface MessageCreateHandlerDeps {
     downloadInboundImageAttachments?: (message: Message) => Promise<InboundImageAttachment[]>;
     cleanupInboundImageAttachments?: (attachments: InboundImageAttachment[]) => Promise<void>;
     isImageAttachment?: (contentType: string | null | undefined, fileName: string | null | undefined) => boolean;
+    userPrefRepo?: UserPreferenceRepository;
 }
 
 export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
@@ -105,17 +108,13 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                 const activeNames = deps.bridge.pool.getActiveWorkspaceNames();
                 const currentMode = deps.modeService.getCurrentMode();
 
-                const embed = new EmbedBuilder()
-                    .setTitle('🔧 Bot Status')
-                    .setColor(activeNames.length > 0 ? 0x00CC88 : 0x888888)
-                    .addFields(
-                        { name: 'CDP Connection', value: activeNames.length > 0 ? `🟢 ${activeNames.length} project(s) connected` : '⚪ Disconnected', inline: true },
-                        { name: 'Mode', value: MODE_DISPLAY_NAMES[currentMode] || currentMode, inline: true },
-                        { name: 'Auto Approve', value: deps.bridge.autoAccept.isEnabled() ? '🟢 ON' : '⚪ OFF', inline: true },
-                    )
-                    .setFooter({ text: '💡 Use the slash command /status for more detailed information' })
-                    .setTimestamp();
+                const statusFields = [
+                    { name: 'CDP Connection', value: activeNames.length > 0 ? `🟢 ${activeNames.length} project(s) connected` : '⚪ Disconnected', inline: true },
+                    { name: 'Mode', value: MODE_DISPLAY_NAMES[currentMode] || currentMode, inline: true },
+                    { name: 'Auto Approve', value: deps.bridge.autoAccept.isEnabled() ? '🟢 ON' : '⚪ OFF', inline: true },
+                ];
 
+                let statusDescription = '';
                 if (activeNames.length > 0) {
                     const lines = activeNames.map((name) => {
                         const cdp = deps.bridge.pool.getConnected(name);
@@ -123,16 +122,36 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                         const detectorActive = deps.bridge.pool.getApprovalDetector(name)?.isActive() ? ' [Detecting]' : '';
                         return `• **${name}** — Contexts: ${contexts}${detectorActive}`;
                     });
-                    embed.setDescription(`**Connected Projects:**\n${lines.join('\n')}`);
+                    statusDescription = `**Connected Projects:**\n${lines.join('\n')}`;
                 } else {
-                    embed.setDescription('Send a message to auto-connect to a project.');
+                    statusDescription = 'Send a message to auto-connect to a project.';
                 }
+
+                const statusOutputFormat = deps.userPrefRepo?.getOutputFormat(message.author.id) ?? 'embed';
+                if (statusOutputFormat === 'plain') {
+                    const chunks = formatAsPlainText({
+                        title: '🔧 Bot Status',
+                        description: statusDescription,
+                        fields: statusFields,
+                        footerText: 'Use the slash command /status for more detailed information',
+                    });
+                    await message.reply({ content: chunks[0] });
+                    return;
+                }
+
+                const embed = new EmbedBuilder()
+                    .setTitle('🔧 Bot Status')
+                    .setColor(activeNames.length > 0 ? 0x00CC88 : 0x888888)
+                    .addFields(...statusFields)
+                    .setDescription(statusDescription)
+                    .setFooter({ text: '💡 Use the slash command /status for more detailed information' })
+                    .setTimestamp();
 
                 await message.reply({ embeds: [embed] });
                 return;
             }
 
-            const slashOnlyCommands = ['help', 'stop', 'model', 'mode', 'project', 'chat', 'new', 'cleanup', 'join', 'mirror'];
+            const slashOnlyCommands = ['help', 'stop', 'model', 'mode', 'project', 'chat', 'new', 'cleanup', 'join', 'mirror', 'output'];
             if (slashOnlyCommands.includes(parsed.commandName)) {
                 await message.reply({
                     content: `💡 Please use \`/${parsed.commandName}\` as a slash command.\nType \`/${parsed.commandName}\` in the Discord input field to see suggestions.`,
@@ -154,6 +173,7 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                         chatSessionRepo: deps.chatSessionRepo,
                         channelManager: deps.channelManager,
                         titleGenerator: deps.titleGenerator,
+                        userPrefRepo: deps.userPrefRepo,
                     });
                 } else {
                     await message.reply('Not connected to CDP. Send a message first to connect to a project.');
@@ -236,6 +256,7 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                             chatSessionRepo: deps.chatSessionRepo,
                             channelManager: deps.channelManager,
                             titleGenerator: deps.titleGenerator,
+                            userPrefRepo: deps.userPrefRepo,
                         });
                     } catch (e: any) {
                         await message.reply(`Failed to connect to workspace: ${e.message}`);
