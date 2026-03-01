@@ -94,7 +94,7 @@ describe('messageCreateHandler', () => {
         expect(sendPromptToAntigravity).toHaveBeenCalled();
     });
 
-    it('stops prompt delivery when a renamed session cannot be re-activated', async () => {
+    it('stops prompt delivery when a renamed session cannot be re-activated and no active chat', async () => {
         const sendPromptToAntigravity = jest.fn();
         const reply = jest.fn().mockResolvedValue(undefined);
         const handler = createMessageCreateHandler({
@@ -112,12 +112,15 @@ describe('messageCreateHandler', () => {
             wsHandler: { getWorkspaceForChannel: jest.fn().mockReturnValue('/tmp/proj-a') } as any,
             chatSessionService: {
                 activateSessionByTitle: jest.fn().mockResolvedValue({ ok: false, error: 'not found' }),
+                getCurrentSessionInfo: jest.fn().mockResolvedValue({ hasActiveChat: false, title: '' }),
             } as any,
             chatSessionRepo: {
                 findByChannelId: jest.fn().mockReturnValue({
                     isRenamed: true,
                     displayName: 'legacy-session',
+                    categoryId: 'cat-1',
                 }),
+                findByCategoryId: jest.fn().mockReturnValue([]),
             } as any,
             channelManager: {} as any,
             titleGenerator: {} as any,
@@ -127,6 +130,10 @@ describe('messageCreateHandler', () => {
             handleScreenshot: jest.fn(),
             getCurrentCdp: jest.fn(),
             ensureApprovalDetector: jest.fn(),
+            ensureErrorPopupDetector: jest.fn(),
+            ensurePlanningDetector: jest.fn(),
+            registerApprovalWorkspaceChannel: jest.fn(),
+            registerApprovalSessionChannel: jest.fn(),
             downloadInboundImageAttachments: jest.fn().mockResolvedValue([]),
             cleanupInboundImageAttachments: jest.fn().mockResolvedValue(undefined),
             isImageAttachment: jest.fn().mockReturnValue(false),
@@ -143,5 +150,283 @@ describe('messageCreateHandler', () => {
 
         expect(sendPromptToAntigravity).not.toHaveBeenCalled();
         expect(reply).toHaveBeenCalled();
+    });
+
+    describe('session title recovery', () => {
+        it('recovers when session was renamed and no sibling owns the new title', async () => {
+            const sendPromptToAntigravity = jest.fn().mockResolvedValue(undefined);
+            const registerApprovalSessionChannel = jest.fn();
+            const updateDisplayName = jest.fn().mockReturnValue(true);
+            const renameChannel = jest.fn().mockResolvedValue(undefined);
+            const findByChannelId = jest.fn()
+                // First call: session with old title
+                .mockReturnValueOnce({
+                    isRenamed: true,
+                    displayName: 'Old Title',
+                    categoryId: 'cat-1',
+                    sessionNumber: 3,
+                })
+                // Second call after autoRenameChannel
+                .mockReturnValueOnce({
+                    isRenamed: true,
+                    displayName: 'Renamed By Recovery',
+                });
+
+            const handler = createMessageCreateHandler({
+                config: { allowedUserIds: ['u1'] },
+                bridge: {
+                    autoAccept: { handle: jest.fn(), isEnabled: jest.fn() },
+                    pool: {
+                        getOrConnect: jest.fn().mockResolvedValue({}),
+                        extractProjectName: jest.fn().mockReturnValue('proj-a'),
+                    },
+                } as any,
+                modeService: {} as any,
+                modelService: {} as any,
+                slashCommandHandler: { handleCommand: jest.fn() } as any,
+                wsHandler: { getWorkspaceForChannel: jest.fn().mockReturnValue('/tmp/proj-a') } as any,
+                chatSessionService: {
+                    activateSessionByTitle: jest.fn().mockResolvedValue({ ok: false, error: 'title mismatch' }),
+                    getCurrentSessionInfo: jest.fn().mockResolvedValue({
+                        hasActiveChat: true,
+                        title: 'New Title From Antigravity',
+                    }),
+                } as any,
+                chatSessionRepo: {
+                    findByChannelId,
+                    findByCategoryId: jest.fn().mockReturnValue([
+                        { channelId: 'ch-1', displayName: 'Old Title' },
+                    ]),
+                    updateDisplayName,
+                } as any,
+                channelManager: { renameChannel } as any,
+                titleGenerator: { sanitizeForChannelName: jest.fn().mockReturnValue('new-title-from-antigravity') } as any,
+                client: {} as any,
+                sendPromptToAntigravity,
+                autoRenameChannel: jest.fn().mockResolvedValue(undefined),
+                handleScreenshot: jest.fn(),
+                getCurrentCdp: jest.fn(),
+                ensureApprovalDetector: jest.fn(),
+                ensureErrorPopupDetector: jest.fn(),
+                ensurePlanningDetector: jest.fn(),
+                registerApprovalWorkspaceChannel: jest.fn(),
+                registerApprovalSessionChannel,
+                downloadInboundImageAttachments: jest.fn().mockResolvedValue([]),
+                cleanupInboundImageAttachments: jest.fn().mockResolvedValue(undefined),
+                isImageAttachment: jest.fn().mockReturnValue(false),
+            });
+
+            await handler({
+                author: { bot: false, id: 'u1' },
+                content: 'hello',
+                channelId: 'ch-1',
+                channel: { id: 'ch-1', send: jest.fn().mockResolvedValue(undefined) },
+                guild: { id: 'guild-1' },
+                attachments: { values: () => [] },
+                reply: jest.fn().mockResolvedValue(undefined),
+            } as any);
+
+            // Should have updated the display name in DB
+            expect(updateDisplayName).toHaveBeenCalledWith('ch-1', 'New Title From Antigravity');
+            // Should have re-registered approval channel with old title cleanup
+            expect(registerApprovalSessionChannel).toHaveBeenCalledWith(
+                expect.anything(), 'proj-a', 'New Title From Antigravity', expect.anything(), 'Old Title',
+            );
+            // Should have renamed the Discord channel
+            expect(renameChannel).toHaveBeenCalledWith(
+                { id: 'guild-1' }, 'ch-1', '3-new-title-from-antigravity',
+            );
+            // Should have continued to send the prompt
+            expect(sendPromptToAntigravity).toHaveBeenCalled();
+        });
+
+        it('does not recover when current session belongs to another channel', async () => {
+            const sendPromptToAntigravity = jest.fn();
+            const reply = jest.fn().mockResolvedValue(undefined);
+
+            const handler = createMessageCreateHandler({
+                config: { allowedUserIds: ['u1'] },
+                bridge: {
+                    autoAccept: { handle: jest.fn(), isEnabled: jest.fn() },
+                    pool: {
+                        getOrConnect: jest.fn().mockResolvedValue({}),
+                        extractProjectName: jest.fn().mockReturnValue('proj-a'),
+                    },
+                } as any,
+                modeService: {} as any,
+                modelService: {} as any,
+                slashCommandHandler: { handleCommand: jest.fn() } as any,
+                wsHandler: { getWorkspaceForChannel: jest.fn().mockReturnValue('/tmp/proj-a') } as any,
+                chatSessionService: {
+                    activateSessionByTitle: jest.fn().mockResolvedValue({ ok: false, error: 'not found' }),
+                    getCurrentSessionInfo: jest.fn().mockResolvedValue({
+                        hasActiveChat: true,
+                        title: 'Other Channel Session',
+                    }),
+                } as any,
+                chatSessionRepo: {
+                    findByChannelId: jest.fn().mockReturnValue({
+                        isRenamed: true,
+                        displayName: 'My Session',
+                        categoryId: 'cat-1',
+                    }),
+                    findByCategoryId: jest.fn().mockReturnValue([
+                        { channelId: 'ch-1', displayName: 'My Session' },
+                        { channelId: 'ch-2', displayName: 'Other Channel Session' },
+                    ]),
+                } as any,
+                channelManager: {} as any,
+                titleGenerator: {} as any,
+                client: {} as any,
+                sendPromptToAntigravity,
+                autoRenameChannel: jest.fn(),
+                handleScreenshot: jest.fn(),
+                getCurrentCdp: jest.fn(),
+                ensureApprovalDetector: jest.fn(),
+                ensureErrorPopupDetector: jest.fn(),
+                ensurePlanningDetector: jest.fn(),
+                registerApprovalWorkspaceChannel: jest.fn(),
+                registerApprovalSessionChannel: jest.fn(),
+                downloadInboundImageAttachments: jest.fn().mockResolvedValue([]),
+                cleanupInboundImageAttachments: jest.fn().mockResolvedValue(undefined),
+                isImageAttachment: jest.fn().mockReturnValue(false),
+            });
+
+            await handler({
+                author: { bot: false, id: 'u1' },
+                content: 'hello',
+                channelId: 'ch-1',
+                channel: { id: 'ch-1', send: jest.fn().mockResolvedValue(undefined) },
+                attachments: { values: () => [] },
+                reply,
+            } as any);
+
+            expect(sendPromptToAntigravity).not.toHaveBeenCalled();
+            expect(reply).toHaveBeenCalled();
+        });
+
+        it('does not recover when hasActiveChat is false', async () => {
+            const sendPromptToAntigravity = jest.fn();
+            const reply = jest.fn().mockResolvedValue(undefined);
+
+            const handler = createMessageCreateHandler({
+                config: { allowedUserIds: ['u1'] },
+                bridge: {
+                    autoAccept: { handle: jest.fn(), isEnabled: jest.fn() },
+                    pool: {
+                        getOrConnect: jest.fn().mockResolvedValue({}),
+                        extractProjectName: jest.fn().mockReturnValue('proj-a'),
+                    },
+                } as any,
+                modeService: {} as any,
+                modelService: {} as any,
+                slashCommandHandler: { handleCommand: jest.fn() } as any,
+                wsHandler: { getWorkspaceForChannel: jest.fn().mockReturnValue('/tmp/proj-a') } as any,
+                chatSessionService: {
+                    activateSessionByTitle: jest.fn().mockResolvedValue({ ok: false }),
+                    getCurrentSessionInfo: jest.fn().mockResolvedValue({
+                        hasActiveChat: false,
+                        title: '',
+                    }),
+                } as any,
+                chatSessionRepo: {
+                    findByChannelId: jest.fn().mockReturnValue({
+                        isRenamed: true,
+                        displayName: 'My Session',
+                        categoryId: 'cat-1',
+                    }),
+                    findByCategoryId: jest.fn().mockReturnValue([]),
+                } as any,
+                channelManager: {} as any,
+                titleGenerator: {} as any,
+                client: {} as any,
+                sendPromptToAntigravity,
+                autoRenameChannel: jest.fn(),
+                handleScreenshot: jest.fn(),
+                getCurrentCdp: jest.fn(),
+                ensureApprovalDetector: jest.fn(),
+                ensureErrorPopupDetector: jest.fn(),
+                ensurePlanningDetector: jest.fn(),
+                registerApprovalWorkspaceChannel: jest.fn(),
+                registerApprovalSessionChannel: jest.fn(),
+                downloadInboundImageAttachments: jest.fn().mockResolvedValue([]),
+                cleanupInboundImageAttachments: jest.fn().mockResolvedValue(undefined),
+                isImageAttachment: jest.fn().mockReturnValue(false),
+            });
+
+            await handler({
+                author: { bot: false, id: 'u1' },
+                content: 'hello',
+                channelId: 'ch-1',
+                channel: { id: 'ch-1', send: jest.fn().mockResolvedValue(undefined) },
+                attachments: { values: () => [] },
+                reply,
+            } as any);
+
+            expect(sendPromptToAntigravity).not.toHaveBeenCalled();
+            expect(reply).toHaveBeenCalled();
+        });
+
+        it('does not recover when current title matches the stored displayName (Untitled)', async () => {
+            const sendPromptToAntigravity = jest.fn();
+            const reply = jest.fn().mockResolvedValue(undefined);
+
+            const handler = createMessageCreateHandler({
+                config: { allowedUserIds: ['u1'] },
+                bridge: {
+                    autoAccept: { handle: jest.fn(), isEnabled: jest.fn() },
+                    pool: {
+                        getOrConnect: jest.fn().mockResolvedValue({}),
+                        extractProjectName: jest.fn().mockReturnValue('proj-a'),
+                    },
+                } as any,
+                modeService: {} as any,
+                modelService: {} as any,
+                slashCommandHandler: { handleCommand: jest.fn() } as any,
+                wsHandler: { getWorkspaceForChannel: jest.fn().mockReturnValue('/tmp/proj-a') } as any,
+                chatSessionService: {
+                    activateSessionByTitle: jest.fn().mockResolvedValue({ ok: false }),
+                    getCurrentSessionInfo: jest.fn().mockResolvedValue({
+                        hasActiveChat: true,
+                        title: '(Untitled)',
+                    }),
+                } as any,
+                chatSessionRepo: {
+                    findByChannelId: jest.fn().mockReturnValue({
+                        isRenamed: true,
+                        displayName: 'My Session',
+                        categoryId: 'cat-1',
+                    }),
+                    findByCategoryId: jest.fn().mockReturnValue([]),
+                } as any,
+                channelManager: {} as any,
+                titleGenerator: {} as any,
+                client: {} as any,
+                sendPromptToAntigravity,
+                autoRenameChannel: jest.fn(),
+                handleScreenshot: jest.fn(),
+                getCurrentCdp: jest.fn(),
+                ensureApprovalDetector: jest.fn(),
+                ensureErrorPopupDetector: jest.fn(),
+                ensurePlanningDetector: jest.fn(),
+                registerApprovalWorkspaceChannel: jest.fn(),
+                registerApprovalSessionChannel: jest.fn(),
+                downloadInboundImageAttachments: jest.fn().mockResolvedValue([]),
+                cleanupInboundImageAttachments: jest.fn().mockResolvedValue(undefined),
+                isImageAttachment: jest.fn().mockReturnValue(false),
+            });
+
+            await handler({
+                author: { bot: false, id: 'u1' },
+                content: 'hello',
+                channelId: 'ch-1',
+                channel: { id: 'ch-1', send: jest.fn().mockResolvedValue(undefined) },
+                attachments: { values: () => [] },
+                reply,
+            } as any);
+
+            expect(sendPromptToAntigravity).not.toHaveBeenCalled();
+            expect(reply).toHaveBeenCalled();
+        });
     });
 });

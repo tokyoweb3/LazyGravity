@@ -104,4 +104,46 @@ describe('cdpBridgeManager', () => {
         expect(parsePlanningCustomId('approve_action:ws-a')).toBeNull();
         expect(parsePlanningCustomId('random_string')).toBeNull();
     });
+
+    describe('registerApprovalSessionChannel with oldSessionTitle', () => {
+        it('removes the old session key when oldSessionTitle is provided', () => {
+            const bridge = initCdpBridge(false);
+            const oldChannel = { id: 'ch-old', send: jest.fn() } as any;
+            const newChannel = { id: 'ch-new', send: jest.fn() } as any;
+
+            // Register old title with one channel
+            registerApprovalSessionChannel(bridge, 'ws-a', 'Old Title', oldChannel);
+            expect(resolveApprovalChannelForCurrentChat(bridge, 'ws-a', 'Old Title')).toBe(oldChannel);
+
+            // Re-register with new title and new channel, providing oldSessionTitle
+            registerApprovalSessionChannel(bridge, 'ws-a', 'New Title', newChannel, 'Old Title');
+
+            // Old title should no longer resolve to the old session channel
+            // (it falls back to workspace which was overwritten by the new registration)
+            expect(resolveApprovalChannelForCurrentChat(bridge, 'ws-a', 'Old Title')).toBe(newChannel);
+            // New title should resolve to the new channel directly
+            expect(resolveApprovalChannelForCurrentChat(bridge, 'ws-a', 'New Title')).toBe(newChannel);
+            // Verify the old session-level key was actually removed from the map
+            expect(bridge.approvalChannelBySession.size).toBe(1);
+        });
+
+        it('works normally without oldSessionTitle (backward compatible)', () => {
+            const bridge = initCdpBridge(false);
+            const channel = { id: 'ch-1', send: jest.fn() } as any;
+
+            registerApprovalSessionChannel(bridge, 'ws-a', 'Session A', channel);
+            expect(resolveApprovalChannelForCurrentChat(bridge, 'ws-a', 'Session A')).toBe(channel);
+        });
+
+        it('does not remove old key when oldSessionTitle equals new title', () => {
+            const bridge = initCdpBridge(false);
+            const channel = { id: 'ch-1', send: jest.fn() } as any;
+
+            registerApprovalSessionChannel(bridge, 'ws-a', 'Same Title', channel);
+            registerApprovalSessionChannel(bridge, 'ws-a', 'Same Title', channel, 'Same Title');
+
+            // Should still resolve
+            expect(resolveApprovalChannelForCurrentChat(bridge, 'ws-a', 'Same Title')).toBe(channel);
+        });
+    });
 });

@@ -95,8 +95,15 @@ export function registerApprovalSessionChannel(
     projectName: string,
     sessionTitle: string,
     channel: Message['channel'],
+    oldSessionTitle?: string,
 ): void {
     if (!sessionTitle || sessionTitle.trim().length === 0) return;
+    // Clean up stale route for old title
+    if (oldSessionTitle && oldSessionTitle !== sessionTitle) {
+        bridge.approvalChannelBySession.delete(
+            buildSessionRouteKey(projectName, oldSessionTitle),
+        );
+    }
     bridge.approvalChannelBySession.set(buildSessionRouteKey(projectName, sessionTitle), channel);
     bridge.approvalChannelByWorkspace.set(projectName, channel);
 }

@@ -64,7 +64,7 @@ export interface MessageCreateHandlerDeps {
     ensureErrorPopupDetector?: (bridge: CdpBridge, cdp: CdpService, projectName: string, client: any) => void;
     ensurePlanningDetector?: (bridge: CdpBridge, cdp: CdpService, projectName: string, client: any) => void;
     registerApprovalWorkspaceChannel?: (bridge: CdpBridge, projectName: string, channel: Message['channel']) => void;
-    registerApprovalSessionChannel?: (bridge: CdpBridge, projectName: string, sessionTitle: string, channel: Message['channel']) => void;
+    registerApprovalSessionChannel?: (bridge: CdpBridge, projectName: string, sessionTitle: string, channel: Message['channel'], oldSessionTitle?: string) => void;
     downloadInboundImageAttachments?: (message: Message) => Promise<InboundImageAttachment[]>;
     cleanupInboundImageAttachments?: (attachments: InboundImageAttachment[]) => Promise<void>;
     isImageAttachment?: (contentType: string | null | undefined, fileName: string | null | undefined) => boolean;
@@ -217,12 +217,55 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                         if (session?.isRenamed && session.displayName) {
                             const activationResult = await deps.chatSessionService.activateSessionByTitle(cdp, session.displayName);
                             if (!activationResult.ok) {
-                                const reason = activationResult.error ? ` (${activationResult.error})` : '';
-                                await message.reply(
-                                    `⚠️ Could not route this message to the bound session (${session.displayName}). ` +
-                                    `Please open /chat and verify the session${reason}.`,
-                                ).catch(() => { });
-                                return;
+                                // Attempt recovery: the session may have been renamed by Antigravity
+                                const currentInfo = await deps.chatSessionService.getCurrentSessionInfo(cdp);
+                                const isRecoverable = currentInfo.hasActiveChat
+                                    && currentInfo.title.trim() !== ''
+                                    && currentInfo.title !== '(Untitled)'
+                                    && currentInfo.title !== session.displayName;
+
+                                if (isRecoverable) {
+                                    // Check if current session belongs to another channel in the same workspace
+                                    const siblings = deps.chatSessionRepo.findByCategoryId(session.categoryId);
+                                    const ownedByOther = siblings.some(
+                                        (s) => s.channelId !== message.channelId && s.displayName === currentInfo.title,
+                                    );
+
+                                    if (!ownedByOther) {
+                                        // Session was renamed — adopt the new title
+                                        const oldTitle = session.displayName;
+                                        deps.chatSessionRepo.updateDisplayName(message.channelId, currentInfo.title);
+                                        registerApprovalSessionChannel(
+                                            deps.bridge, projectName, currentInfo.title, message.channel, oldTitle,
+                                        );
+                                        if (message.guild) {
+                                            const newName = deps.titleGenerator.sanitizeForChannelName(currentInfo.title);
+                                            const formattedName = `${session.sessionNumber}-${newName}`;
+                                            await deps.channelManager.renameChannel(
+                                                message.guild, message.channelId, formattedName,
+                                            ).catch(() => {});
+                                        }
+                                        logger.info(
+                                            `[MessageCreate] Session title recovery: "${oldTitle}" → "${currentInfo.title}"`,
+                                        );
+                                        // Fall through to send prompt — session is already active
+                                    } else {
+                                        // Current session belongs to another channel
+                                        const reason = activationResult.error ? ` (${activationResult.error})` : '';
+                                        await message.reply(
+                                            `⚠️ Could not route this message to the bound session (${session.displayName}). ` +
+                                            `Please open /chat and verify the session${reason}.`,
+                                        ).catch(() => {});
+                                        return;
+                                    }
+                                } else {
+                                    const reason = activationResult.error ? ` (${activationResult.error})` : '';
+                                    await message.reply(
+                                        `⚠️ Could not route this message to the bound session (${session.displayName}). ` +
+                                        `Please open /chat and verify the session${reason}.`,
+                                    ).catch(() => {});
+                                    return;
+                                }
                             }
                         } else if (session && !session.isRenamed) {
                             try {
