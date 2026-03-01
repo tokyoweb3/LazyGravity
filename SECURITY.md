@@ -35,11 +35,11 @@ The following are in scope for security reports:
 - Unauthorized access to bot commands (allowedUserIds bypass)
 - SQLite injection
 - Local file system access vulnerabilities
-- Dependencies with known vulnerabilities
+- Known vulnerabilities in dependencies used by this project (e.g., outdated package versions)
 
 ### Out of Scope
 
-- Issues in third-party dependencies (report to the upstream project)
+- Vulnerabilities in upstream dependency code itself (report directly to the upstream project)
 - Social engineering attacks
 - Denial of service via Discord API rate limits
 
