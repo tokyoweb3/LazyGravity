@@ -161,6 +161,7 @@ const outputCommand = new SlashCommandBuilder()
             .setRequired(false)
     );
 
+
 /** /logs command definition */
 const logsCommand = new SlashCommandBuilder()
     .setName('logs')

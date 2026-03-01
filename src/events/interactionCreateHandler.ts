@@ -682,7 +682,11 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
         }
 
         try {
-            await commandInteraction.deferReply();
+            if (commandInteraction.commandName === 'logs') {
+                await commandInteraction.deferReply({ flags: MessageFlags.Ephemeral });
+            } else {
+                await commandInteraction.deferReply();
+            }
         } catch (deferError: any) {
             if (deferError?.code === 10062) {
                 logger.warn('[SlashCommand] Interaction expired (deferReply failed). Skipping.');
