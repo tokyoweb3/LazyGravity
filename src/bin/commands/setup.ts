@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { ConfigLoader } from '../../utils/configLoader';
+import type { PersistedConfig } from '../../utils/configLoader';
 import { CDP_PORTS } from '../../utils/cdpPorts';
 import type { PlatformType } from '../../platform/types';
 
@@ -197,8 +198,8 @@ function askSecret(rl: readline.Interface, prompt: string): Promise<string> {
 // Output helpers
 // ---------------------------------------------------------------------------
 
-function stepHeader(step: number, total: number, title: string): void {
-    console.log(`  ${C.cyan}[Step ${step}/${total}]${C.reset} ${C.bold}${title}${C.reset}`);
+function sectionHeader(title: string): void {
+    console.log(`\n  ${C.cyan}—${C.reset} ${C.bold}${title}${C.reset}\n`);
 }
 
 function hint(text: string): void {
@@ -219,82 +220,49 @@ function buildInviteUrl(clientId: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Platform selection
+// Status detection (pure functions)
 // ---------------------------------------------------------------------------
 
-async function promptPlatforms(rl: readline.Interface): Promise<PlatformType[]> {
-    const choices: ReadonlyArray<{ key: string; label: string; value: PlatformType[] }> = [
-        { key: '1', label: 'Discord only', value: ['discord'] },
-        { key: '2', label: 'Telegram only', value: ['telegram'] },
-        { key: '3', label: 'Both (Discord + Telegram)', value: ['discord', 'telegram'] },
-    ];
+function isDiscordConfigured(p: PersistedConfig): boolean {
+    return !!(p.discordToken && p.clientId && p.allowedUserIds && p.allowedUserIds.length > 0);
+}
 
-    for (const c of choices) {
-        console.log(`    ${C.cyan}${c.key})${C.reset} ${c.label}`);
+function isTelegramConfigured(p: PersistedConfig): boolean {
+    return !!(p.telegramToken && p.telegramAllowedUserIds && p.telegramAllowedUserIds.length > 0);
+}
+
+function workspaceLabel(p: PersistedConfig): string {
+    return p.workspaceBaseDir ?? (path.join(os.homedir(), 'Code') + ' (default)');
+}
+
+function isValidTelegramTokenFormat(token: string): boolean {
+    return /^\d+:[A-Za-z0-9_-]+$/.test(token);
+}
+
+/**
+ * Recompute platforms from the current persisted state and save.
+ * Called after each individual setup flow so Ctrl+C mid-session
+ * still leaves a valid platforms array.
+ */
+function savePlatformsFromState(): void {
+    const current = ConfigLoader.readPersisted();
+    const platforms: PlatformType[] = [];
+    if (isDiscordConfigured(current)) platforms.push('discord');
+    if (isTelegramConfigured(current)) platforms.push('telegram');
+    if (platforms.length > 0) {
+        ConfigLoader.save({ platforms });
     }
-    hintBlank();
+}
 
-    while (true) {
-        const raw = await ask(rl, `  ${C.yellow}>${C.reset} [${C.dim}1${C.reset}] `);
-        const key = raw.trim() || '1';
-        const choice = choices.find((c) => c.key === key);
-        if (choice) return choice.value;
-        errMsg('Please enter 1, 2, or 3.');
-    }
+function statusBadge(configured: boolean): string {
+    return configured
+        ? `${C.green}[configured]${C.reset}`
+        : `${C.dim}[not configured]${C.reset}`;
 }
 
 // ---------------------------------------------------------------------------
-// Discord setup steps
+// Input prompt helpers
 // ---------------------------------------------------------------------------
-
-interface DiscordSetup {
-    discordToken: string;
-    clientId: string;
-    guildId?: string;
-    allowedUserIds: string[];
-}
-
-async function promptDiscordSetup(
-    rl: readline.Interface,
-    stepOffset: number,
-    totalSteps: number,
-): Promise<DiscordSetup> {
-    let step = stepOffset;
-
-    stepHeader(step++, totalSteps, 'Discord Bot Token');
-    hint('1. Go to https://discord.com/developers/applications and log in');
-    hint('2. Click "New Application" (top-right), enter a name (e.g. LazyGravity), and create it');
-    hint('3. Go to the "Bot" tab on the left sidebar');
-    hint('4. Click "Reset Token" to generate and copy the token');
-    hint(`5. Scroll down to ${C.bold}"Privileged Gateway Intents"${C.dim} and enable ALL of:`);
-    hint(`   ${C.cyan}PRESENCE INTENT${C.dim}`);
-    hint(`   ${C.cyan}SERVER MEMBERS INTENT${C.dim}`);
-    hint(`   ${C.cyan}MESSAGE CONTENT INTENT${C.dim} ${C.yellow}(required — bot cannot read messages without this)${C.dim}`);
-    hint(`6. Click ${C.bold}"Save Changes"${C.dim} at the bottom (Warning banner)`);
-    hintBlank();
-    const { token: discordToken, clientId } = await promptToken(rl);
-    console.log('');
-
-    stepHeader(step++, totalSteps, 'Guild (Server) ID');
-    hint('This registers slash commands instantly to your server.');
-    hint('1. Open Discord Settings > Advanced > enable "Developer Mode"');
-    hint('2. Right-click your server icon > "Copy Server ID"');
-    hint(`${C.yellow}Press Enter to skip${C.dim} (commands will register globally, may take ~1 hour)`);
-    hintBlank();
-    const guildId = await promptGuildId(rl);
-    console.log('');
-
-    stepHeader(step++, totalSteps, 'Allowed Discord User IDs');
-    hint('Only these users can send commands to the bot.');
-    hint('1. In Discord, right-click your own profile icon');
-    hint('2. Click "Copy User ID" (requires Developer Mode from step 2)');
-    hint('Multiple IDs: separate with commas (e.g. 123456,789012)');
-    hintBlank();
-    const allowedUserIds = await promptAllowedUserIds(rl);
-    console.log('');
-
-    return { discordToken, clientId, guildId, allowedUserIds };
-}
 
 async function promptToken(rl: readline.Interface): Promise<{ token: string; clientId: string; botName: string | null }> {
     while (true) {
@@ -345,54 +313,6 @@ async function promptAllowedUserIds(rl: readline.Interface): Promise<string[]> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Telegram setup steps
-// ---------------------------------------------------------------------------
-
-interface TelegramSetup {
-    telegramToken: string;
-    telegramAllowedUserIds: string[];
-}
-
-async function promptTelegramSetup(
-    rl: readline.Interface,
-    stepOffset: number,
-    totalSteps: number,
-): Promise<TelegramSetup> {
-    let step = stepOffset;
-
-    stepHeader(step++, totalSteps, 'Telegram Bot Token');
-    hint('1. Open Telegram and message @BotFather');
-    hint('2. Send /newbot and follow the prompts to create a bot');
-    hint('3. Copy the token BotFather gives you');
-    hintBlank();
-
-    let telegramToken = '';
-    while (true) {
-        const raw = await askSecret(rl, `  ${C.yellow}>${C.reset} `);
-        if (isNonEmpty(raw)) {
-            telegramToken = raw.trim();
-            break;
-        }
-        errMsg('Token cannot be empty. Please try again.');
-    }
-    console.log('');
-
-    stepHeader(step++, totalSteps, 'Allowed Telegram User IDs');
-    hint('Only these users can send messages to the bot.');
-    hint('To find your ID: message @userinfobot on Telegram');
-    hint('Multiple IDs: separate with commas (e.g. 123456,789012)');
-    hintBlank();
-    const telegramAllowedUserIds = await promptAllowedUserIds(rl);
-    console.log('');
-
-    return { telegramToken, telegramAllowedUserIds };
-}
-
-// ---------------------------------------------------------------------------
-// Shared steps
-// ---------------------------------------------------------------------------
-
 async function promptWorkspaceDir(rl: readline.Interface): Promise<string> {
     const defaultDir = path.join(os.homedir(), 'Code');
 
@@ -415,82 +335,114 @@ async function promptWorkspaceDir(rl: readline.Interface): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-// Setup result
+// Hub-and-spoke menu
 // ---------------------------------------------------------------------------
 
-interface SetupResult {
-    platforms: PlatformType[];
-    discordToken?: string;
-    clientId?: string;
-    guildId?: string;
-    allowedUserIds?: string[];
-    telegramToken?: string;
-    telegramAllowedUserIds?: string[];
-    workspaceBaseDir: string;
+function showMainMenu(config: PersistedConfig): void {
+    const discordStatus = statusBadge(isDiscordConfigured(config));
+    const telegramStatus = statusBadge(isTelegramConfigured(config));
+    const wsLabel = `${C.dim}${workspaceLabel(config)}${C.reset}`;
+
+    console.log('');
+    console.log(`  ${C.cyan}1)${C.reset} Discord                ${discordStatus}`);
+    console.log(`  ${C.cyan}2)${C.reset} Telegram               ${telegramStatus}`);
+    console.log(`  ${C.cyan}3)${C.reset} Workspace Directory    ${wsLabel}`);
+    console.log(`  ${C.cyan}d)${C.reset} Done — save & exit`);
+    console.log('');
 }
 
 // ---------------------------------------------------------------------------
-// Wizard orchestrator
+// Individual setup flows (each saves immediately)
 // ---------------------------------------------------------------------------
 
-function countSteps(platforms: PlatformType[]): number {
-    let steps = 2; // platform selection + workspace dir
-    if (platforms.includes('discord')) steps += 3; // token, guild, allowed IDs
-    if (platforms.includes('telegram')) steps += 2; // token, allowed IDs
-    return steps;
+async function runDiscordSetup(rl: readline.Interface): Promise<void> {
+    sectionHeader('Discord Bot Token');
+    hint('1. Go to https://discord.com/developers/applications and log in');
+    hint('2. Click "New Application" (top-right), enter a name (e.g. LazyGravity), and create it');
+    hint('3. Go to the "Bot" tab on the left sidebar');
+    hint('4. Click "Reset Token" to generate and copy the token');
+    hint(`5. Scroll down to ${C.bold}"Privileged Gateway Intents"${C.dim} and enable ALL of:`);
+    hint(`   ${C.cyan}PRESENCE INTENT${C.dim}`);
+    hint(`   ${C.cyan}SERVER MEMBERS INTENT${C.dim}`);
+    hint(`   ${C.cyan}MESSAGE CONTENT INTENT${C.dim} ${C.yellow}(required — bot cannot read messages without this)${C.dim}`);
+    hint(`6. Click ${C.bold}"Save Changes"${C.dim} at the bottom (Warning banner)`);
+    hintBlank();
+    const { token: discordToken, clientId } = await promptToken(rl);
+    console.log('');
+
+    sectionHeader('Guild (Server) ID');
+    hint('This registers slash commands instantly to your server.');
+    hint('1. Open Discord Settings > Advanced > enable "Developer Mode"');
+    hint('2. Right-click your server icon > "Copy Server ID"');
+    hint(`${C.yellow}Press Enter to skip${C.dim} (commands will register globally, may take ~1 hour)`);
+    hintBlank();
+    const guildId = await promptGuildId(rl);
+    console.log('');
+
+    sectionHeader('Allowed Discord User IDs');
+    hint('Only these users can send commands to the bot.');
+    hint('1. In Discord, right-click your own profile icon');
+    hint('2. Click "Copy User ID" (requires Developer Mode from step above)');
+    hint('Multiple IDs: separate with commas (e.g. 123456,789012)');
+    hintBlank();
+    const allowedUserIds = await promptAllowedUserIds(rl);
+    console.log('');
+
+    ConfigLoader.save({ discordToken, clientId, guildId, allowedUserIds });
+    savePlatformsFromState();
+
+    const inviteUrl = buildInviteUrl(clientId);
+    console.log(`  ${C.green}Discord saved!${C.reset}`);
+    console.log(`  ${C.dim}Invite URL:${C.reset} ${inviteUrl}\n`);
 }
 
-async function runSetupWizard(): Promise<SetupResult> {
-    const rl = createInterface();
+async function runTelegramSetup(rl: readline.Interface): Promise<void> {
+    sectionHeader('Telegram Bot Token');
+    hint('1. Open Telegram and message @BotFather');
+    hint('2. Send /newbot and follow the prompts to create a bot');
+    hint('3. Copy the token BotFather gives you');
+    hintBlank();
 
-    try {
-        console.log(SETUP_LOGO);
-
-        // Step 1: Platform selection
-        console.log(`  ${C.cyan}[Step 1]${C.reset} ${C.bold}Platform Selection${C.reset}`);
-        hint('Which platform(s) do you want to use?');
-        hintBlank();
-        const platforms = await promptPlatforms(rl);
-        console.log('');
-
-        const totalSteps = countSteps(platforms);
-        let currentStep = 2;
-
-        // Discord setup (if selected)
-        let discord: DiscordSetup | undefined;
-        if (platforms.includes('discord')) {
-            discord = await promptDiscordSetup(rl, currentStep, totalSteps);
-            currentStep += 3;
+    let telegramToken = '';
+    while (true) {
+        const raw = await askSecret(rl, `  ${C.yellow}>${C.reset} `);
+        if (!isNonEmpty(raw)) {
+            errMsg('Token cannot be empty. Please try again.');
+            continue;
         }
-
-        // Telegram setup (if selected)
-        let telegram: TelegramSetup | undefined;
-        if (platforms.includes('telegram')) {
-            telegram = await promptTelegramSetup(rl, currentStep, totalSteps);
-            currentStep += 2;
+        const trimmed = raw.trim();
+        if (!isValidTelegramTokenFormat(trimmed)) {
+            errMsg('Invalid token format. Telegram tokens look like: 123456:ABCdef...');
+            continue;
         }
-
-        // Workspace directory (always last)
-        stepHeader(currentStep, totalSteps, 'Workspace Base Directory');
-        hint('The parent directory where your coding projects live.');
-        hint('LazyGravity will scan subdirectories as workspaces.');
-        hintBlank();
-        const workspaceBaseDir = await promptWorkspaceDir(rl);
-        console.log('');
-
-        return {
-            platforms,
-            discordToken: discord?.discordToken,
-            clientId: discord?.clientId,
-            guildId: discord?.guildId,
-            allowedUserIds: discord?.allowedUserIds,
-            telegramToken: telegram?.telegramToken,
-            telegramAllowedUserIds: telegram?.telegramAllowedUserIds,
-            workspaceBaseDir,
-        };
-    } finally {
-        rl.close();
+        telegramToken = trimmed;
+        break;
     }
+    console.log('');
+
+    sectionHeader('Allowed Telegram User IDs');
+    hint('Only these users can send messages to the bot.');
+    hint('To find your ID: message @userinfobot on Telegram');
+    hint('Multiple IDs: separate with commas (e.g. 123456,789012)');
+    hintBlank();
+    const telegramAllowedUserIds = await promptAllowedUserIds(rl);
+    console.log('');
+
+    ConfigLoader.save({ telegramToken, telegramAllowedUserIds });
+    savePlatformsFromState();
+    console.log(`  ${C.green}Telegram saved!${C.reset}\n`);
+}
+
+async function runWorkspaceSetup(rl: readline.Interface): Promise<void> {
+    sectionHeader('Workspace Base Directory');
+    hint('The parent directory where your coding projects live.');
+    hint('LazyGravity will scan subdirectories as workspaces.');
+    hintBlank();
+    const workspaceBaseDir = await promptWorkspaceDir(rl);
+    console.log('');
+
+    ConfigLoader.save({ workspaceBaseDir });
+    console.log(`  ${C.green}Workspace saved!${C.reset}\n`);
 }
 
 // ---------------------------------------------------------------------------
@@ -498,45 +450,75 @@ async function runSetupWizard(): Promise<SetupResult> {
 // ---------------------------------------------------------------------------
 
 export async function setupAction(): Promise<void> {
-    const result = await runSetupWizard();
+    const rl = createInterface();
 
-    ConfigLoader.save({
-        discordToken: result.discordToken,
-        clientId: result.clientId,
-        guildId: result.guildId,
-        allowedUserIds: result.allowedUserIds,
-        workspaceBaseDir: result.workspaceBaseDir,
-        telegramToken: result.telegramToken,
-        telegramAllowedUserIds: result.telegramAllowedUserIds,
-        platforms: result.platforms,
-    });
+    try {
+        console.log(SETUP_LOGO);
 
-    const configPath = ConfigLoader.getConfigFilePath();
+        while (true) {
+            const config = ConfigLoader.readPersisted();
+            showMainMenu(config);
 
-    console.log(`  ${C.green}Setup complete!${C.reset}\n`);
-    console.log(`  ${C.dim}Saved to${C.reset} ${configPath}\n`);
+            const raw = await ask(rl, `  ${C.yellow}>${C.reset} `);
+            const choice = raw.trim().toLowerCase();
 
-    // Discord next steps
-    if (result.platforms.includes('discord') && result.clientId) {
-        const inviteUrl = buildInviteUrl(result.clientId);
-        console.log(`  ${C.cyan}Discord:${C.reset}`);
-        console.log(`  ${C.bold}1.${C.reset} ${C.yellow}Verify Privileged Gateway Intents are enabled${C.reset} in the Bot tab:`);
-        console.log(`     ${C.dim}Required: PRESENCE INTENT, SERVER MEMBERS INTENT, MESSAGE CONTENT INTENT${C.reset}`);
-        console.log(`     https://discord.com/developers/applications/${result.clientId}/bot\n`);
-        console.log(`  ${C.bold}2.${C.reset} Add the bot to your server:`);
-        console.log(`     ${inviteUrl}\n`);
+            switch (choice) {
+                case '1':
+                    await runDiscordSetup(rl);
+                    break;
+                case '2':
+                    await runTelegramSetup(rl);
+                    break;
+                case '3':
+                    await runWorkspaceSetup(rl);
+                    break;
+                case 'd':
+                case 'done': {
+                    const finalConfig = ConfigLoader.readPersisted();
+                    const platforms: PlatformType[] = [];
+                    if (isDiscordConfigured(finalConfig)) platforms.push('discord');
+                    if (isTelegramConfigured(finalConfig)) platforms.push('telegram');
+
+                    if (platforms.length === 0) {
+                        errMsg('No platforms configured yet. Please set up at least one platform.');
+                        break;
+                    }
+
+                    ConfigLoader.save({ platforms });
+
+                    const configPath = ConfigLoader.getConfigFilePath();
+                    console.log(`\n  ${C.green}Setup complete!${C.reset} Platforms: ${platforms.join(', ')}\n`);
+                    console.log(`  ${C.dim}Saved to${C.reset} ${configPath}\n`);
+
+                    if (platforms.includes('discord') && finalConfig.clientId) {
+                        const inviteUrl = buildInviteUrl(finalConfig.clientId);
+                        console.log(`  ${C.cyan}Discord:${C.reset}`);
+                        console.log(`  ${C.bold}1.${C.reset} ${C.yellow}Verify Privileged Gateway Intents are enabled${C.reset} in the Bot tab:`);
+                        console.log(`     ${C.dim}Required: PRESENCE INTENT, SERVER MEMBERS INTENT, MESSAGE CONTENT INTENT${C.reset}`);
+                        console.log(`     https://discord.com/developers/applications/${finalConfig.clientId}/bot\n`);
+                        console.log(`  ${C.bold}2.${C.reset} Add the bot to your server:`);
+                        console.log(`     ${inviteUrl}\n`);
+                    }
+
+                    if (platforms.includes('telegram')) {
+                        console.log(`  ${C.cyan}Telegram:${C.reset}`);
+                        console.log(`  ${C.dim}Your Telegram bot is ready. Message it on Telegram after starting.${C.reset}\n`);
+                    }
+
+                    console.log(`  ${C.cyan}Start:${C.reset}`);
+                    console.log(`  ${C.bold}1.${C.reset} Open Antigravity with CDP enabled:`);
+                    console.log(`     ${C.green}lazy-gravity open${C.reset}`);
+                    console.log(`     ${C.dim}(auto-selects an available port from: ${CDP_PORTS.join(', ')})${C.reset}\n`);
+                    console.log(`  ${C.bold}2.${C.reset} Run: ${C.green}lazy-gravity start${C.reset}\n`);
+
+                    return;
+                }
+                default:
+                    errMsg('Please enter 1, 2, 3, or d.');
+                    break;
+            }
+        }
+    } finally {
+        rl.close();
     }
-
-    // Telegram next steps
-    if (result.platforms.includes('telegram')) {
-        console.log(`  ${C.cyan}Telegram:${C.reset}`);
-        console.log(`  ${C.dim}Your Telegram bot is ready. Message it on Telegram after starting.${C.reset}\n`);
-    }
-
-    // Common next steps
-    console.log(`  ${C.cyan}Start:${C.reset}`);
-    console.log(`  ${C.bold}1.${C.reset} Open Antigravity with CDP enabled:`);
-    console.log(`     ${C.green}lazy-gravity open${C.reset}`);
-    console.log(`     ${C.dim}(auto-selects an available port from: ${CDP_PORTS.join(', ')})${C.reset}\n`);
-    console.log(`  ${C.bold}2.${C.reset} Run: ${C.green}lazy-gravity start${C.reset}\n`);
 }

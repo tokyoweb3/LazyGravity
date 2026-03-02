@@ -242,6 +242,11 @@ export const ConfigLoader = {
         return fs.existsSync(getConfigFilePath());
     },
 
+    /** Read persisted config from disk. Returns empty object if file doesn't exist. */
+    readPersisted(): PersistedConfig {
+        return readPersistedConfig(getConfigFilePath());
+    },
+
     /**
      * Load config using resolution order:
      *   env vars  >  ~/.lazy-gravity/config.json  >  .env  >  defaults
