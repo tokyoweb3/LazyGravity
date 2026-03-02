@@ -90,7 +90,8 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
         workspacePath: string,
         task: () => Promise<void>,
     ): Promise<void> {
-        const current = workspaceQueues.get(workspacePath) ?? Promise.resolve();
+        // .catch: ensure a prior rejection never stalls the chain
+        const current = (workspaceQueues.get(workspacePath) ?? Promise.resolve()).catch(() => { });
         const next = current.then(async () => {
             try {
                 await task();
@@ -317,21 +318,34 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                                     );
                                     resolve();
                                 }, QUEUE_SAFETY_TIMEOUT_MS);
+                                let settled = false;
+                                const settle = () => {
+                                    if (settled) return;
+                                    settled = true;
+                                    clearTimeout(safetyTimer);
+                                    const elapsed = Math.round((Date.now() - promptStartTime) / 1000);
+                                    logger.info(
+                                        `[Queue:${projectName}] Prompt completed in ${elapsed}s ` +
+                                        `(channel: ${message.channelId})`,
+                                    );
+                                    resolve();
+                                };
                                 deps.sendPromptToAntigravity(deps.bridge, message, promptText, cdp, deps.modeService, deps.modelService, inboundImages, {
                                     chatSessionService: deps.chatSessionService,
                                     chatSessionRepo: deps.chatSessionRepo,
                                     channelManager: deps.channelManager,
                                     titleGenerator: deps.titleGenerator,
                                     userPrefRepo: deps.userPrefRepo,
-                                    onFullCompletion: () => {
-                                        clearTimeout(safetyTimer);
-                                        const elapsed = Math.round((Date.now() - promptStartTime) / 1000);
-                                        logger.info(
-                                            `[Queue:${projectName}] Prompt completed in ${elapsed}s ` +
-                                            `(channel: ${message.channelId})`,
-                                        );
-                                        resolve();
-                                    },
+                                    onFullCompletion: settle,
+                                }).catch((err: any) => {
+                                    // sendPromptToAntigravity rejected before onFullCompletion fired
+                                    // (e.g. setup code threw before top-level try/catch).
+                                    // Release the queue immediately instead of waiting for safety timeout.
+                                    logger.error(
+                                        `[Queue:${projectName}] sendPromptToAntigravity rejected early ` +
+                                        `(channel: ${message.channelId}):`, err?.message || err,
+                                    );
+                                    settle();
                                 });
                             });
                         } catch (e: any) {
