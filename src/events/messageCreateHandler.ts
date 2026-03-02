@@ -217,14 +217,33 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
 
             try {
                 if (workspacePath) {
+                    const projectLabel = deps.bridge.pool.extractProjectName(workspacePath);
+
                     // Track queue depth for hourglass reactions
                     const currentDepth = workspaceQueueDepths.get(workspacePath) ?? 0;
                     workspaceQueueDepths.set(workspacePath, currentDepth + 1);
+                    const newDepth = currentDepth + 1;
+
                     if (currentDepth > 0) {
+                        logger.info(
+                            `[Queue:${projectLabel}] Enqueued (depth: ${newDepth}, channel: ${message.channelId})`,
+                        );
                         await message.react('⏳').catch(() => { });
+                    } else {
+                        logger.info(
+                            `[Queue:${projectLabel}] Processing immediately (depth: ${newDepth}, channel: ${message.channelId})`,
+                        );
                     }
 
+                    const queueStartTime = Date.now();
                     await enqueueForWorkspace(workspacePath, async () => {
+                        const waitMs = Date.now() - queueStartTime;
+                        if (waitMs > 100) {
+                            logger.info(
+                                `[Queue:${projectLabel}] Task started after ${Math.round(waitMs / 1000)}s wait (channel: ${message.channelId})`,
+                            );
+                        }
+
                         // Remove hourglass when task starts processing
                         const botId = message.client.user?.id;
                         if (botId) {
@@ -289,9 +308,13 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                             // Safety timeout (360s) prevents permanent queue deadlock if onFullCompletion
                             // is never called due to a bug.
                             const QUEUE_SAFETY_TIMEOUT_MS = 360_000;
+                            const promptStartTime = Date.now();
                             await new Promise<void>((resolve) => {
                                 const safetyTimer = setTimeout(() => {
-                                    logger.warn('[WorkspaceQueue] Safety timeout — releasing queue after 360s');
+                                    logger.warn(
+                                        `[Queue:${projectName}] Safety timeout — releasing queue after 360s ` +
+                                        `(channel: ${message.channelId})`,
+                                    );
                                     resolve();
                                 }, QUEUE_SAFETY_TIMEOUT_MS);
                                 deps.sendPromptToAntigravity(deps.bridge, message, promptText, cdp, deps.modeService, deps.modelService, inboundImages, {
@@ -302,17 +325,29 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                                     userPrefRepo: deps.userPrefRepo,
                                     onFullCompletion: () => {
                                         clearTimeout(safetyTimer);
+                                        const elapsed = Math.round((Date.now() - promptStartTime) / 1000);
+                                        logger.info(
+                                            `[Queue:${projectName}] Prompt completed in ${elapsed}s ` +
+                                            `(channel: ${message.channelId})`,
+                                        );
                                         resolve();
                                     },
                                 });
                             });
                         } catch (e: any) {
+                            logger.error(
+                                `[Queue:${projectLabel}] Task failed (channel: ${message.channelId}):`,
+                                e.message,
+                            );
                             await message.reply(`Failed to connect to workspace: ${e.message}`);
                         } finally {
-                            workspaceQueueDepths.set(
-                                workspacePath,
-                                (workspaceQueueDepths.get(workspacePath) ?? 1) - 1,
-                            );
+                            const remainingDepth = (workspaceQueueDepths.get(workspacePath) ?? 1) - 1;
+                            workspaceQueueDepths.set(workspacePath, remainingDepth);
+                            if (remainingDepth > 0) {
+                                logger.info(
+                                    `[Queue:${projectLabel}] Task done, ${remainingDepth} remaining`,
+                                );
+                            }
                         }
                     });
                 } else {

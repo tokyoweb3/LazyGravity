@@ -161,9 +161,10 @@ async function sendPromptToAntigravity(
 ): Promise<void> {
     // Completion signal — called exactly once when the entire prompt lifecycle ends
     let completionSignaled = false;
-    const signalCompletion = () => {
+    const signalCompletion = (exitPath: string) => {
         if (completionSignaled) return;
         completionSignaled = true;
+        logger.debug(`[sendPrompt:${message.channelId}] signalCompletion via ${exitPath}`);
         options?.onFullCompletion?.();
     };
 
@@ -323,7 +324,7 @@ async function sendPromptToAntigravity(
         );
         await clearWatchingReaction();
         await message.react('❌').catch(() => { });
-        signalCompletion();
+        signalCompletion('cdp-disconnected');
         return;
     }
 
@@ -556,7 +557,7 @@ async function sendPromptToAntigravity(
             );
             await clearWatchingReaction();
             await message.react('❌').catch(() => { });
-            signalCompletion();
+            signalCompletion('inject-failed');
             return;
         }
 
@@ -769,7 +770,7 @@ async function sendPromptToAntigravity(
                     logger.error(`[sendPromptToAntigravity:${monitorTraceId}] onComplete failed:`, error);
                 }
                 } finally {
-                    signalCompletion();
+                    signalCompletion('onComplete');
                 }
             },
 
@@ -817,7 +818,7 @@ async function sendPromptToAntigravity(
                 } catch (error) {
                     logger.error(`[sendPromptToAntigravity:${monitorTraceId}] onTimeout failed:`, error);
                 } finally {
-                    signalCompletion();
+                    signalCompletion('onTimeout');
                 }
             },
         });
@@ -855,7 +856,7 @@ async function sendPromptToAntigravity(
         );
         await clearWatchingReaction();
         await message.react('❌').catch(() => { });
-        signalCompletion();
+        signalCompletion('top-level-catch');
     }
 }
 
