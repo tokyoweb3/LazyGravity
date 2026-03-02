@@ -102,7 +102,8 @@ jest.mock('../src/utils/config', () => ({
         clientId: 'test_client_id',
         guildId: 'test_guild_id',
         allowedUserIds: ['123'],
-        workspaceBaseDir: '/workspace'
+        workspaceBaseDir: '/workspace',
+        platforms: ['discord'],
     }),
     resolveResponseDeliveryMode: jest.fn().mockReturnValue('stream'),
 }));

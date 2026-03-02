@@ -11,6 +11,8 @@ import {
 } from 'discord.js';
 import Database from 'better-sqlite3';
 
+import { wrapDiscordChannel } from '../platform/discord/wrappers';
+import type { PlatformType } from '../platform/types';
 import { loadConfig, resolveResponseDeliveryMode } from '../utils/config';
 import { parseMessageContent } from '../commands/messageParser';
 import { SlashCommandHandler } from '../commands/slashCommandHandler';
@@ -82,6 +84,12 @@ import { UserPreferenceRepository, OutputFormat } from '../database/userPreferen
 import { formatAsPlainText, splitPlainText } from '../utils/plainTextFormatter';
 import { createInteractionCreateHandler } from '../events/interactionCreateHandler';
 import { createMessageCreateHandler } from '../events/messageCreateHandler';
+
+// Telegram platform support (optional — grammy dynamically imported at runtime)
+import { TelegramAdapter } from '../platform/telegram/telegramAdapter';
+import { TelegramBindingRepository } from '../database/telegramBindingRepository';
+import { createTelegramMessageHandler } from './telegramMessageHandler';
+import { EventRouter } from './eventRouter';
 
 // =============================================================================
 // Embed color palette (color-coded by phase)
@@ -748,7 +756,7 @@ async function sendPromptToAntigravity(
                                     ? bridge.pool.extractProjectName(session.workspacePath)
                                     : cdp.getCurrentWorkspaceName();
                                 if (projectName) {
-                                    registerApprovalSessionChannel(bridge, projectName, sessionInfo.title, message.channel);
+                                    registerApprovalSessionChannel(bridge, projectName, sessionInfo.title, wrapDiscordChannel(message.channel as any));
                                 }
 
                                 const newName = options.titleGenerator.sanitizeForChannelName(sessionInfo.title);
@@ -1033,15 +1041,16 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                     cdp = await bridge.pool.getOrConnect(workspacePath);
                     const projectName = bridge.pool.extractProjectName(workspacePath);
                     bridge.lastActiveWorkspace = projectName;
-                    bridge.lastActiveChannel = interaction.channel;
-                    registerApprovalWorkspaceChannel(bridge, projectName, interaction.channel as any);
+                    const platformCh = wrapDiscordChannel(interaction.channel as any);
+                    bridge.lastActiveChannel = platformCh;
+                    registerApprovalWorkspaceChannel(bridge, projectName, platformCh);
                     const session = chatSessionRepo.findByChannelId(channelId);
                     if (session?.displayName) {
-                        registerApprovalSessionChannel(bridge, projectName, session.displayName, interaction.channel as any);
+                        registerApprovalSessionChannel(bridge, projectName, session.displayName, platformCh);
                     }
-                    ensureApprovalDetector(bridge, cdp, projectName, client);
-                    ensureErrorPopupDetector(bridge, cdp, projectName, client);
-                    ensurePlanningDetector(bridge, cdp, projectName, client);
+                    ensureApprovalDetector(bridge, cdp, projectName);
+                    ensureErrorPopupDetector(bridge, cdp, projectName);
+                    ensurePlanningDetector(bridge, cdp, projectName);
                 } catch (e: any) {
                     await interaction.followUp({
                         content: `Failed to connect to workspace: ${e.message}`,
@@ -1118,6 +1127,44 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
     }));
 
     await client.login(config.discordToken);
+
+    // Telegram platform (optional — requires grammy + TELEGRAM_BOT_TOKEN)
+    if (config.platforms.includes('telegram') && config.telegramToken) {
+        try {
+            // @ts-expect-error grammy is an optional peer dependency
+            const { Bot } = await import('grammy');
+            const telegramBot = new Bot(config.telegramToken);
+            const botInfo = await telegramBot.api.getMe();
+
+            const telegramBindingRepo = new TelegramBindingRepository(db);
+            const telegramAdapter = new TelegramAdapter(telegramBot as any, String(botInfo.id));
+
+            const telegramHandler = createTelegramMessageHandler({
+                bridge,
+                telegramBindingRepo,
+            });
+
+            const allowedUsers = new Map<PlatformType, ReadonlySet<string>>();
+            if (config.telegramAllowedUserIds && config.telegramAllowedUserIds.length > 0) {
+                allowedUsers.set('telegram', new Set(config.telegramAllowedUserIds));
+            }
+
+            const eventRouter = new EventRouter(
+                { allowedUsers },
+                { onMessage: telegramHandler },
+            );
+            eventRouter.registerAdapter(telegramAdapter);
+            await eventRouter.startAll();
+
+            logger.info(`Telegram bot started: @${botInfo.username} (${config.telegramAllowedUserIds?.length ?? 0} allowed users)`);
+        } catch (e: any) {
+            if (e.code === 'ERR_MODULE_NOT_FOUND' || e.code === 'MODULE_NOT_FOUND') {
+                logger.warn('Telegram platform requested but grammy is not installed. Run: npm install grammy');
+            } else {
+                logger.error('Failed to start Telegram adapter:', e.message || e);
+            }
+        }
+    }
 };
 
 /**
