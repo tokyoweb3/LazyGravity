@@ -483,12 +483,11 @@ async function handleNew(deps: TelegramCommandDeps, message: PlatformMessage): P
     }
 
     // Resolve workspace path and connect to CDP
-    const workspacePath = deps.workspaceService
-        ? deps.workspaceService.getWorkspacePath(binding.workspacePath)
-        : binding.workspacePath;
-
     let cdp;
     try {
+        const workspacePath = deps.workspaceService
+            ? deps.workspaceService.getWorkspacePath(binding.workspacePath)
+            : binding.workspacePath;
         cdp = await deps.bridge.pool.getOrConnect(workspacePath);
     } catch (err: any) {
         logger.error('[TelegramCommand:new] CDP connection failed:', err?.message || err);
@@ -497,14 +496,19 @@ async function handleNew(deps: TelegramCommandDeps, message: PlatformMessage): P
     }
 
     // Start a new chat session
-    const result = await deps.chatSessionService.startNewChat(cdp);
-    if (result.ok) {
-        await message.reply({ text: 'New chat session started.' }).catch(logger.error);
-    } else {
-        logger.warn('[TelegramCommand:new] startNewChat failed:', result.error);
-        await message.reply({
-            text: `Failed to start new chat: ${escapeHtml(result.error || 'unknown error')}`,
-        }).catch(logger.error);
+    try {
+        const result = await deps.chatSessionService.startNewChat(cdp);
+        if (result.ok) {
+            await message.reply({ text: 'New chat session started.' }).catch(logger.error);
+        } else {
+            logger.warn('[TelegramCommand:new] startNewChat failed:', result.error);
+            await message.reply({
+                text: `Failed to start new chat: ${escapeHtml(result.error || 'unknown error')}`,
+            }).catch(logger.error);
+        }
+    } catch (err: any) {
+        logger.error('[TelegramCommand:new] startNewChat threw:', err?.message || err);
+        await message.reply({ text: 'Failed to start new chat.' }).catch(logger.error);
     }
 }
 

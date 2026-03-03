@@ -1099,4 +1099,27 @@ describe('handleTelegramCommand — /new', () => {
         expect(workspaceService.getWorkspacePath).toHaveBeenCalledWith('TestProject');
         expect(bridge.pool.getOrConnect).toHaveBeenCalledWith('/full/path/TestProject');
     });
+
+    it('handles unexpected startNewChat exceptions', async () => {
+        const message = createMockMessage();
+        const mockCdp = { getContexts: jest.fn().mockReturnValue([]) };
+        const bridge = createMockBridge();
+        bridge.pool.getOrConnect = jest.fn().mockResolvedValue(mockCdp);
+        const chatSessionService = {
+            startNewChat: jest.fn().mockRejectedValue(new Error('unexpected failure')),
+        } as any;
+        const telegramBindingRepo = {
+            findByChatId: jest.fn().mockReturnValue({ chatId: 'chat-123', workspacePath: 'TestProject' }),
+        } as any;
+
+        await handleTelegramCommand(
+            { bridge, chatSessionService, telegramBindingRepo },
+            message as any,
+            { command: 'new', args: '' },
+        );
+
+        expect(chatSessionService.startNewChat).toHaveBeenCalledWith(mockCdp);
+        expect(message.reply).toHaveBeenCalledTimes(1);
+        expect(message.reply).toHaveBeenCalledWith({ text: 'Failed to start new chat.' });
+    });
 });
