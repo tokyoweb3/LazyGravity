@@ -1212,6 +1212,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                 activeMonitors,
                 botToken: config.telegramToken,
                 botApi: telegramBot.api as any,
+                chatSessionService,
             });
 
             // Compose select handlers: project select + mode select
@@ -1273,6 +1274,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                 { command: 'template_add', description: 'Add a prompt template' },
                 { command: 'template_delete', description: 'Delete a prompt template' },
                 { command: 'project_create', description: 'Create a new workspace' },
+                { command: 'new', description: 'Start a new chat session' },
                 { command: 'logs', description: 'Show recent log entries' },
                 { command: 'stop', description: 'Interrupt active LLM generation' },
                 { command: 'help', description: 'Show available commands' },

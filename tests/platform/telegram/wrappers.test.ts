@@ -240,6 +240,68 @@ describe('toTelegramPayload', () => {
         const result = toTelegramPayload(payload);
         expect(result.reply_markup).toEqual({ inline_keyboard: [] });
     });
+
+    it('skips disabled buttons (Telegram has no disabled inline buttons)', () => {
+        const payload: MessagePayload = {
+            text: 'Resolved',
+            components: [
+                {
+                    components: [
+                        {
+                            type: 'button' as const,
+                            customId: 'allow',
+                            label: 'Allow',
+                            style: 'success' as const,
+                            disabled: true,
+                        },
+                        {
+                            type: 'button' as const,
+                            customId: 'deny',
+                            label: 'Deny',
+                            style: 'danger' as const,
+                            disabled: true,
+                        },
+                    ],
+                },
+            ],
+        };
+        const result = toTelegramPayload(payload);
+        // All buttons disabled → empty keyboard (removes buttons)
+        expect(result.reply_markup).toEqual({ inline_keyboard: [] });
+    });
+
+    it('keeps enabled buttons and skips disabled ones in mixed row', () => {
+        const payload: MessagePayload = {
+            text: 'Mixed:',
+            components: [
+                {
+                    components: [
+                        {
+                            type: 'button' as const,
+                            customId: 'active',
+                            label: 'Active',
+                            style: 'primary' as const,
+                        },
+                        {
+                            type: 'button' as const,
+                            customId: 'inactive',
+                            label: 'Inactive',
+                            style: 'secondary' as const,
+                            disabled: true,
+                        },
+                    ],
+                },
+            ],
+        };
+        const result = toTelegramPayload(payload);
+        expect(result.reply_markup).toBeDefined();
+        expect(result.reply_markup!.inline_keyboard).toHaveLength(1);
+        expect(result.reply_markup!.inline_keyboard[0]).toHaveLength(1);
+        expect(result.reply_markup!.inline_keyboard[0][0]).toEqual({
+            text: 'Active',
+            callback_data: 'active',
+        });
+    });
 });
 
 // ---------------------------------------------------------------------------
