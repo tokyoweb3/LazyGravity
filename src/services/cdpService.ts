@@ -19,6 +19,7 @@ export interface CdpContext {
     id: number;
     name: string;
     url: string;
+    origin?: string;
 }
 
 export interface InjectResult {
@@ -743,9 +744,14 @@ export class CdpService extends EventEmitter {
      * Right after Antigravity launch, contexts are created asynchronously even after Runtime.enable,
      * so use this method to confirm readiness before DOM operations.
      *
+     * Antigravity 1.107+ compatibility: If no cascade-panel context appears within the timeout,
+     * returns true anyway so that DOM operations can proceed using the best available context
+     * (see getPrimaryContextId). Older Antigravity versions that expose cascade-panel still work
+     * through the existing fast-path.
+     *
      * @param timeoutMs Maximum wait time (ms). Default: 10000
      * @param pollIntervalMs Polling interval (ms). Default: 500
-     * @returns true if cascade-panel context was found
+     * @returns true if cascade-panel context was found, or true after timeout if any context exists
      */
     async waitForCascadePanelReady(timeoutMs = 10000, pollIntervalMs = 500): Promise<boolean> {
         const start = Date.now();
@@ -758,18 +764,34 @@ export class CdpService extends EventEmitter {
             }
             await new Promise(r => setTimeout(r, pollIntervalMs));
         }
+        // Antigravity 1.107+ no longer exposes a cascade-panel iframe context.
+        // If we timed out but have any contexts available, proceed with those.
+        if (this.contexts.length > 0) {
+            logger.warn('[CdpService] cascade-panel context not found — proceeding with best available context (Antigravity 1.107+ compatibility mode)');
+            return true;
+        }
         return false;
     }
 
     getPrimaryContextId(): number | null {
-        // Find cascade-panel context
-        const context = this.contexts.find(c => c.url && c.url.includes('cascade-panel'));
-        if (context) return context.id;
+        // 1. Prefer cascade-panel context (older Antigravity versions)
+        const cascadeCtx = this.contexts.find(c => c.url && c.url.includes('cascade-panel'));
+        if (cascadeCtx) return cascadeCtx.id;
 
-        // Fallback to Extension context or first one
+        // 2. Antigravity 1.107+ compatibility: no cascade-panel iframe.
+        //    Try to find the main renderer context by common heuristics.
+
+        // Prefer a context whose origin looks like the main workbench page (vscode-file://)
+        const workbenchCtx = this.contexts.find(
+            c => c.origin && c.origin.startsWith('vscode-file://') && !c.name?.includes('Worker'),
+        );
+        if (workbenchCtx) return workbenchCtx.id;
+
+        // Fall back to any named Extension host context
         const extContext = this.contexts.find(c => c.name && c.name.includes('Extension'));
         if (extContext) return extContext.id;
 
+        // Last resort: first available context
         return this.contexts.length > 0 ? this.contexts[0].id : null;
     }
 
