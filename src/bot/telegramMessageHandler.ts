@@ -9,16 +9,21 @@
  *   5. Relays the response text back via PlatformChannel.send()
  */
 
-import type { PlatformMessage, PlatformChannel } from '../platform/types';
+import type { PlatformMessage, PlatformChannel, PlatformSentMessage } from '../platform/types';
 import type { TelegramBindingRepository } from '../database/telegramBindingRepository';
+import type { WorkspaceService } from '../services/workspaceService';
 import { CdpBridge, registerApprovalWorkspaceChannel, ensureApprovalDetector, ensureErrorPopupDetector, ensurePlanningDetector } from '../services/cdpBridgeManager';
 import { CdpService } from '../services/cdpService';
 import { ResponseMonitor } from '../services/responseMonitor';
+import { ProcessLogBuffer } from '../utils/processLogBuffer';
+import { splitOutputAndLogs } from '../utils/discordFormatter';
+import { parseTelegramProjectCommand, handleTelegramProjectCommand } from './telegramProjectCommand';
 import { logger } from '../utils/logger';
 
 export interface TelegramMessageHandlerDeps {
     readonly bridge: CdpBridge;
     readonly telegramBindingRepo: TelegramBindingRepository;
+    readonly workspaceService?: WorkspaceService;
 }
 
 /**
@@ -46,10 +51,26 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
     }
 
     return async (message: PlatformMessage): Promise<void> => {
+        const handlerEntryTime = Date.now();
         const chatId = message.channel.id;
         const promptText = message.content.trim();
 
         if (!promptText) return;
+
+        logger.debug(`[TelegramHandler] handler entered (chat=${chatId}, msgTime=${message.createdAt.toISOString()}, handlerDelay=${handlerEntryTime - message.createdAt.getTime()}ms)`);
+
+        // Intercept /project command before CDP path
+        if (deps.workspaceService) {
+            const parsed = parseTelegramProjectCommand(promptText);
+            if (parsed) {
+                await handleTelegramProjectCommand(
+                    { workspaceService: deps.workspaceService, telegramBindingRepo: deps.telegramBindingRepo },
+                    message,
+                    parsed,
+                );
+                return;
+            }
+        }
 
         // Resolve workspace binding for this Telegram chat
         const binding = deps.telegramBindingRepo.findByChatId(chatId);
@@ -63,6 +84,8 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
         const workspacePath = binding.workspacePath;
 
         await enqueueForWorkspace(workspacePath, async () => {
+            const cdpStartTime = Date.now();
+            logger.debug(`[TelegramHandler] getOrConnect start (elapsed=${cdpStartTime - handlerEntryTime}ms)`);
             let cdp: CdpService;
             try {
                 cdp = await deps.bridge.pool.getOrConnect(workspacePath);
@@ -72,6 +95,7 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
                 }).catch(logger.error);
                 return;
             }
+            logger.debug(`[TelegramHandler] getOrConnect done (took=${Date.now() - cdpStartTime}ms)`);
 
             const projectName = deps.bridge.pool.extractProjectName(workspacePath);
             deps.bridge.lastActiveWorkspace = projectName;
@@ -98,6 +122,14 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
 
             // Monitor the response
             const channel = message.channel;
+            const startTime = Date.now();
+            const processLogBuffer = new ProcessLogBuffer({ maxChars: 3500, maxEntries: 120, maxEntryLength: 220 });
+            let lastActivityLogText = '';
+            let statusMsg: PlatformSentMessage | null = null;
+
+            // Send initial status message
+            statusMsg = await channel.send({ text: 'Processing...' }).catch(() => null);
+
             await new Promise<void>((resolve) => {
                 const TIMEOUT_MS = 300_000;
 
@@ -114,9 +146,51 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
                     pollIntervalMs: 2000,
                     maxDurationMs: TIMEOUT_MS,
                     stopGoneConfirmCount: 3,
+
+                    onProcessLog: (logText) => {
+                        if (logText && logText.trim().length > 0) {
+                            lastActivityLogText = processLogBuffer.append(logText);
+                        }
+                        if (statusMsg && lastActivityLogText) {
+                            const elapsed = Math.round((Date.now() - startTime) / 1000);
+                            statusMsg.edit({
+                                text: `${lastActivityLogText}\n\n⏱️ ${elapsed}s`,
+                            }).catch(() => {});
+                        }
+                    },
+
                     onComplete: async (finalText) => {
                         try {
-                            if (finalText && finalText.trim().length > 0) {
+                            const elapsed = Math.round((Date.now() - startTime) / 1000);
+
+                            // Console log output (mirroring Discord handler pattern)
+                            const finalLogText = lastActivityLogText || processLogBuffer.snapshot();
+                            if (finalLogText && finalLogText.trim().length > 0) {
+                                logger.divider('Process Log');
+                                console.info(finalLogText);
+                            }
+
+                            const separated = splitOutputAndLogs(finalText || '');
+                            const finalOutputText = separated.output || finalText || '';
+                            if (finalOutputText && finalOutputText.trim().length > 0) {
+                                logger.divider(`Output (${finalOutputText.length} chars)`);
+                                console.info(finalOutputText);
+                            }
+                            logger.divider();
+
+                            // Update status message with final activity log
+                            if (statusMsg && finalLogText && finalLogText.trim().length > 0) {
+                                await statusMsg.edit({
+                                    text: `${finalLogText}\n\n✅ Done in ${elapsed}s`,
+                                }).catch(() => {});
+                            } else if (statusMsg) {
+                                await statusMsg.delete().catch(() => {});
+                            }
+
+                            // Send the final response
+                            if (finalOutputText && finalOutputText.trim().length > 0) {
+                                await sendTextChunked(channel, finalOutputText);
+                            } else if (finalText && finalText.trim().length > 0) {
                                 await sendTextChunked(channel, finalText);
                             } else {
                                 await channel.send({ text: '(Empty response from Antigravity)' }).catch(logger.error);
@@ -127,6 +201,14 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
                     },
                     onTimeout: async (lastText) => {
                         try {
+                            // Update status message on timeout
+                            if (statusMsg) {
+                                const elapsed = Math.round((Date.now() - startTime) / 1000);
+                                await statusMsg.edit({
+                                    text: `⏰ Timed out after ${elapsed}s`,
+                                }).catch(() => {});
+                            }
+
                             if (lastText && lastText.trim().length > 0) {
                                 await sendTextChunked(channel, `(Timeout) ${lastText}`);
                             } else {

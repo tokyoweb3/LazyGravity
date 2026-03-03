@@ -90,7 +90,12 @@ import { Bot } from 'grammy';
 import { TelegramAdapter } from '../platform/telegram/telegramAdapter';
 import { TelegramBindingRepository } from '../database/telegramBindingRepository';
 import { createTelegramMessageHandler } from './telegramMessageHandler';
+import { createTelegramSelectHandler } from './telegramProjectCommand';
 import { EventRouter } from './eventRouter';
+import { createPlatformButtonHandler } from '../handlers/buttonHandler';
+import { createApprovalButtonAction } from '../handlers/approvalButtonAction';
+import { createPlanningButtonAction } from '../handlers/planningButtonAction';
+import { createErrorPopupButtonAction } from '../handlers/errorPopupButtonAction';
 
 // =============================================================================
 // Embed color palette (color-coded by phase)
@@ -1151,6 +1156,12 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             const telegramHandler = createTelegramMessageHandler({
                 bridge,
                 telegramBindingRepo,
+                workspaceService,
+            });
+
+            const telegramSelectHandler = createTelegramSelectHandler({
+                workspaceService,
+                telegramBindingRepo,
             });
 
             const allowedUsers = new Map<PlatformType, ReadonlySet<string>>();
@@ -1160,14 +1171,73 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                 logger.warn('Telegram platform enabled but TELEGRAM_ALLOWED_USER_IDS is empty — all users will be denied access.');
             }
 
+            const telegramButtonHandler = createPlatformButtonHandler({
+                actions: [
+                    createApprovalButtonAction({ bridge }),
+                    createPlanningButtonAction({ bridge }),
+                    createErrorPopupButtonAction({ bridge }),
+                ],
+            });
+
             const eventRouter = new EventRouter(
                 { allowedUsers },
-                { onMessage: telegramHandler },
+                {
+                    onMessage: telegramHandler,
+                    onButtonInteraction: telegramButtonHandler,
+                    onSelectInteraction: telegramSelectHandler,
+                },
             );
+            // Register bot commands BEFORE starting polling so Telegram shows "/" suggestions
+            await telegramBot.api.setMyCommands([
+                { command: 'project', description: 'Manage workspace bindings' },
+            ]).catch((e: unknown) => {
+                logger.warn('Failed to register Telegram commands:', e instanceof Error ? e.message : e);
+            });
+
             eventRouter.registerAdapter(telegramAdapter);
             await eventRouter.startAll();
 
             logger.info(`Telegram bot started: @${botInfo.username} (${config.telegramAllowedUserIds?.length ?? 0} allowed users)`);
+
+            // Send startup message to all bound Telegram chats
+            const bindings = telegramBindingRepo.findAll();
+            if (bindings.length > 0) {
+                const os = await import('os');
+                const pkg = await import('../../package.json');
+                const version = pkg.default?.version ?? pkg.version ?? 'unknown';
+                const projects = workspaceService.scanWorkspaces();
+                const activeWorkspaces = bridge.pool.getActiveWorkspaceNames();
+                const cdpStatus = activeWorkspaces.length > 0
+                    ? `Connected (${activeWorkspaces.join(', ')})`
+                    : 'Not connected';
+
+                const startupText = [
+                    '<b>LazyGravity Online</b>',
+                    '',
+                    `Version: ${version}`,
+                    `Node.js: ${process.versions.node}`,
+                    `OS: ${os.platform()} ${os.release()}`,
+                    `CDP: ${cdpStatus}`,
+                    `Model: ${modelService.getCurrentModel()}`,
+                    `Mode: ${modeService.getCurrentMode()}`,
+                    `Projects: ${projects.length} registered`,
+                    `Extraction: ${config.extractionMode}`,
+                    '',
+                    `<i>Started at ${new Date().toLocaleString()}</i>`,
+                ].join('\n');
+
+                const results = await Promise.allSettled(
+                    bindings.map((binding) =>
+                        telegramBot.api.sendMessage(binding.chatId, startupText, { parse_mode: 'HTML' }),
+                    ),
+                );
+                const failed = results.filter((r) => r.status === 'rejected');
+                if (failed.length > 0) {
+                    logger.warn(`[Telegram] Startup message failed for ${failed.length}/${bindings.length} chat(s): ${(failed[0] as PromiseRejectedResult).reason?.message ?? 'unknown error'}`);
+                } else {
+                    logger.info(`Telegram startup message sent to ${bindings.length} bound chat(s).`);
+                }
+            }
         } catch (e: unknown) {
             const message = e instanceof Error ? e.message : String(e);
             logger.error('Failed to start Telegram adapter:', message);

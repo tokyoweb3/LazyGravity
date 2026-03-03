@@ -33,6 +33,8 @@ export interface TelegramBotLike {
         deleteMessage(chatId: number | string, messageId: number): Promise<any>;
         getChat(chatId: number | string): Promise<any>;
         answerCallbackQuery(callbackQueryId: string, options?: any): Promise<any>;
+        setMessageReaction?(chatId: number | string, messageId: number, reaction: readonly any[], options?: any): Promise<any>;
+        setMyCommands?(commands: readonly { command: string; description: string }[]): Promise<any>;
     };
 }
 
@@ -79,9 +81,16 @@ function buttonDefToInline(btn: ButtonDef): InlineButton {
     return { text: btn.label, callback_data: btn.customId };
 }
 
+/**
+ * Separator for select menu callback_data: customId + SEP + value.
+ * Uses ASCII Unit Separator (0x1F) to avoid collisions with button
+ * customIds that legitimately contain colons (e.g. "approve_action:proj:ch").
+ */
+export const SELECT_CALLBACK_SEP = '\x1f';
+
 function selectMenuToInlineRows(menu: SelectMenuDef): ReadonlyArray<ReadonlyArray<InlineButton>> {
     return menu.options.map((opt) => [
-        { text: opt.label, callback_data: `${menu.customId}:${opt.value}` },
+        { text: opt.label, callback_data: `${menu.customId}${SELECT_CALLBACK_SEP}${opt.value}` },
     ]);
 }
 
@@ -145,14 +154,21 @@ export function toTelegramPayload(payload: MessagePayload): TelegramSendOptions 
         parse_mode: 'HTML',
     };
 
-    if (payload.components && payload.components.length > 0) {
-        const keyboard = componentRowsToInlineKeyboard(payload.components);
-        if (keyboard.length > 0) {
-            return {
-                ...options,
-                reply_markup: { inline_keyboard: keyboard },
-            };
+    if (payload.components !== undefined) {
+        if (payload.components.length > 0) {
+            const keyboard = componentRowsToInlineKeyboard(payload.components);
+            if (keyboard.length > 0) {
+                return {
+                    ...options,
+                    reply_markup: { inline_keyboard: keyboard },
+                };
+            }
         }
+        // Explicitly empty components array => remove existing keyboard
+        return {
+            ...options,
+            reply_markup: { inline_keyboard: [] },
+        };
     }
 
     return options;
@@ -223,9 +239,16 @@ export function wrapTelegramMessage(
         channel,
         attachments: [],
         createdAt: new Date(msg.date * 1000),
-        async react(_emoji: string): Promise<void> {
-            // Telegram Bot API does not support adding reactions programmatically
-            // in the same way Discord does. This is a no-op.
+        async react(emoji: string): Promise<void> {
+            // Telegram Bot API 7.0+ setMessageReaction — limited to 79 emoji.
+            // Silently ignore failures (unsupported emoji, old API, etc.).
+            if (api.setMessageReaction) {
+                await api.setMessageReaction(
+                    msg.chat.id,
+                    msg.message_id,
+                    [{ type: 'emoji', emoji }],
+                ).catch(() => {});
+            }
         },
         async reply(payload: MessagePayload): Promise<PlatformSentMessage> {
             const opts = toTelegramPayload(payload);

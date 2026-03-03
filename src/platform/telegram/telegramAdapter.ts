@@ -14,10 +14,12 @@ import type {
     TelegramCallbackQueryLike,
 } from './wrappers';
 import {
+    SELECT_CALLBACK_SEP,
     wrapTelegramChannel,
     wrapTelegramMessage,
     wrapTelegramCallbackQuery,
 } from './wrappers';
+import { logger } from '../../utils/logger';
 
 // ---------------------------------------------------------------------------
 // TelegramAdapter
@@ -111,6 +113,12 @@ export class TelegramAdapter implements PlatformAdapter {
                 const msg: TelegramMessageLike = ctx.message ?? ctx.msg;
                 if (!msg) return;
 
+                const msgDate = msg.date ? new Date(msg.date * 1000) : null;
+                const delayMs = msgDate ? Date.now() - msgDate.getTime() : null;
+                logger.debug(
+                    `[TelegramAdapter] message:text received (chat=${msg.chat.id}, delay=${delayMs !== null ? `${delayMs}ms` : 'unknown'})`,
+                );
+
                 const platformMessage = wrapTelegramMessage(msg, this.bot.api);
                 await this.events.onMessage(platformMessage);
             } catch (error) {
@@ -128,11 +136,13 @@ export class TelegramAdapter implements PlatformAdapter {
 
                 const interaction = wrapTelegramCallbackQuery(query, this.bot.api);
 
-                // Check if this looks like a select menu value (customId:value format)
-                const colonIdx = (query.data ?? '').indexOf(':');
-                if (colonIdx > 0 && this.events.onSelectInteraction) {
-                    const selectCustomId = (query.data ?? '').slice(0, colonIdx);
-                    const selectedValue = (query.data ?? '').slice(colonIdx + 1);
+                // Select menu callbacks use \x1F (Unit Separator) between
+                // customId and value. Regular button customIds never contain
+                // \x1F, so this cleanly distinguishes the two.
+                const sepIdx = (query.data ?? '').indexOf(SELECT_CALLBACK_SEP);
+                if (sepIdx > 0 && this.events.onSelectInteraction) {
+                    const selectCustomId = (query.data ?? '').slice(0, sepIdx);
+                    const selectedValue = (query.data ?? '').slice(sepIdx + 1);
 
                     await this.events.onSelectInteraction({
                         id: query.id,

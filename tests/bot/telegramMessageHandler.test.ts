@@ -35,17 +35,29 @@ jest.mock('../../src/services/responseMonitor', () => ({
 // Helpers
 // ---------------------------------------------------------------------------
 
-function createMockChannel(id = 'chat-123') {
+function createMockSentMessage(id = '1', channelId = 'chat-123') {
     return {
         id,
         platform: 'telegram' as const,
-        send: jest.fn().mockResolvedValue({
-            id: '1',
+        channelId,
+        edit: jest.fn().mockResolvedValue({
+            id,
             platform: 'telegram' as const,
-            channelId: id,
+            channelId,
             edit: jest.fn(),
             delete: jest.fn(),
         }),
+        delete: jest.fn().mockResolvedValue(undefined),
+    };
+}
+
+function createMockChannel(id = 'chat-123') {
+    const statusMsg = createMockSentMessage('status-1', id);
+    return {
+        id,
+        platform: 'telegram' as const,
+        send: jest.fn().mockResolvedValue(statusMsg),
+        _statusMsg: statusMsg,
     };
 }
 
@@ -275,6 +287,8 @@ describe('createTelegramMessageHandler', () => {
         const handler = createTelegramMessageHandler({ bridge, telegramBindingRepo });
         await handler(message as any);
 
+        // First call is status message "Processing...", second is the response
+        expect(channel.send).toHaveBeenCalledWith({ text: 'Processing...' });
         expect(channel.send).toHaveBeenCalledWith({ text: 'Response text' });
     });
 
@@ -299,6 +313,8 @@ describe('createTelegramMessageHandler', () => {
         expect(channel.send).toHaveBeenCalledWith({
             text: '(Empty response from Antigravity)',
         });
+        // Status message should be deleted when empty response + no logs
+        expect(channel._statusMsg.delete).toHaveBeenCalled();
     });
 
     it('handles sendTextChunked for long messages (splits at 4096 chars)', async () => {
@@ -322,10 +338,11 @@ describe('createTelegramMessageHandler', () => {
         const handler = createTelegramMessageHandler({ bridge, telegramBindingRepo });
         await handler(message as any);
 
-        // 5000 chars -> 2 chunks: 4096 + 904
-        expect(channel.send).toHaveBeenCalledTimes(2);
-        expect(channel.send).toHaveBeenNthCalledWith(1, { text: 'A'.repeat(4096) });
-        expect(channel.send).toHaveBeenNthCalledWith(2, { text: 'A'.repeat(904) });
+        // 1 status message + 2 response chunks (5000 chars -> 4096 + 904)
+        expect(channel.send).toHaveBeenCalledTimes(3);
+        expect(channel.send).toHaveBeenNthCalledWith(1, { text: 'Processing...' });
+        expect(channel.send).toHaveBeenNthCalledWith(2, { text: 'A'.repeat(4096) });
+        expect(channel.send).toHaveBeenNthCalledWith(3, { text: 'A'.repeat(904) });
     });
 
     it('queues messages for same workspace (serial execution)', async () => {
@@ -403,5 +420,112 @@ describe('createTelegramMessageHandler', () => {
 
         // Should not throw
         await expect(handler(message as any)).resolves.toBeUndefined();
+    });
+
+    it('intercepts /project command and does not reach CDP path', async () => {
+        const mockCdp = createMockCdp();
+        const pool = createMockPool(mockCdp);
+        const bridge = createBridge(pool);
+        const telegramBindingRepo = createTelegramBindingRepo();
+        const workspaceService = { scanWorkspaces: jest.fn().mockReturnValue(['proj-a']) } as any;
+        const { message } = createMockMessage({ content: '/project' });
+
+        const handler = createTelegramMessageHandler({
+            bridge,
+            telegramBindingRepo,
+            workspaceService,
+        });
+        await handler(message as any);
+
+        // /project should be handled by project command, NOT reach CDP
+        expect(pool.getOrConnect).not.toHaveBeenCalled();
+        expect(mockCdp.injectMessage).not.toHaveBeenCalled();
+        // Should reply with workspace list (via project command handler)
+        expect(message.reply).toHaveBeenCalled();
+    });
+
+    it('sends a "Processing..." status message before monitoring', async () => {
+        const mockCdp = createMockCdp();
+        const pool = createMockPool(mockCdp);
+        const bridge = createBridge(pool);
+        const binding = { chatId: 'chat-123', workspacePath: '/workspace/a' };
+        const telegramBindingRepo = createTelegramBindingRepo(binding);
+        const { message, channel } = createMockMessage();
+
+        const handler = createTelegramMessageHandler({ bridge, telegramBindingRepo });
+        await handler(message as any);
+
+        // First call to channel.send should be the status message
+        expect(channel.send).toHaveBeenNthCalledWith(1, { text: 'Processing...' });
+    });
+
+    it('edits status message with activity log from onProcessLog', async () => {
+        const { ResponseMonitor } = jest.requireMock('../../src/services/responseMonitor');
+        ResponseMonitor.mockImplementationOnce((opts: any) => ({
+            start: jest.fn().mockImplementation(async () => {
+                // Simulate onProcessLog being called before onComplete
+                if (opts.onProcessLog) opts.onProcessLog('Reading file.ts');
+                if (opts.onComplete) await opts.onComplete('Done response');
+            }),
+        }));
+
+        const mockCdp = createMockCdp();
+        const pool = createMockPool(mockCdp);
+        const bridge = createBridge(pool);
+        const binding = { chatId: 'chat-123', workspacePath: '/workspace/a' };
+        const telegramBindingRepo = createTelegramBindingRepo(binding);
+        const { message, channel } = createMockMessage();
+
+        const handler = createTelegramMessageHandler({ bridge, telegramBindingRepo });
+        await handler(message as any);
+
+        // Status message should have been edited with activity log
+        expect(channel._statusMsg.edit).toHaveBeenCalled();
+        const editCall = channel._statusMsg.edit.mock.calls[0][0];
+        expect(editCall.text).toContain('Reading file.ts');
+    });
+
+    it('calls logger.divider on completion with process log', async () => {
+        const { logger: mockLogger } = jest.requireMock('../../src/utils/logger');
+
+        const { ResponseMonitor } = jest.requireMock('../../src/services/responseMonitor');
+        ResponseMonitor.mockImplementationOnce((opts: any) => ({
+            start: jest.fn().mockImplementation(async () => {
+                if (opts.onProcessLog) opts.onProcessLog('Reading file.ts');
+                if (opts.onComplete) await opts.onComplete('Final output');
+            }),
+        }));
+
+        const mockCdp = createMockCdp();
+        const pool = createMockPool(mockCdp);
+        const bridge = createBridge(pool);
+        const binding = { chatId: 'chat-123', workspacePath: '/workspace/a' };
+        const telegramBindingRepo = createTelegramBindingRepo(binding);
+        const { message } = createMockMessage();
+
+        const handler = createTelegramMessageHandler({ bridge, telegramBindingRepo });
+        await handler(message as any);
+
+        // logger.divider should have been called for process log + output + final
+        expect(mockLogger.divider).toHaveBeenCalledWith('Process Log');
+        expect(mockLogger.divider).toHaveBeenCalledWith(expect.stringContaining('Output'));
+    });
+
+    it('does not intercept /project when workspaceService is not provided', async () => {
+        const { message } = createMockMessage({ content: '/project' });
+        const telegramBindingRepo = createTelegramBindingRepo(undefined);
+
+        const handler = createTelegramMessageHandler({
+            bridge: createBridge(),
+            telegramBindingRepo,
+            // workspaceService intentionally omitted
+        });
+        await handler(message as any);
+
+        // Falls through to normal binding check → "No project is linked"
+        expect(telegramBindingRepo.findByChatId).toHaveBeenCalled();
+        expect(message.reply).toHaveBeenCalledWith({
+            text: 'No project is linked to this chat. Use /project to bind a workspace.',
+        });
     });
 });

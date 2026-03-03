@@ -1,5 +1,6 @@
 import { TelegramAdapter } from '../../../src/platform/telegram/telegramAdapter';
 import type { PlatformAdapterEvents } from '../../../src/platform/adapter';
+import { SELECT_CALLBACK_SEP } from '../../../src/platform/telegram/wrappers';
 import type { TelegramBotLike } from '../../../src/platform/telegram/wrappers';
 
 // ---------------------------------------------------------------------------
@@ -295,7 +296,7 @@ describe('TelegramAdapter', () => {
             expect(interaction.user.id).toBe('42');
         });
 
-        it('routes select menu callback (customId:value format) to onSelectInteraction', async () => {
+        it('routes select menu callback (customId\\x1Fvalue format) to onSelectInteraction', async () => {
             const bot = createMockBot();
             const events = createMockEvents();
             const adapter = new TelegramAdapter(bot, 'bot_1');
@@ -311,7 +312,7 @@ describe('TelegramAdapter', () => {
                         chat: { id: 1, type: 'group' },
                         date: 1700000000,
                     },
-                    data: 'menu_id:selected_value',
+                    data: `menu_id${SELECT_CALLBACK_SEP}selected_value`,
                 },
             });
 
@@ -341,7 +342,7 @@ describe('TelegramAdapter', () => {
                         chat: { id: 1, type: 'group' },
                         date: 1700000000,
                     },
-                    data: 'menu:value1',
+                    data: `menu${SELECT_CALLBACK_SEP}value1`,
                 },
             });
 
@@ -368,9 +369,37 @@ describe('TelegramAdapter', () => {
                         chat: { id: 1, type: 'group' },
                         date: 1700000000,
                     },
-                    data: 'menu:value',
+                    data: `menu${SELECT_CALLBACK_SEP}value`,
                 },
             });
+        });
+
+        it('routes button customId with colons to onButtonInteraction (not select)', async () => {
+            const bot = createMockBot();
+            const events = createMockEvents();
+            const adapter = new TelegramAdapter(bot, 'bot_1');
+
+            await adapter.start(events);
+
+            // Button customIds like "approve_action:proj:ch" contain colons
+            // but should NOT be routed to select handler (no \x1F separator)
+            await bot.emit('callback_query:data', {
+                callbackQuery: {
+                    id: 'cb_btn_colon',
+                    from: { id: 42, first_name: 'Bob', is_bot: false },
+                    message: {
+                        message_id: 50,
+                        chat: { id: 1, type: 'group' },
+                        date: 1700000000,
+                    },
+                    data: 'approve_action:myProject:ch-123',
+                },
+            });
+
+            expect(events.onSelectInteraction).not.toHaveBeenCalled();
+            expect(events.onButtonInteraction).toHaveBeenCalledTimes(1);
+            const interaction = events.onButtonInteraction.mock.calls[0][0];
+            expect(interaction.customId).toBe('approve_action:myProject:ch-123');
         });
 
         it('calls onError when callback handler throws', async () => {

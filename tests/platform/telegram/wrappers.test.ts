@@ -5,6 +5,7 @@ import {
     wrapTelegramMessage,
     wrapTelegramCallbackQuery,
     wrapTelegramSentMessage,
+    SELECT_CALLBACK_SEP,
 } from '../../../src/platform/telegram/wrappers';
 import type {
     TelegramBotLike,
@@ -25,6 +26,7 @@ function createMockApi(): TelegramBotLike['api'] {
         deleteMessage: jest.fn().mockResolvedValue(true),
         getChat: jest.fn().mockResolvedValue({ id: 1, title: 'Test Chat' }),
         answerCallbackQuery: jest.fn().mockResolvedValue(true),
+        setMessageReaction: jest.fn().mockResolvedValue(true),
     };
 }
 
@@ -187,11 +189,11 @@ describe('toTelegramPayload', () => {
         expect(result.reply_markup!.inline_keyboard).toHaveLength(2);
         expect(result.reply_markup!.inline_keyboard[0][0]).toEqual({
             text: 'First',
-            callback_data: 'menu_1:v1',
+            callback_data: `menu_1${SELECT_CALLBACK_SEP}v1`,
         });
         expect(result.reply_markup!.inline_keyboard[1][0]).toEqual({
             text: 'Second',
-            callback_data: 'menu_1:v2',
+            callback_data: `menu_1${SELECT_CALLBACK_SEP}v2`,
         });
     });
 
@@ -223,14 +225,20 @@ describe('toTelegramPayload', () => {
         expect(result.reply_markup).toBeDefined();
         // Button row + select menu row
         expect(result.reply_markup!.inline_keyboard).toHaveLength(2);
-        expect(result.reply_markup!.inline_keyboard[0][0].text).toBe('X');
-        expect(result.reply_markup!.inline_keyboard[1][0].text).toBe('A');
+        expect(result.reply_markup!.inline_keyboard[0][0]).toEqual({
+            text: 'X',
+            callback_data: 'btn_x',
+        });
+        expect(result.reply_markup!.inline_keyboard[1][0]).toEqual({
+            text: 'A',
+            callback_data: `sel${SELECT_CALLBACK_SEP}a`,
+        });
     });
 
-    it('does not add reply_markup when components are empty', () => {
+    it('sends empty inline_keyboard when components array is empty', () => {
         const payload: MessagePayload = { text: 'Hi', components: [] };
         const result = toTelegramPayload(payload);
-        expect(result.reply_markup).toBeUndefined();
+        expect(result.reply_markup).toEqual({ inline_keyboard: [] });
     });
 });
 
@@ -316,12 +324,36 @@ describe('wrapTelegramMessage', () => {
         );
     });
 
-    it('react() does not throw', async () => {
+    it('react() calls setMessageReaction with correct params', async () => {
         const api = createMockApi();
         const msg = createTelegramMessage();
         const wrapped = wrapTelegramMessage(msg, api);
 
-        await expect(wrapped.react('thumbsup')).resolves.toBeUndefined();
+        await wrapped.react('\u{1F440}');
+
+        expect(api.setMessageReaction).toHaveBeenCalledWith(
+            1,
+            100,
+            [{ type: 'emoji', emoji: '\u{1F440}' }],
+        );
+    });
+
+    it('react() does not throw when setMessageReaction rejects', async () => {
+        const api = createMockApi();
+        (api.setMessageReaction as jest.Mock).mockRejectedValue(new Error('Bad Request'));
+        const msg = createTelegramMessage();
+        const wrapped = wrapTelegramMessage(msg, api);
+
+        await expect(wrapped.react('\u{1F440}')).resolves.toBeUndefined();
+    });
+
+    it('react() does not throw when setMessageReaction is not available', async () => {
+        const api = createMockApi();
+        delete (api as any).setMessageReaction;
+        const msg = createTelegramMessage();
+        const wrapped = wrapTelegramMessage(msg, api);
+
+        await expect(wrapped.react('\u{1F440}')).resolves.toBeUndefined();
     });
 });
 
