@@ -104,7 +104,8 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
     }
 
     return async (message: Message): Promise<void> => {
-        if (message.author.bot) return;
+        // Block bots, EXCEPT whitelisted ones (e.g. Misato/PM bot dispatching tasks)
+        if (message.author.bot && !deps.config.allowedUserIds.includes(message.author.id)) return;
 
         if (!deps.config.allowedUserIds.includes(message.author.id)) {
             return;
@@ -365,7 +366,12 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                         }
                     });
                 } else {
-                    await message.reply('No project is configured for this channel. Please create or select one with `/project`.');
+                    // Only respond "No project" if the bot itself is mentioned. 
+                    // Prevents spam in common channels like #general.
+                    const isMentioned = message.mentions.has(message.client.user!.id);
+                    if (isMentioned) {
+                        await message.reply('No project is configured for this channel. Please create or select one with `/project`.');
+                    }
                 }
             } finally {
                 await cleanupInboundImageAttachments(inboundImages);
