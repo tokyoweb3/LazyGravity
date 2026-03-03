@@ -128,6 +128,9 @@ function componentRowsToInlineKeyboard(
         let buttons: InlineButton[] = [];
         for (const comp of row.components) {
             if (comp.type === 'button') {
+                // Telegram inline keyboards do not support disabled buttons;
+                // skip them so resolved overlays don't re-show clickable buttons.
+                if (comp.disabled) continue;
                 buttons = [...buttons, buttonDefToInline(comp)];
             } else if (comp.type === 'selectMenu') {
                 // A select menu becomes multiple rows (one per option)
