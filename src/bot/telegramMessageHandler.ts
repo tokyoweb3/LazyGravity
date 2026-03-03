@@ -19,6 +19,7 @@ import { ProcessLogBuffer } from '../utils/processLogBuffer';
 import { splitOutputAndLogs } from '../utils/discordFormatter';
 import { parseTelegramProjectCommand, handleTelegramProjectCommand } from './telegramProjectCommand';
 import { parseTelegramCommand, handleTelegramCommand } from './telegramCommands';
+import { escapeHtml } from '../platform/telegram/telegramFormatter';
 import type { ModeService } from '../services/modeService';
 import type { ModelService } from '../services/modelService';
 import { applyDefaultModel } from '../services/defaultModelApplicator';
@@ -275,8 +276,10 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
                         }
                         if (statusMsg && lastActivityLogText) {
                             const elapsed = Math.round((Date.now() - startTime) / 1000);
+                            // Escape HTML to prevent Telegram parse_mode errors
+                            // (activity logs may contain <, >, & from code/paths)
                             statusMsg.edit({
-                                text: `${lastActivityLogText}\n\n⏱️ ${elapsed}s`,
+                                text: `${escapeHtml(lastActivityLogText)}\n\n⏱️ ${elapsed}s`,
                             }).catch(() => {});
                         }
                     },
@@ -303,7 +306,7 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
                             // Update status message with final activity log
                             if (statusMsg && finalLogText && finalLogText.trim().length > 0) {
                                 await statusMsg.edit({
-                                    text: `${finalLogText}\n\n✅ Done in ${elapsed}s`,
+                                    text: `${escapeHtml(finalLogText)}\n\n✅ Done in ${elapsed}s`,
                                 }).catch(() => {});
                             } else if (statusMsg) {
                                 await statusMsg.delete().catch(() => {});
