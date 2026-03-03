@@ -14,6 +14,7 @@
  *   /autoaccept — Toggle auto-accept for approval dialogs
  *   /template   — List and execute prompt templates
  *   /logs       — Show recent log entries
+ *   /new        — Start a new chat session
  */
 
 import fs from 'fs';
@@ -26,6 +27,7 @@ import type { ModeService } from '../services/modeService';
 import type { ModelService } from '../services/modelService';
 import type { TelegramBindingRepository } from '../database/telegramBindingRepository';
 import type { TemplateRepository } from '../database/templateRepository';
+import type { ChatSessionService } from '../services/chatSessionService';
 import { buildModePayload } from '../ui/modeUi';
 import { buildModelsPayload } from '../ui/modelsUi';
 import { buildAutoAcceptPayload } from '../ui/autoAcceptUi';
@@ -39,7 +41,7 @@ import { logger } from '../utils/logger';
 // Known commands (used by both parser and /help output)
 // ---------------------------------------------------------------------------
 
-const KNOWN_COMMANDS = ['start', 'help', 'status', 'stop', 'ping', 'mode', 'model', 'screenshot', 'autoaccept', 'template', 'template_add', 'template_delete', 'project_create', 'logs'] as const;
+const KNOWN_COMMANDS = ['start', 'help', 'status', 'stop', 'ping', 'mode', 'model', 'screenshot', 'autoaccept', 'template', 'template_add', 'template_delete', 'project_create', 'logs', 'new'] as const;
 type KnownCommand = typeof KNOWN_COMMANDS[number];
 
 // ---------------------------------------------------------------------------
@@ -88,6 +90,7 @@ export interface TelegramCommandDeps {
     readonly telegramBindingRepo?: TelegramBindingRepository;
     readonly templateRepo?: TemplateRepository;
     readonly workspaceService?: WorkspaceService;
+    readonly chatSessionService?: ChatSessionService;
     readonly fetchQuota?: () => Promise<any[]>;
     /** Shared map of active ResponseMonitors keyed by project name.
      *  Used by /stop to halt monitoring and prevent stale re-sends. */
@@ -153,6 +156,9 @@ export async function handleTelegramCommand(
         case 'logs':
             await handleLogs(message, parsed.args);
             break;
+        case 'new':
+            await handleNew(deps, message);
+            break;
         default:
             // Should not happen — parser filters unknowns
             break;
@@ -193,6 +199,7 @@ async function handleHelp(message: PlatformMessage): Promise<void> {
         '/template_add — Add a prompt template',
         '/template_delete — Delete a prompt template',
         '/project_create — Create a new workspace',
+        '/new — Start a new chat session',
         '/logs — Show recent log entries',
         '/stop — Interrupt active LLM generation',
         '/ping — Check bot latency',
@@ -457,6 +464,48 @@ async function handleLogs(message: PlatformMessage, args: string): Promise<void>
     // Telegram message limit is 4096 chars
     const truncated = text.length > 4096 ? text.slice(0, 4090) + '\n...' : text;
     await message.reply({ text: truncated }).catch(logger.error);
+}
+
+async function handleNew(deps: TelegramCommandDeps, message: PlatformMessage): Promise<void> {
+    if (!deps.chatSessionService) {
+        await message.reply({ text: 'Chat session service not available.' }).catch(logger.error);
+        return;
+    }
+
+    // Resolve workspace binding for this chat
+    const chatId = message.channel.id;
+    const binding = deps.telegramBindingRepo?.findByChatId(chatId);
+    if (!binding) {
+        await message.reply({
+            text: 'No project is linked to this chat. Use /project to bind a workspace first.',
+        }).catch(logger.error);
+        return;
+    }
+
+    // Resolve workspace path and connect to CDP
+    const workspacePath = deps.workspaceService
+        ? deps.workspaceService.getWorkspacePath(binding.workspacePath)
+        : binding.workspacePath;
+
+    let cdp;
+    try {
+        cdp = await deps.bridge.pool.getOrConnect(workspacePath);
+    } catch (err: any) {
+        logger.error('[TelegramCommand:new] CDP connection failed:', err?.message || err);
+        await message.reply({ text: 'Failed to connect to Antigravity.' }).catch(logger.error);
+        return;
+    }
+
+    // Start a new chat session
+    const result = await deps.chatSessionService.startNewChat(cdp);
+    if (result.ok) {
+        await message.reply({ text: 'New chat session started.' }).catch(logger.error);
+    } else {
+        logger.warn('[TelegramCommand:new] startNewChat failed:', result.error);
+        await message.reply({
+            text: `Failed to start new chat: ${escapeHtml(result.error || 'unknown error')}`,
+        }).catch(logger.error);
+    }
 }
 
 // ---------------------------------------------------------------------------

@@ -27,6 +27,7 @@ import { downloadTelegramPhotos } from '../utils/telegramImageHandler';
 import { cleanupInboundImageAttachments } from '../utils/imageHandler';
 import type { InboundImageAttachment } from '../utils/imageHandler';
 import type { ExtractionMode } from '../utils/config';
+import type { ChatSessionService } from '../services/chatSessionService';
 
 export interface TelegramMessageHandlerDeps {
     readonly bridge: CdpBridge;
@@ -44,6 +45,7 @@ export interface TelegramMessageHandlerDeps {
     readonly botToken?: string;
     /** Bot API object for getFile calls. */
     readonly botApi?: import('../platform/telegram/wrappers').TelegramBotLike['api'];
+    readonly chatSessionService?: ChatSessionService;
 }
 
 /**
@@ -95,6 +97,7 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
                     workspaceService: deps.workspaceService,
                     fetchQuota: deps.fetchQuota,
                     activeMonitors: deps.activeMonitors,
+                    chatSessionService: deps.chatSessionService,
                 },
                 message,
                 cmd,

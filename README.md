@@ -108,6 +108,7 @@ Telegram commands use underscores instead of subcommand syntax (Telegram does no
 
 - `/project` — Manage workspace bindings (list, select, create)
 - `/project_create <name>` — Create a new workspace directory
+- `/new` — Start a new chat session
 - `/template` — List prompt templates with execute buttons
 - `/template_add <name> <prompt>` — Add a new prompt template
 - `/template_delete <name>` — Delete a prompt template

@@ -140,6 +140,7 @@ describe('parseTelegramCommand', () => {
         ['/template_delete', 'template_delete', ''],
         ['/project_create', 'project_create', ''],
         ['/logs', 'logs', ''],
+        ['/new', 'new', ''],
     ])('parses %s as command=%s args=%s', (input, command, args) => {
         expect(parseTelegramCommand(input)).toEqual({ command, args });
     });
@@ -970,5 +971,132 @@ describe('handleTelegramCommand — /project_create', () => {
             command: 'project_create',
             args: 'MyProject',
         });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// handleTelegramCommand — /new
+// ---------------------------------------------------------------------------
+
+describe('handleTelegramCommand — /new', () => {
+    it('returns error when chatSessionService is not available', async () => {
+        const message = createMockMessage();
+        const bridge = createMockBridge();
+
+        await handleTelegramCommand({ bridge }, message as any, { command: 'new', args: '' });
+
+        expect(message.reply).toHaveBeenCalledWith({ text: 'Chat session service not available.' });
+    });
+
+    it('returns error when no workspace is bound', async () => {
+        const message = createMockMessage();
+        const bridge = createMockBridge();
+        const chatSessionService = { startNewChat: jest.fn() } as any;
+        const telegramBindingRepo = { findByChatId: jest.fn().mockReturnValue(undefined) } as any;
+
+        await handleTelegramCommand(
+            { bridge, chatSessionService, telegramBindingRepo },
+            message as any,
+            { command: 'new', args: '' },
+        );
+
+        expect(message.reply).toHaveBeenCalledTimes(1);
+        const text = message.reply.mock.calls[0][0].text;
+        expect(text).toContain('No project is linked');
+        expect(chatSessionService.startNewChat).not.toHaveBeenCalled();
+    });
+
+    it('returns error when CDP connection fails', async () => {
+        const message = createMockMessage();
+        const bridge = createMockBridge();
+        bridge.pool.getOrConnect = jest.fn().mockRejectedValue(new Error('Connection timeout'));
+        const chatSessionService = { startNewChat: jest.fn() } as any;
+        const telegramBindingRepo = {
+            findByChatId: jest.fn().mockReturnValue({ chatId: 'chat-123', workspacePath: 'TestProject' }),
+        } as any;
+
+        await handleTelegramCommand(
+            { bridge, chatSessionService, telegramBindingRepo },
+            message as any,
+            { command: 'new', args: '' },
+        );
+
+        expect(message.reply).toHaveBeenCalledTimes(1);
+        const text = message.reply.mock.calls[0][0].text;
+        expect(text).toContain('Failed to connect to Antigravity');
+        expect(chatSessionService.startNewChat).not.toHaveBeenCalled();
+    });
+
+    it('starts a new chat session successfully', async () => {
+        const message = createMockMessage();
+        const mockCdp = { getContexts: jest.fn().mockReturnValue([]) };
+        const bridge = createMockBridge();
+        bridge.pool.getOrConnect = jest.fn().mockResolvedValue(mockCdp);
+        const chatSessionService = {
+            startNewChat: jest.fn().mockResolvedValue({ ok: true }),
+        } as any;
+        const telegramBindingRepo = {
+            findByChatId: jest.fn().mockReturnValue({ chatId: 'chat-123', workspacePath: 'TestProject' }),
+        } as any;
+
+        await handleTelegramCommand(
+            { bridge, chatSessionService, telegramBindingRepo },
+            message as any,
+            { command: 'new', args: '' },
+        );
+
+        expect(chatSessionService.startNewChat).toHaveBeenCalledWith(mockCdp);
+        expect(message.reply).toHaveBeenCalledTimes(1);
+        const text = message.reply.mock.calls[0][0].text;
+        expect(text).toContain('New chat session started');
+    });
+
+    it('reports failure when startNewChat fails', async () => {
+        const message = createMockMessage();
+        const mockCdp = { getContexts: jest.fn().mockReturnValue([]) };
+        const bridge = createMockBridge();
+        bridge.pool.getOrConnect = jest.fn().mockResolvedValue(mockCdp);
+        const chatSessionService = {
+            startNewChat: jest.fn().mockResolvedValue({ ok: false, error: 'New chat button not found' }),
+        } as any;
+        const telegramBindingRepo = {
+            findByChatId: jest.fn().mockReturnValue({ chatId: 'chat-123', workspacePath: 'TestProject' }),
+        } as any;
+
+        await handleTelegramCommand(
+            { bridge, chatSessionService, telegramBindingRepo },
+            message as any,
+            { command: 'new', args: '' },
+        );
+
+        expect(message.reply).toHaveBeenCalledTimes(1);
+        const text = message.reply.mock.calls[0][0].text;
+        expect(text).toContain('Failed to start new chat');
+        expect(text).toContain('New chat button not found');
+    });
+
+    it('uses workspaceService to resolve workspace path when available', async () => {
+        const message = createMockMessage();
+        const mockCdp = { getContexts: jest.fn().mockReturnValue([]) };
+        const bridge = createMockBridge();
+        bridge.pool.getOrConnect = jest.fn().mockResolvedValue(mockCdp);
+        const chatSessionService = {
+            startNewChat: jest.fn().mockResolvedValue({ ok: true }),
+        } as any;
+        const telegramBindingRepo = {
+            findByChatId: jest.fn().mockReturnValue({ chatId: 'chat-123', workspacePath: 'TestProject' }),
+        } as any;
+        const workspaceService = {
+            getWorkspacePath: jest.fn().mockReturnValue('/full/path/TestProject'),
+        } as any;
+
+        await handleTelegramCommand(
+            { bridge, chatSessionService, telegramBindingRepo, workspaceService },
+            message as any,
+            { command: 'new', args: '' },
+        );
+
+        expect(workspaceService.getWorkspacePath).toHaveBeenCalledWith('TestProject');
+        expect(bridge.pool.getOrConnect).toHaveBeenCalledWith('/full/path/TestProject');
     });
 });
