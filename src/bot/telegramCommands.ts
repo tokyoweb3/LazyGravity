@@ -16,8 +16,10 @@
  *   /logs       — Show recent log entries
  */
 
+import fs from 'fs';
 import type { PlatformMessage, MessagePayload } from '../platform/types';
 import type { CdpBridge } from '../services/cdpBridgeManager';
+import type { WorkspaceService } from '../services/workspaceService';
 import { getCurrentCdp } from '../services/cdpBridgeManager';
 import type { ResponseMonitor } from '../services/responseMonitor';
 import type { ModeService } from '../services/modeService';
@@ -37,7 +39,7 @@ import { logger } from '../utils/logger';
 // Known commands (used by both parser and /help output)
 // ---------------------------------------------------------------------------
 
-const KNOWN_COMMANDS = ['start', 'help', 'status', 'stop', 'ping', 'mode', 'model', 'screenshot', 'autoaccept', 'template', 'logs'] as const;
+const KNOWN_COMMANDS = ['start', 'help', 'status', 'stop', 'ping', 'mode', 'model', 'screenshot', 'autoaccept', 'template', 'template_add', 'template_delete', 'project_create', 'logs'] as const;
 type KnownCommand = typeof KNOWN_COMMANDS[number];
 
 // ---------------------------------------------------------------------------
@@ -85,6 +87,7 @@ export interface TelegramCommandDeps {
     readonly modelService?: ModelService;
     readonly telegramBindingRepo?: TelegramBindingRepository;
     readonly templateRepo?: TemplateRepository;
+    readonly workspaceService?: WorkspaceService;
     readonly fetchQuota?: () => Promise<any[]>;
     /** Shared map of active ResponseMonitors keyed by project name.
      *  Used by /stop to halt monitoring and prevent stale re-sends. */
@@ -138,6 +141,15 @@ export async function handleTelegramCommand(
         case 'template':
             await handleTemplate(deps, message);
             break;
+        case 'template_add':
+            await handleTemplateAdd(deps, message, parsed.args);
+            break;
+        case 'template_delete':
+            await handleTemplateDelete(deps, message, parsed.args);
+            break;
+        case 'project_create':
+            await handleProjectCreate(deps, message, parsed.args);
+            break;
         case 'logs':
             await handleLogs(message, parsed.args);
             break;
@@ -178,6 +190,9 @@ async function handleHelp(message: PlatformMessage): Promise<void> {
         '/screenshot — Capture Antigravity screenshot',
         '/autoaccept — Toggle auto-accept mode',
         '/template — List prompt templates',
+        '/template_add — Add a prompt template',
+        '/template_delete — Delete a prompt template',
+        '/project_create — Create a new workspace',
         '/logs — Show recent log entries',
         '/stop — Interrupt active LLM generation',
         '/ping — Check bot latency',
@@ -338,6 +353,89 @@ async function handleTemplate(deps: TelegramCommandDeps, message: PlatformMessag
     const templates = deps.templateRepo.findAll();
     const payload = buildTemplatePayload(templates);
     await message.reply(payload).catch(logger.error);
+}
+
+async function handleTemplateAdd(deps: TelegramCommandDeps, message: PlatformMessage, args: string): Promise<void> {
+    if (!deps.templateRepo) {
+        await message.reply({ text: 'Template service not available.' }).catch(logger.error);
+        return;
+    }
+
+    // Split args into name (first word) and prompt (rest)
+    const spaceIndex = args.indexOf(' ');
+    if (!args || spaceIndex === -1) {
+        await message.reply({
+            text: 'Usage: /template_add &lt;name&gt; &lt;prompt&gt;\nExample: /template_add daily-report Write a daily standup report',
+        }).catch(logger.error);
+        return;
+    }
+
+    const name = args.slice(0, spaceIndex);
+    const prompt = args.slice(spaceIndex + 1).trim();
+
+    try {
+        deps.templateRepo.create({ name, prompt });
+        await message.reply({ text: `Template '${escapeHtml(name)}' created.` }).catch(logger.error);
+    } catch (err: any) {
+        if (err?.message?.includes('UNIQUE constraint')) {
+            await message.reply({ text: `Template '${escapeHtml(name)}' already exists.` }).catch(logger.error);
+        } else {
+            logger.error('[TelegramCommand:template_add]', err?.message || err);
+            await message.reply({ text: 'Failed to create template.' }).catch(logger.error);
+        }
+    }
+}
+
+async function handleTemplateDelete(deps: TelegramCommandDeps, message: PlatformMessage, args: string): Promise<void> {
+    if (!deps.templateRepo) {
+        await message.reply({ text: 'Template service not available.' }).catch(logger.error);
+        return;
+    }
+
+    const name = args.trim();
+    if (!name) {
+        await message.reply({
+            text: 'Usage: /template_delete &lt;name&gt;\nExample: /template_delete daily-report',
+        }).catch(logger.error);
+        return;
+    }
+
+    const deleted = deps.templateRepo.deleteByName(name);
+    if (deleted) {
+        await message.reply({ text: `Template '${escapeHtml(name)}' deleted.` }).catch(logger.error);
+    } else {
+        await message.reply({ text: `Template '${escapeHtml(name)}' not found.` }).catch(logger.error);
+    }
+}
+
+async function handleProjectCreate(deps: TelegramCommandDeps, message: PlatformMessage, args: string): Promise<void> {
+    if (!deps.workspaceService) {
+        await message.reply({ text: 'Workspace service not available.' }).catch(logger.error);
+        return;
+    }
+
+    const name = args.trim();
+    if (!name) {
+        await message.reply({
+            text: 'Usage: /project_create &lt;name&gt;\nExample: /project_create NewProject',
+        }).catch(logger.error);
+        return;
+    }
+
+    try {
+        const safePath = deps.workspaceService.validatePath(name);
+
+        if (deps.workspaceService.exists(name)) {
+            await message.reply({ text: `Workspace '${escapeHtml(name)}' already exists.` }).catch(logger.error);
+            return;
+        }
+
+        fs.mkdirSync(safePath, { recursive: true });
+        await message.reply({ text: `Workspace '${escapeHtml(name)}' created.` }).catch(logger.error);
+    } catch (err: any) {
+        logger.error('[TelegramCommand:project_create]', err?.message || err);
+        await message.reply({ text: `Failed to create workspace: ${escapeHtml(err?.message || 'unknown error')}` }).catch(logger.error);
+    }
 }
 
 async function handleLogs(message: PlatformMessage, args: string): Promise<void> {

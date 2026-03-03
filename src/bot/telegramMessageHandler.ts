@@ -82,6 +82,7 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
                     modelService: deps.modelService,
                     telegramBindingRepo: deps.telegramBindingRepo,
                     templateRepo: deps.templateRepo,
+                    workspaceService: deps.workspaceService,
                     fetchQuota: deps.fetchQuota,
                     activeMonitors: deps.activeMonitors,
                 },

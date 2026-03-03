@@ -136,6 +136,9 @@ describe('parseTelegramCommand', () => {
         ['/screenshot', 'screenshot', ''],
         ['/autoaccept', 'autoaccept', ''],
         ['/template', 'template', ''],
+        ['/template_add', 'template_add', ''],
+        ['/template_delete', 'template_delete', ''],
+        ['/project_create', 'project_create', ''],
         ['/logs', 'logs', ''],
     ])('parses %s as command=%s args=%s', (input, command, args) => {
         expect(parseTelegramCommand(input)).toEqual({ command, args });
@@ -217,7 +220,10 @@ describe('handleTelegramCommand — /help', () => {
         expect(text).toContain('/model');
         expect(text).toContain('/screenshot');
         expect(text).toContain('/autoaccept');
-        expect(text).toContain('/template');
+        expect(text).toContain('/template —');
+        expect(text).toContain('/template_add');
+        expect(text).toContain('/template_delete');
+        expect(text).toContain('/project_create');
         expect(text).toContain('/logs');
         expect(text).toContain('/stop');
         expect(text).toContain('/ping');
@@ -701,5 +707,268 @@ describe('handleTelegramCommand — /logs', () => {
 
     it('parses /logs with @BotName suffix', () => {
         expect(parseTelegramCommand('/logs@MyBot 10')).toEqual({ command: 'logs', args: '10' });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// handleTelegramCommand — /template_add
+// ---------------------------------------------------------------------------
+
+describe('handleTelegramCommand — /template_add', () => {
+    it('creates a template with name and prompt', async () => {
+        const message = createMockMessage();
+        const bridge = createMockBridge();
+        const templateRepo = {
+            create: jest.fn().mockReturnValue({ id: 1, name: 'daily-report', prompt: 'Write a daily standup report' }),
+        } as any;
+
+        await handleTelegramCommand({ bridge, templateRepo }, message as any, {
+            command: 'template_add',
+            args: 'daily-report Write a daily standup report',
+        });
+
+        expect(templateRepo.create).toHaveBeenCalledWith({
+            name: 'daily-report',
+            prompt: 'Write a daily standup report',
+        });
+        expect(message.reply).toHaveBeenCalledTimes(1);
+        const text = message.reply.mock.calls[0][0].text;
+        expect(text).toContain("Template 'daily-report' created.");
+    });
+
+    it('shows usage when no args are provided', async () => {
+        const message = createMockMessage();
+        const bridge = createMockBridge();
+        const templateRepo = { create: jest.fn() } as any;
+
+        await handleTelegramCommand({ bridge, templateRepo }, message as any, {
+            command: 'template_add',
+            args: '',
+        });
+
+        expect(templateRepo.create).not.toHaveBeenCalled();
+        const text = message.reply.mock.calls[0][0].text;
+        expect(text).toContain('Usage:');
+    });
+
+    it('shows usage when only name is provided (no prompt)', async () => {
+        const message = createMockMessage();
+        const bridge = createMockBridge();
+        const templateRepo = { create: jest.fn() } as any;
+
+        await handleTelegramCommand({ bridge, templateRepo }, message as any, {
+            command: 'template_add',
+            args: 'my-template',
+        });
+
+        expect(templateRepo.create).not.toHaveBeenCalled();
+        const text = message.reply.mock.calls[0][0].text;
+        expect(text).toContain('Usage:');
+    });
+
+    it('shows error when template name already exists', async () => {
+        const message = createMockMessage();
+        const bridge = createMockBridge();
+        const templateRepo = {
+            create: jest.fn().mockImplementation(() => {
+                throw new Error('UNIQUE constraint failed');
+            }),
+        } as any;
+
+        await handleTelegramCommand({ bridge, templateRepo }, message as any, {
+            command: 'template_add',
+            args: 'existing-tpl Some prompt',
+        });
+
+        const text = message.reply.mock.calls[0][0].text;
+        expect(text).toContain("Template 'existing-tpl' already exists.");
+    });
+
+    it('returns error when templateRepo is not available', async () => {
+        const message = createMockMessage();
+        const bridge = createMockBridge();
+
+        await handleTelegramCommand({ bridge }, message as any, {
+            command: 'template_add',
+            args: 'test Some prompt',
+        });
+
+        expect(message.reply).toHaveBeenCalledWith({ text: 'Template service not available.' });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// handleTelegramCommand — /template_delete
+// ---------------------------------------------------------------------------
+
+describe('handleTelegramCommand — /template_delete', () => {
+    it('deletes a template by name', async () => {
+        const message = createMockMessage();
+        const bridge = createMockBridge();
+        const templateRepo = { deleteByName: jest.fn().mockReturnValue(true) } as any;
+
+        await handleTelegramCommand({ bridge, templateRepo }, message as any, {
+            command: 'template_delete',
+            args: 'daily-report',
+        });
+
+        expect(templateRepo.deleteByName).toHaveBeenCalledWith('daily-report');
+        const text = message.reply.mock.calls[0][0].text;
+        expect(text).toContain("Template 'daily-report' deleted.");
+    });
+
+    it('shows usage when no name is provided', async () => {
+        const message = createMockMessage();
+        const bridge = createMockBridge();
+        const templateRepo = { deleteByName: jest.fn() } as any;
+
+        await handleTelegramCommand({ bridge, templateRepo }, message as any, {
+            command: 'template_delete',
+            args: '',
+        });
+
+        expect(templateRepo.deleteByName).not.toHaveBeenCalled();
+        const text = message.reply.mock.calls[0][0].text;
+        expect(text).toContain('Usage:');
+    });
+
+    it('shows not found when template does not exist', async () => {
+        const message = createMockMessage();
+        const bridge = createMockBridge();
+        const templateRepo = { deleteByName: jest.fn().mockReturnValue(false) } as any;
+
+        await handleTelegramCommand({ bridge, templateRepo }, message as any, {
+            command: 'template_delete',
+            args: 'nonexistent',
+        });
+
+        const text = message.reply.mock.calls[0][0].text;
+        expect(text).toContain("Template 'nonexistent' not found.");
+    });
+
+    it('returns error when templateRepo is not available', async () => {
+        const message = createMockMessage();
+        const bridge = createMockBridge();
+
+        await handleTelegramCommand({ bridge }, message as any, {
+            command: 'template_delete',
+            args: 'test',
+        });
+
+        expect(message.reply).toHaveBeenCalledWith({ text: 'Template service not available.' });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// handleTelegramCommand — /project_create
+// ---------------------------------------------------------------------------
+
+describe('handleTelegramCommand — /project_create', () => {
+    it('creates a workspace directory', async () => {
+        const message = createMockMessage();
+        const bridge = createMockBridge();
+        const workspaceService = {
+            validatePath: jest.fn().mockReturnValue('/workspaces/NewProject'),
+            exists: jest.fn().mockReturnValue(false),
+        } as any;
+
+        // Mock fs.mkdirSync
+        const mkdirSyncSpy = jest.spyOn(require('fs'), 'mkdirSync').mockImplementation(() => undefined);
+
+        await handleTelegramCommand({ bridge, workspaceService }, message as any, {
+            command: 'project_create',
+            args: 'NewProject',
+        });
+
+        expect(workspaceService.validatePath).toHaveBeenCalledWith('NewProject');
+        expect(workspaceService.exists).toHaveBeenCalledWith('NewProject');
+        expect(mkdirSyncSpy).toHaveBeenCalledWith('/workspaces/NewProject', { recursive: true });
+        const text = message.reply.mock.calls[0][0].text;
+        expect(text).toContain("Workspace 'NewProject' created.");
+
+        mkdirSyncSpy.mockRestore();
+    });
+
+    it('shows usage when no name is provided', async () => {
+        const message = createMockMessage();
+        const bridge = createMockBridge();
+        const workspaceService = {} as any;
+
+        await handleTelegramCommand({ bridge, workspaceService }, message as any, {
+            command: 'project_create',
+            args: '',
+        });
+
+        const text = message.reply.mock.calls[0][0].text;
+        expect(text).toContain('Usage:');
+    });
+
+    it('shows error when workspace already exists', async () => {
+        const message = createMockMessage();
+        const bridge = createMockBridge();
+        const workspaceService = {
+            validatePath: jest.fn().mockReturnValue('/workspaces/Existing'),
+            exists: jest.fn().mockReturnValue(true),
+        } as any;
+
+        await handleTelegramCommand({ bridge, workspaceService }, message as any, {
+            command: 'project_create',
+            args: 'Existing',
+        });
+
+        const text = message.reply.mock.calls[0][0].text;
+        expect(text).toContain("Workspace 'Existing' already exists.");
+    });
+
+    it('shows error on path traversal attempt', async () => {
+        const message = createMockMessage();
+        const bridge = createMockBridge();
+        const workspaceService = {
+            validatePath: jest.fn().mockImplementation(() => {
+                throw new Error('Path traversal detected');
+            }),
+        } as any;
+
+        await handleTelegramCommand({ bridge, workspaceService }, message as any, {
+            command: 'project_create',
+            args: '../../../etc/passwd',
+        });
+
+        const text = message.reply.mock.calls[0][0].text;
+        expect(text).toContain('Failed to create workspace');
+        expect(text).toContain('Path traversal detected');
+    });
+
+    it('returns error when workspaceService is not available', async () => {
+        const message = createMockMessage();
+        const bridge = createMockBridge();
+
+        await handleTelegramCommand({ bridge }, message as any, {
+            command: 'project_create',
+            args: 'Test',
+        });
+
+        expect(message.reply).toHaveBeenCalledWith({ text: 'Workspace service not available.' });
+    });
+
+    it('parses /template_add with args', () => {
+        expect(parseTelegramCommand('/template_add daily Write report')).toEqual({
+            command: 'template_add',
+            args: 'daily Write report',
+        });
+    });
+
+    it('parses /template_delete with args', () => {
+        expect(parseTelegramCommand('/template_delete daily')).toEqual({
+            command: 'template_delete',
+            args: 'daily',
+        });
+    });
+
+    it('parses /project_create with args', () => {
+        expect(parseTelegramCommand('/project_create MyProject')).toEqual({
+            command: 'project_create',
+            args: 'MyProject',
+        });
     });
 });
