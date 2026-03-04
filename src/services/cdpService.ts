@@ -767,7 +767,7 @@ export class CdpService extends EventEmitter {
                 resolve();
             };
 
-            const onFailed = (err: Error) => {
+            const onFailed = (_err: Error) => {
                 cleanup();
                 reject(new Error('WebSocket is not connected'));
             };
