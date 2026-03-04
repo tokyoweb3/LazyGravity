@@ -240,7 +240,7 @@ export class CdpService extends EventEmitter {
     }
 
     /**
-     * Try call(), and on 'WebSocket is not connected' error,
+     * Try call(), and on WebSocket connection error,
      * attempt a single on-demand reconnect then retry once.
      * Non-connection errors (timeout, protocol) are NOT retried.
      */
@@ -249,10 +249,13 @@ export class CdpService extends EventEmitter {
             return await this.call(method, params);
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            if (message !== 'WebSocket is not connected') {
+            const isConnectionError =
+                message === 'WebSocket is not connected' ||
+                message === 'WebSocket disconnected';
+            if (!isConnectionError) {
                 throw error;
             }
-            await this.reconnectOnDemand();
+            await this.reconnectOnDemand(timeoutMs);
             return await this.call(method, params);
         }
     }
@@ -787,9 +790,9 @@ export class CdpService extends EventEmitter {
      * On-demand reconnect: if already reconnecting, wait; otherwise attempt once.
      * Throws 'WebSocket is not connected' when no workspace path or reconnect fails.
      */
-    private async reconnectOnDemand(): Promise<void> {
+    private async reconnectOnDemand(timeoutMs = 15000): Promise<void> {
         if (this.isReconnecting) {
-            return this.waitForReconnection();
+            return this.waitForReconnection(timeoutMs);
         }
 
         if (!this.currentWorkspacePath) {

@@ -109,6 +109,20 @@ describe('CdpService - callWithRetry (Issue #55)', () => {
             ).rejects.toThrow('Timeout calling CDP method Page.captureScreenshot');
         });
 
+        it('retries on in-flight WebSocket disconnected error', async () => {
+            cdpService = new CdpService({ maxReconnectAttempts: 0 });
+            (cdpService as any).currentWorkspacePath = '/tmp/my-workspace';
+
+            jest.spyOn(cdpService, 'discoverAndConnectForWorkspace').mockResolvedValue(true);
+            jest.spyOn(cdpService, 'call')
+                .mockRejectedValueOnce(new Error('WebSocket disconnected'))
+                .mockResolvedValueOnce({ data: 'screenshot-data' });
+
+            const result = await cdpService.callWithRetry('Page.captureScreenshot', {});
+            expect(result).toEqual({ data: 'screenshot-data' });
+            expect(cdpService.discoverAndConnectForWorkspace).toHaveBeenCalledWith('/tmp/my-workspace');
+        });
+
         it('throws when reconnect fails', async () => {
             cdpService = new CdpService({ maxReconnectAttempts: 0 });
             (cdpService as any).isConnectedFlag = false;
