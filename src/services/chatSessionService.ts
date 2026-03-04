@@ -96,12 +96,17 @@ const SCRAPE_PAST_CONVERSATIONS_SCRIPT = `(() => {
     const isVisible = (el) => !!el && el instanceof HTMLElement && el.offsetParent !== null;
     const normalize = (text) => (text || '').trim();
 
+    // Scope to the side panel to avoid picking up file tab names
+    const panel = document.querySelector('.antigravity-agent-side-panel');
+    if (!panel) return null;
+
     const items = [];
     const seen = new Set();
 
-    // Find the scrollable conversation list container
-    const containers = Array.from(document.querySelectorAll('div[class*="overflow-auto"], div[class*="overflow-y-scroll"]'));
-    const container = containers.find((c) => isVisible(c) && c.querySelectorAll('div[class*="cursor-pointer"]').length > 0) || document;
+    // Find the scrollable conversation list container within the side panel
+    const containers = Array.from(panel.querySelectorAll('div[class*="overflow-auto"], div[class*="overflow-y-scroll"]'));
+    const container = containers.find((c) => isVisible(c) && c.querySelectorAll('div[class*="cursor-pointer"]').length > 0);
+    if (!container) return null;
 
     // Detect the "Other Conversations" section boundary.
     // Sessions below this header belong to other projects and must be excluded.
@@ -459,6 +464,7 @@ export class ChatSessionService {
      * @returns Array of session list items (empty array on failure)
      */
     async listAllSessions(cdpService: CdpService): Promise<SessionListItem[]> {
+        let panelOpened = false;
         try {
             // Step 1: Find Past Conversations button
             const btnState = await this.evaluateOnAnyContext(
@@ -470,9 +476,32 @@ export class ChatSessionService {
 
             // Step 2: Click via CDP mouse events (reliable in Electron)
             await this.cdpMouseClick(cdpService, btnState.x, btnState.y);
+            panelOpened = true;
 
-            // Step 3: Wait for panel to render
-            await new Promise((r) => setTimeout(r, 500));
+            // Step 3: Wait for panel to render (poll for content, up to 3s)
+            const PANEL_READY_CHECK = `(() => {
+                const isVisible = (el) => !!el && el instanceof HTMLElement && el.offsetParent !== null;
+                const panel = document.querySelector('.antigravity-agent-side-panel');
+                if (!panel) return false;
+                const containers = Array.from(
+                    panel.querySelectorAll('div[class*="overflow-auto"], div[class*="overflow-y-scroll"]')
+                );
+                return containers.some((c) =>
+                    isVisible(c) && c.querySelector('div[class*="cursor-pointer"]')
+                );
+            })()`;
+            let panelReady = false;
+            const deadline = Date.now() + 3000;
+            while (Date.now() < deadline) {
+                panelReady = Boolean(
+                    await this.evaluateOnAnyContext(cdpService, PANEL_READY_CHECK, false),
+                );
+                if (panelReady) break;
+                await new Promise((r) => setTimeout(r, 200));
+            }
+            if (!panelReady) {
+                return [];
+            }
 
             // Step 4: Scrape sessions
             let scrapeResult = await this.evaluateOnAnyContext(
@@ -497,7 +526,21 @@ export class ChatSessionService {
                 }
             }
 
-            // Step 7: Close panel with Escape
+            return sessions.slice(0, ChatSessionService.LIST_SESSIONS_TARGET);
+        } catch (_) {
+            return [];
+        } finally {
+            if (panelOpened) {
+                await this.closePanelWithEscape(cdpService);
+            }
+        }
+    }
+
+    /**
+     * Close the Past Conversations panel by sending Escape key events.
+     */
+    private async closePanelWithEscape(cdpService: CdpService): Promise<void> {
+        try {
             await cdpService.call('Input.dispatchKeyEvent', {
                 type: 'keyDown', key: 'Escape', code: 'Escape',
                 windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27,
@@ -506,11 +549,7 @@ export class ChatSessionService {
                 type: 'keyUp', key: 'Escape', code: 'Escape',
                 windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27,
             });
-
-            return sessions.slice(0, ChatSessionService.LIST_SESSIONS_TARGET);
-        } catch (_) {
-            return [];
-        }
+        } catch (_) { /* best-effort cleanup */ }
     }
 
     /**

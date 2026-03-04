@@ -279,26 +279,43 @@ describe('ChatSessionService', () => {
     });
 
     describe('listAllSessions()', () => {
+        /**
+         * Helper to classify Runtime.evaluate calls by script content.
+         * Returns a response based on the script type rather than call order,
+         * so tests are resilient to the number of polling iterations.
+         */
+        function classifyExpression(expression: string): string {
+            if (expression.includes('data-past-conversations-toggle')) return 'findButton';
+            if (expression.includes('containers.some')) return 'panelReady';
+            if (expression.includes('Show\\s+\\d+\\s+more')) return 'showMore';
+            if (expression.includes('const items = [];')) return 'scrape';
+            return 'unknown';
+        }
+
         it('opens Past Conversations via CDP mouse click and returns scraped sessions', async () => {
             const calls: string[] = [];
-            mockCdpService.call.mockImplementation(async (method: string) => {
+            mockCdpService.call.mockImplementation(async (method: string, params?: any) => {
                 calls.push(method);
                 if (method === 'Runtime.evaluate') {
-                    // 1st evaluate: find button coords
-                    if (calls.filter((c) => c === 'Runtime.evaluate').length === 1) {
+                    const type = classifyExpression(params?.expression || '');
+                    if (type === 'findButton') {
                         return { result: { value: { found: true, x: 200, y: 30 } } };
                     }
-                    // 2nd evaluate: scrape sessions
-                    return {
-                        result: {
-                            value: {
-                                sessions: [
-                                    { title: 'Fix login bug', isActive: true },
-                                    { title: 'Refactor auth', isActive: false },
-                                ],
+                    if (type === 'panelReady') {
+                        return { result: { value: true } };
+                    }
+                    if (type === 'scrape') {
+                        return {
+                            result: {
+                                value: {
+                                    sessions: [
+                                        { title: 'Fix login bug', isActive: true },
+                                        { title: 'Refactor auth', isActive: false },
+                                    ],
+                                },
                             },
-                        },
-                    };
+                        };
+                    }
                 }
                 return {};
             });
@@ -312,34 +329,36 @@ describe('ChatSessionService', () => {
         });
 
         it('clicks "Show more" when fewer than 10 sessions found initially', async () => {
-            let evaluateCount = 0;
-            mockCdpService.call.mockImplementation(async (method: string) => {
+            let scrapeCount = 0;
+            mockCdpService.call.mockImplementation(async (method: string, params?: any) => {
                 if (method === 'Runtime.evaluate') {
-                    evaluateCount++;
-                    if (evaluateCount === 1) {
-                        // Find Past Conversations button
+                    const type = classifyExpression(params?.expression || '');
+                    if (type === 'findButton') {
                         return { result: { value: { found: true, x: 200, y: 30 } } };
                     }
-                    if (evaluateCount === 2) {
-                        // First scrape: only 3 sessions
+                    if (type === 'panelReady') {
+                        return { result: { value: true } };
+                    }
+                    if (type === 'scrape') {
+                        scrapeCount++;
+                        if (scrapeCount === 1) {
+                            return { result: { value: { sessions: [
+                                { title: 'Session A', isActive: true },
+                                { title: 'Session B', isActive: false },
+                                { title: 'Session C', isActive: false },
+                            ] } } };
+                        }
                         return { result: { value: { sessions: [
                             { title: 'Session A', isActive: true },
                             { title: 'Session B', isActive: false },
                             { title: 'Session C', isActive: false },
+                            { title: 'Session D', isActive: false },
+                            { title: 'Session E', isActive: false },
                         ] } } };
                     }
-                    if (evaluateCount === 3) {
-                        // Find "Show more" button
+                    if (type === 'showMore') {
                         return { result: { value: { found: true, x: 150, y: 300 } } };
                     }
-                    // Re-scrape after "Show more" click
-                    return { result: { value: { sessions: [
-                        { title: 'Session A', isActive: true },
-                        { title: 'Session B', isActive: false },
-                        { title: 'Session C', isActive: false },
-                        { title: 'Session D', isActive: false },
-                        { title: 'Session E', isActive: false },
-                    ] } } };
                 }
                 return {};
             });
@@ -347,7 +366,7 @@ describe('ChatSessionService', () => {
             const sessions = await service.listAllSessions(mockCdpService);
 
             expect(sessions).toHaveLength(5);
-            expect(evaluateCount).toBe(4);
+            expect(scrapeCount).toBe(2);
         });
 
         it('returns empty array when Past Conversations button not found', async () => {
@@ -373,8 +392,9 @@ describe('ChatSessionService', () => {
             mockCdpService.call.mockImplementation(async (method: string, params?: any) => {
                 calls.push({ method, params });
                 if (method === 'Runtime.evaluate') {
-                    const evalCount = calls.filter((c) => c.method === 'Runtime.evaluate').length;
-                    if (evalCount === 1) return { result: { value: { found: true, x: 200, y: 30 } } };
+                    const type = classifyExpression(params?.expression || '');
+                    if (type === 'findButton') return { result: { value: { found: true, x: 200, y: 30 } } };
+                    if (type === 'panelReady') return { result: { value: true } };
                     return { result: { value: { sessions: Array.from({ length: 10 }, (_, i) => ({ title: `S${i}`, isActive: i === 0 })) } } };
                 }
                 return {};
@@ -386,6 +406,67 @@ describe('ChatSessionService', () => {
                 (c) => c.method === 'Input.dispatchKeyEvent' && c.params?.key === 'Escape',
             );
             expect(escapeCall).toBeDefined();
+        });
+
+        it('scrape returns empty sessions when side panel is not found', async () => {
+            mockCdpService.call.mockImplementation(async (method: string, params?: any) => {
+                if (method === 'Runtime.evaluate') {
+                    const type = classifyExpression(params?.expression || '');
+                    if (type === 'findButton') {
+                        return { result: { value: { found: true, x: 200, y: 30 } } };
+                    }
+                    if (type === 'panelReady') {
+                        // Panel never becomes ready (no side panel in DOM)
+                        return { result: { value: false } };
+                    }
+                    if (type === 'scrape') {
+                        // Scrape script returns empty because panel is missing
+                        return { result: { value: { sessions: [] } } };
+                    }
+                }
+                return {};
+            });
+
+            const sessions = await service.listAllSessions(mockCdpService);
+
+            expect(sessions).toEqual([]);
+        });
+
+        it('scrape is scoped to side panel and ignores file tabs outside it', async () => {
+            // Simulate the scrape script returning only sessions from within
+            // the .antigravity-agent-side-panel, not file tab names
+            mockCdpService.call.mockImplementation(async (method: string, params?: any) => {
+                if (method === 'Runtime.evaluate') {
+                    const type = classifyExpression(params?.expression || '');
+                    if (type === 'findButton') {
+                        return { result: { value: { found: true, x: 200, y: 30 } } };
+                    }
+                    if (type === 'panelReady') {
+                        return { result: { value: true } };
+                    }
+                    if (type === 'scrape') {
+                        // Verify the scrape script is scoped to the side panel
+                        expect(params.expression).toContain('.antigravity-agent-side-panel');
+                        // Verify no document-level fallback
+                        expect(params.expression).not.toMatch(/\|\|\s*document/);
+                        return {
+                            result: {
+                                value: {
+                                    sessions: [
+                                        { title: 'Chat Session Only', isActive: true },
+                                    ],
+                                },
+                            },
+                        };
+                    }
+                }
+                return {};
+            });
+
+            const sessions = await service.listAllSessions(mockCdpService);
+
+            expect(sessions).toHaveLength(1);
+            expect(sessions[0].title).toBe('Chat Session Only');
         });
     });
 });
