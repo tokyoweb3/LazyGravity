@@ -239,6 +239,24 @@ export class CdpService extends EventEmitter {
         });
     }
 
+    /**
+     * Try call(), and on 'WebSocket is not connected' error,
+     * attempt a single on-demand reconnect then retry once.
+     * Non-connection errors (timeout, protocol) are NOT retried.
+     */
+    async callWithRetry(method: string, params: any = {}, timeoutMs = 10000): Promise<any> {
+        try {
+            return await this.call(method, params);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (message !== 'WebSocket is not connected') {
+                throw error;
+            }
+            await this.reconnectOnDemand();
+            return await this.call(method, params);
+        }
+    }
+
     async disconnect(): Promise<void> {
         // Stop reconnection attempts
         this.maxReconnectAttempts = 0;
@@ -728,6 +746,72 @@ export class CdpService extends EventEmitter {
         );
         logger.error('[CdpService]', finalError.message);
         this.emit('reconnectFailed', finalError);
+    }
+
+    /**
+     * Wait for an in-progress reconnection to complete.
+     * Resolves when 'reconnected' fires, rejects on 'reconnectFailed' or timeout.
+     */
+    private waitForReconnection(timeoutMs = 15000): Promise<void> {
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                cleanup();
+                reject(new Error('WebSocket is not connected'));
+            }, timeoutMs);
+
+            const onReconnected = () => {
+                cleanup();
+                resolve();
+            };
+
+            const onFailed = (err: Error) => {
+                cleanup();
+                reject(new Error('WebSocket is not connected'));
+            };
+
+            const cleanup = () => {
+                clearTimeout(timer);
+                this.removeListener('reconnected', onReconnected);
+                this.removeListener('reconnectFailed', onFailed);
+            };
+
+            this.on('reconnected', onReconnected);
+            this.on('reconnectFailed', onFailed);
+        });
+    }
+
+    /** Shared promise to coalesce concurrent reconnectOnDemand() calls */
+    private reconnectOnDemandPromise: Promise<void> | null = null;
+
+    /**
+     * On-demand reconnect: if already reconnecting, wait; otherwise attempt once.
+     * Throws 'WebSocket is not connected' when no workspace path or reconnect fails.
+     */
+    private async reconnectOnDemand(): Promise<void> {
+        if (this.isReconnecting) {
+            return this.waitForReconnection();
+        }
+
+        if (!this.currentWorkspacePath) {
+            throw new Error('WebSocket is not connected');
+        }
+
+        // Coalesce concurrent calls
+        if (this.reconnectOnDemandPromise) {
+            return this.reconnectOnDemandPromise;
+        }
+
+        this.reconnectOnDemandPromise = (async () => {
+            try {
+                await this.discoverAndConnectForWorkspace(this.currentWorkspacePath!);
+            } catch {
+                throw new Error('WebSocket is not connected');
+            } finally {
+                this.reconnectOnDemandPromise = null;
+            }
+        })();
+
+        return this.reconnectOnDemandPromise;
     }
 
     isConnected(): boolean {
@@ -1284,7 +1368,7 @@ export class CdpService extends EventEmitter {
      */
     async setUiMode(modeName: string): Promise<UiSyncResult> {
         if (!this.isConnectedFlag || !this.ws) {
-            throw new Error('Not connected to CDP. Call connect() first.');
+            await this.reconnectOnDemand();
         }
 
         const safeMode = JSON.stringify(modeName);
@@ -1457,7 +1541,7 @@ export class CdpService extends EventEmitter {
      */
     async setUiModel(modelName: string): Promise<UiSyncResult> {
         if (!this.isConnectedFlag || !this.ws) {
-            throw new Error('Not connected to CDP. Call connect() first.');
+            await this.reconnectOnDemand();
         }
 
         // DOM manipulation script: based on actual Antigravity UI DOM structure

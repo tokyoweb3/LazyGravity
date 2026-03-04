@@ -53,10 +53,10 @@ describe('CdpService - UI sync (Step 9)', () => {
 
     describe('setUiMode - UI mode dropdown operation', () => {
 
-        it('throws an error when not connected', async () => {
-            // Test when isConnected() returns false
+        it('throws an error when not connected and no workspace path', async () => {
+            // When disconnected with no workspace path, reconnectOnDemand throws
             await expect(cdpService.setUiMode('plan')).rejects.toThrow(
-                'Not connected to CDP'
+                'WebSocket is not connected'
             );
         });
 
@@ -164,9 +164,10 @@ describe('CdpService - UI sync (Step 9)', () => {
 
     describe('setUiModel - UI model dropdown operation', () => {
 
-        it('throws an error when not connected', async () => {
+        it('throws an error when not connected and no workspace path', async () => {
+            // When disconnected with no workspace path, reconnectOnDemand throws
             await expect(cdpService.setUiModel('gpt-4o')).rejects.toThrow(
-                'Not connected to CDP'
+                'WebSocket is not connected'
             );
         });
 
