@@ -800,21 +800,28 @@ export class CdpService extends EventEmitter {
         }
 
         // Coalesce concurrent calls
-        if (this.reconnectOnDemandPromise) {
-            return this.reconnectOnDemandPromise;
+        if (!this.reconnectOnDemandPromise) {
+            this.reconnectOnDemandPromise = (async () => {
+                try {
+                    await this.discoverAndConnectForWorkspace(this.currentWorkspacePath!);
+                } catch {
+                    throw new Error('WebSocket is not connected');
+                } finally {
+                    this.reconnectOnDemandPromise = null;
+                }
+            })();
         }
 
-        this.reconnectOnDemandPromise = (async () => {
-            try {
-                await this.discoverAndConnectForWorkspace(this.currentWorkspacePath!);
-            } catch {
-                throw new Error('WebSocket is not connected');
-            } finally {
-                this.reconnectOnDemandPromise = null;
-            }
-        })();
+        let timer: NodeJS.Timeout | undefined;
+        const timeoutPromise = new Promise<void>((_, reject) => {
+            timer = setTimeout(() => reject(new Error('WebSocket is not connected')), timeoutMs);
+        });
 
-        return this.reconnectOnDemandPromise;
+        try {
+            await Promise.race([this.reconnectOnDemandPromise, timeoutPromise]);
+        } finally {
+            if (timer) clearTimeout(timer);
+        }
     }
 
     isConnected(): boolean {

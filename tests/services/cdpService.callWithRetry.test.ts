@@ -163,6 +163,20 @@ describe('CdpService - callWithRetry (Issue #55)', () => {
             await expect(reconnectPromise).resolves.toBeUndefined();
         });
 
+        it('honors timeoutMs when on-demand reconnect is slow', async () => {
+            cdpService = new CdpService({ maxReconnectAttempts: 0 });
+            (cdpService as any).currentWorkspacePath = '/tmp/ws';
+
+            jest.spyOn(cdpService, 'discoverAndConnectForWorkspace').mockImplementation(async () => {
+                await new Promise(r => setTimeout(r, 200));
+                return true;
+            });
+
+            await expect(
+                (cdpService as any).reconnectOnDemand(20)
+            ).rejects.toThrow('WebSocket is not connected');
+        }, 5000);
+
         it('coalesces concurrent calls via shared promise', async () => {
             cdpService = new CdpService({ maxReconnectAttempts: 0 });
             (cdpService as any).currentWorkspacePath = '/tmp/ws';
