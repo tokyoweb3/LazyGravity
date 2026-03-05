@@ -96,8 +96,10 @@ const SCRAPE_PAST_CONVERSATIONS_SCRIPT = `(() => {
     const isVisible = (el) => !!el && el instanceof HTMLElement && el.offsetParent !== null;
     const normalize = (text) => (text || '').trim();
 
-    // Scope to the side panel to avoid picking up file tab names
-    const panel = document.querySelector('.antigravity-agent-side-panel');
+    // Past Conversations opens as a floating QuickInput dialog, not inside the side panel.
+    // Try the QuickInput dialog first, then fall back to the side panel.
+    const panel = document.querySelector('div[class*="bg-quickinput-background"]')
+        || document.querySelector('.antigravity-agent-side-panel');
     if (!panel) return null;
 
     const items = [];
@@ -155,7 +157,10 @@ const SCRAPE_PAST_CONVERSATIONS_SCRIPT = `(() => {
  */
 const FIND_SHOW_MORE_BUTTON_SCRIPT = `(() => {
     const isVisible = (el) => !!el && el instanceof HTMLElement && el.offsetParent !== null;
-    const els = Array.from(document.querySelectorAll('div, span'));
+    const root = document.querySelector('div[class*="bg-quickinput-background"]')
+        || document.querySelector('.antigravity-agent-side-panel')
+        || document;
+    const els = Array.from(root.querySelectorAll('div, span'));
     for (const el of els) {
         if (!isVisible(el)) continue;
         const text = (el.textContent || '').trim();
@@ -481,7 +486,8 @@ export class ChatSessionService {
             // Step 3: Wait for panel to render (poll for content, up to 3s)
             const PANEL_READY_CHECK = `(() => {
                 const isVisible = (el) => !!el && el instanceof HTMLElement && el.offsetParent !== null;
-                const panel = document.querySelector('.antigravity-agent-side-panel');
+                const panel = document.querySelector('div[class*="bg-quickinput-background"]')
+                    || document.querySelector('.antigravity-agent-side-panel');
                 if (!panel) return false;
                 const containers = Array.from(
                     panel.querySelectorAll('div[class*="overflow-auto"], div[class*="overflow-y-scroll"]')

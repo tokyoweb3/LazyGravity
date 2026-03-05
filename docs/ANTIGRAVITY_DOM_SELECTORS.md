@@ -8,13 +8,17 @@ Central reference for all CSS selectors and DOM structures used to interact with
 
 ## Root Scope
 
-All scripts scope queries to the side panel first, falling back to `document`.
+Most scripts scope queries to a specific container first.
 
 ```
-.antigravity-agent-side-panel
+div[class*="bg-quickinput-background"]   ← Past Conversations floating dialog (QuickInput)
+.antigravity-agent-side-panel            ← Main Cascade side panel
 ```
 
-**Used by**: All detectors, all scripts
+- **Past Conversations** opens as a floating QuickInput dialog (`bg-quickinput-background`), **not** inside `.antigravity-agent-side-panel`. Session scraping targets the QuickInput dialog first, then falls back to the side panel.
+- **All other detectors** (planning, approval, response, user message) use selectors inside `.antigravity-agent-side-panel` or `document`.
+
+**Used by**: `chatSessionService.ts` (QuickInput + side panel), all other detectors (side panel)
 
 ---
 
@@ -136,13 +140,16 @@ Selectors for opening, browsing, and selecting past conversations.
 
 ### Scraping Sessions
 
+The Past Conversations panel renders as a floating **QuickInput dialog** (`div[class*="bg-quickinput-background"]`), not inside the side panel. Scripts scope to this dialog first, falling back to `.antigravity-agent-side-panel`.
+
 | Selector | Purpose | File |
 |----------|---------|------|
-| `div[class*="overflow-auto"], div[class*="overflow-y-scroll"]` | Scrollable conversation list container | `chatSessionService.ts` |
-| `div[class*="text-xs"][class*="opacity"]` | Section header (e.g. "Other Conversations") — used as boundary to exclude other-project sessions | `chatSessionService.ts` |
+| `div[class*="bg-quickinput-background"]` | **QuickInput dialog root** (primary scope for scraping) | `chatSessionService.ts` |
+| `div[class*="overflow-auto"], div[class*="overflow-y-scroll"]` | Scrollable conversation list container (inside dialog) | `chatSessionService.ts` |
+| `div[class*="text-xs"][class*="opacity"]` | Section header (e.g. "Current", "Running in ...", "Other Conversations") — "Other Conversations" used as boundary to exclude other-project sessions | `chatSessionService.ts` |
 | `div[class*="cursor-pointer"]` | Session row items (rows below "Other Conversations" boundary are skipped) | `chatSessionService.ts` |
 | `span.text-sm span, span.text-sm` | Session title text | `chatSessionService.ts` |
-| `/focusBackground/i` (className regex) | Active/current session indicator | `chatSessionService.ts` |
+| `/focusBackground/i` (className regex) | Active/current session indicator (matches `bg-quickinput-list-focusBackground`) | `chatSessionService.ts` |
 
 ### Show More
 

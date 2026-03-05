@@ -432,9 +432,7 @@ describe('ChatSessionService', () => {
             expect(sessions).toEqual([]);
         });
 
-        it('scrape is scoped to side panel and ignores file tabs outside it', async () => {
-            // Simulate the scrape script returning only sessions from within
-            // the .antigravity-agent-side-panel, not file tab names
+        it('scrape is scoped to QuickInput dialog or side panel and ignores file tabs outside', async () => {
             mockCdpService.call.mockImplementation(async (method: string, params?: any) => {
                 if (method === 'Runtime.evaluate') {
                     const type = classifyExpression(params?.expression || '');
@@ -445,10 +443,11 @@ describe('ChatSessionService', () => {
                         return { result: { value: true } };
                     }
                     if (type === 'scrape') {
-                        // Verify the scrape script is scoped to the side panel
+                        // Verify the scrape script checks QuickInput dialog first, then side panel
+                        expect(params.expression).toContain('bg-quickinput-background');
                         expect(params.expression).toContain('.antigravity-agent-side-panel');
-                        // Verify no document-level fallback
-                        expect(params.expression).not.toMatch(/\|\|\s*document/);
+                        // Verify no bare document fallback (|| document;) but allow || document.querySelector(...)
+                        expect(params.expression).not.toMatch(/\|\|\s*document\s*[;)]/);
                         return {
                             result: {
                                 value: {
