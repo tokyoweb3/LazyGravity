@@ -97,10 +97,24 @@ function compareSemver(a: string, b: string): number {
 }
 
 /**
+ * Detect whether the process is running from a global npm install
+ * (as opposed to a local dev checkout via `ts-node`, `tsx`, etc.).
+ */
+export function isGlobalInstall(): boolean {
+    const execPath = process.argv[1] || '';
+    // Global installs run from a path containing node_modules
+    // Local dev runs from the source tree (no node_modules/.bin in argv[1])
+    const globalIndicators = ['/lib/node_modules/', '\\node_modules\\lazy-gravity\\'];
+    return globalIndicators.some((indicator) => execPath.includes(indicator));
+}
+
+/**
  * Non-blocking update check. Call at startup (fire-and-forget).
  * Respects a 24-hour cooldown via a local cache file.
+ * Skipped when running from source (dev/local checkout).
  */
 export async function checkForUpdates(currentVersion: string): Promise<void> {
+    if (!isGlobalInstall()) return;
     if (!shouldCheckForUpdates()) return;
 
     try {

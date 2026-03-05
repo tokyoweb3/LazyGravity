@@ -7,6 +7,7 @@ import {
     checkForUpdates,
     fetchLatestVersion,
     shouldCheckForUpdates,
+    isGlobalInstall,
     UPDATE_CHECK_FILE,
     COOLDOWN_MS,
 } from '../../src/services/updateCheckService';
@@ -170,15 +171,55 @@ describe('fetchLatestVersion', () => {
 // checkForUpdates (integration of the above)
 // ---------------------------------------------------------------------------
 
+describe('isGlobalInstall', () => {
+    const originalArgv1 = process.argv[1];
+
+    afterEach(() => {
+        process.argv[1] = originalArgv1;
+    });
+
+    it('returns true for global npm install path (unix)', () => {
+        process.argv[1] = '/usr/local/lib/node_modules/lazy-gravity/dist/bin/cli.js';
+        expect(isGlobalInstall()).toBe(true);
+    });
+
+    it('returns true for global npm install path (windows)', () => {
+        process.argv[1] = 'C:\\Users\\user\\AppData\\Roaming\\npm\\node_modules\\lazy-gravity\\dist\\bin\\cli.js';
+        expect(isGlobalInstall()).toBe(true);
+    });
+
+    it('returns false for local dev run', () => {
+        process.argv[1] = '/home/user/projects/LazyGravity/src/bin/cli.ts';
+        expect(isGlobalInstall()).toBe(false);
+    });
+});
+
 describe('checkForUpdates', () => {
     const consoleInfoSpy = jest.spyOn(console, 'info').mockImplementation();
+    const originalArgv1 = process.argv[1];
+
+    beforeEach(() => {
+        // Simulate global install so checkForUpdates proceeds past the guard
+        process.argv[1] = '/usr/local/lib/node_modules/lazy-gravity/dist/bin/cli.js';
+    });
 
     afterEach(() => {
         consoleInfoSpy.mockClear();
+        process.argv[1] = originalArgv1;
     });
 
     afterAll(() => {
         consoleInfoSpy.mockRestore();
+    });
+
+    it('skips check when running from source (not global install)', async () => {
+        process.argv[1] = '/home/user/projects/LazyGravity/src/bin/cli.ts';
+        mockedFs.existsSync.mockReturnValue(false);
+
+        await checkForUpdates('0.1.0');
+
+        expect(mockedHttps.get).not.toHaveBeenCalled();
+        expect(consoleInfoSpy).not.toHaveBeenCalled();
     });
 
     it('prints update notice when a newer version is available', async () => {
