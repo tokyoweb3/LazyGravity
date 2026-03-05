@@ -10,7 +10,7 @@ Central reference for all CSS selectors and DOM structures used to interact with
 
 Most scripts scope queries to a specific container first.
 
-```
+```text
 div[class*="bg-quickinput-background"]   ← Past Conversations floating dialog (QuickInput)
 .antigravity-agent-side-panel            ← Main Cascade side panel
 ```
