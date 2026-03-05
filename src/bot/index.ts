@@ -1,4 +1,4 @@
-import { t } from "../utils/i18n";
+import { initI18n, t } from "../utils/i18n";
 import { logger } from '../utils/logger';
 import type { LogLevel } from '../utils/logger';
 import { logBuffer } from '../utils/logBuffer';
@@ -83,6 +83,7 @@ import { sendAutoAcceptUI } from '../ui/autoAcceptUi';
 import { sendOutputUI, OUTPUT_BTN_EMBED, OUTPUT_BTN_PLAIN } from '../ui/outputUi';
 import { handleScreenshot } from '../ui/screenshotUi';
 import { UserPreferenceRepository, OutputFormat } from '../database/userPreferenceRepository';
+import { AccountPreferenceRepository } from '../database/accountPreferenceRepository';
 import { formatAsPlainText, splitPlainText } from '../utils/plainTextFormatter';
 import { createInteractionCreateHandler } from '../events/interactionCreateHandler';
 import { createMessageCreateHandler } from '../events/messageCreateHandler';
@@ -897,6 +898,7 @@ async function sendPromptToAntigravity(
 
 export const startBot = async (cliLogLevel?: LogLevel) => {
     const config = loadConfig();
+initI18n(config.language ?? 'ja');
     logger.setLogLevel(cliLogLevel ?? config.logLevel);
 
     const dbPath = process.env.NODE_ENV === 'test' ? ':memory:' : 'antigravity.db';
@@ -905,6 +907,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
     const modelService = new ModelService();
     const templateRepo = new TemplateRepository(db);
     const userPrefRepo = new UserPreferenceRepository(db);
+    const accountPrefRepo = new AccountPreferenceRepository(db);
 
     // Eagerly load default model from DB (single-user bot optimization)
     try {
@@ -1064,6 +1067,8 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             templateRepo,
             joinHandler,
             userPrefRepo,
+            accountPrefRepo,
+            config.antigravityAccounts ?? [{ name: 'default', cdpPort: 9222 }],
         ),
         handleTemplateUse: async (interaction, templateId) => {
             const template = templateRepo.findById(templateId);
@@ -1169,6 +1174,8 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         autoRenameChannel,
         handleScreenshot,
         userPrefRepo,
+        accountPrefRepo,
+        antigravityAccounts: config.antigravityAccounts,
     }));
 
     await client.login(discordToken);
@@ -1392,6 +1399,8 @@ async function handleSlashInteraction(
     templateRepo: TemplateRepository,
     joinHandler?: JoinCommandHandler,
     userPrefRepo?: UserPreferenceRepository,
+    accountPrefRepo?: AccountPreferenceRepository,
+    antigravityAccounts: { name: string; cdpPort: number }[] = [{ name: 'default', cdpPort: 9222 }],
 ): Promise<void> {
     const commandName = interaction.commandName;
 
@@ -1718,6 +1727,30 @@ async function handleSlashInteraction(
         case 'ping': {
             const apiLatency = interaction.client.ws.ping;
             await interaction.editReply({ content: `🏓 Pong! API Latency is **${apiLatency}ms**.` });
+            break;
+        }
+
+
+        case 'account': {
+            if (!accountPrefRepo) {
+                await interaction.editReply({ content: 'Account preference service not available.' });
+                break;
+            }
+            const requested = interaction.options.getString('name');
+            if (!requested) {
+                const current = accountPrefRepo.getAccountName(interaction.user.id) ?? 'default';
+                await interaction.editReply({ content: `現在のアカウント: **${current}**
+利用可能: ${antigravityAccounts.map((a) => a.name).join(', ')}` });
+                break;
+            }
+            const exists = antigravityAccounts.some((a) => a.name === requested);
+            if (!exists) {
+                await interaction.editReply({ content: `不明なアカウントです: **${requested}**` });
+                break;
+            }
+            accountPrefRepo.setAccountName(interaction.user.id, requested);
+            bridge.selectedAccountByChannel?.set(interaction.channelId, requested);
+            await interaction.editReply({ content: `アカウントを **${requested}** に切り替えました。` });
             break;
         }
 

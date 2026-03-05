@@ -30,6 +30,7 @@ export interface CdpBridge {
     approvalChannelByWorkspace: Map<string, PlatformChannel>;
     /** Session-level approval notification destination (workspace+sessionTitle -> channel) */
     approvalChannelBySession: Map<string, PlatformChannel>;
+    selectedAccountByChannel?: Map<string, string>;
 }
 
 const APPROVE_ACTION_PREFIX = 'approve_action';
@@ -257,6 +258,7 @@ export function initCdpBridge(autoApproveDefault: boolean): CdpBridge {
         lastActiveChannel: null,
         approvalChannelByWorkspace: new Map(),
         approvalChannelBySession: new Map(),
+        selectedAccountByChannel: new Map(),
     };
 }
 

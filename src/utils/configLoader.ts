@@ -30,6 +30,13 @@ export interface PersistedConfig {
     telegramToken?: string;
     telegramAllowedUserIds?: string[];
     platforms?: PlatformType[];
+    language?: 'en' | 'ja';
+    antigravityAccounts?: AntigravityAccountConfig[];
+}
+
+export interface AntigravityAccountConfig {
+    name: string;
+    cdpPort: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -116,6 +123,10 @@ function mergeConfig(persisted: PersistedConfig): AppConfig {
         persisted.extractionMode,
     );
 
+    const language = resolveLanguage(process.env.BOT_LANGUAGE, persisted.language);
+
+    const antigravityAccounts = resolveAntigravityAccounts(process.env.ANTIGRAVITY_ACCOUNTS, persisted.antigravityAccounts);
+
     // Telegram credentials — only required when Telegram is an active platform
     const telegramToken = process.env.TELEGRAM_BOT_TOKEN ?? persisted.telegramToken ?? undefined;
     const telegramAllowedUserIds = resolveTelegramAllowedUserIds(persisted);
@@ -135,6 +146,8 @@ function mergeConfig(persisted: PersistedConfig): AppConfig {
         autoApproveFileEdits,
         logLevel,
         extractionMode,
+        language,
+        antigravityAccounts,
         telegramToken,
         telegramAllowedUserIds,
         platforms,
@@ -211,6 +224,42 @@ function resolvePlatforms(
         if (validated.length > 0) return validated;
     }
     return ['discord'];
+}
+
+
+
+function resolveLanguage(envValue: string | undefined, persistedValue: 'en' | 'ja' | undefined): 'en' | 'ja' {
+    const raw = (envValue ?? persistedValue ?? 'ja').toLowerCase();
+    return raw === 'en' ? 'en' : 'ja';
+}
+
+function resolveAntigravityAccounts(
+    envValue: string | undefined,
+    persistedValue: AntigravityAccountConfig[] | undefined,
+): AntigravityAccountConfig[] {
+    if (envValue && envValue.trim().length > 0) {
+        const parsed = envValue
+            .split(',')
+            .map((item) => item.trim())
+            .filter((item) => item.length > 0)
+            .map((item, index) => {
+                const [nameRaw, portRaw] = item.split(':');
+                const port = Number(portRaw);
+                if (!nameRaw || !Number.isInteger(port) || port <= 0) return null;
+                return { name: nameRaw.trim(), cdpPort: port };
+            })
+            .filter((x): x is AntigravityAccountConfig => x !== null);
+        if (parsed.length > 0) return parsed;
+    }
+
+    if (persistedValue && persistedValue.length > 0) {
+        const normalized = persistedValue
+            .map((account) => ({ name: String(account.name || '').trim(), cdpPort: Number(account.cdpPort) }))
+            .filter((account) => account.name.length > 0 && Number.isInteger(account.cdpPort) && account.cdpPort > 0);
+        if (normalized.length > 0) return normalized;
+    }
+
+    return [{ name: 'default', cdpPort: 9222 }];
 }
 
 function resolveBoolean(

@@ -162,6 +162,17 @@ const outputCommand = new SlashCommandBuilder()
     );
 
 
+
+const accountCommand = new SlashCommandBuilder()
+    .setName('account')
+    .setDescription(t('Switch Antigravity account'))
+    .addStringOption((option) =>
+        option
+            .setName('name')
+            .setDescription(t('Account name'))
+            .setRequired(false)
+    );
+
 /** /logs command definition */
 const logsCommand = new SlashCommandBuilder()
     .setName('logs')
@@ -210,6 +221,7 @@ export const slashCommands = [
     mirrorCommand,
     outputCommand,
     pingCommand,
+    accountCommand,
     logsCommand,
 ];
 
