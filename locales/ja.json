@@ -105,5 +105,11 @@
   "Fast Mode — for simple tasks": "高速応答モード — シンプルなタスク向け",
   "Plan Mode — for complex step-by-step tasks": "計画モード — 複雑なタスクを段階的に実行",
   "⚠️ Mode name not specified. Available modes: ": "⚠️ モード名が指定されていません。利用可能なモード: ",
-  "⚠️ Invalid mode \"${modeName}\". Available modes: ${AVAILABLE_MODES.join(', ')}": "⚠️ 無効なモード \"${modeName}\" です。利用可能なモード: ${AVAILABLE_MODES.join(', ')}"
+  "⚠️ Invalid mode \"${modeName}\". Available modes: ${AVAILABLE_MODES.join(', ')}": "⚠️ 無効なモード \"${modeName}\" です。利用可能なモード: ${AVAILABLE_MODES.join(', ')}",
+  "Switch Antigravity account": "Antigravityアカウントを切り替えます",
+  "Account name": "アカウント名",
+  "List, register, or delete templates": "テンプレートの一覧表示・登録・削除を行います",
+  "Display registered template list with execute buttons": "実行ボタン付きで登録テンプレート一覧を表示します",
+  "Display and toggle auto-allow mode for approval dialogs": "承認ダイアログの自動許可モードを表示・切り替えします",
+  "on / off (optional direct switch)": "on / off（省略可）"
 }

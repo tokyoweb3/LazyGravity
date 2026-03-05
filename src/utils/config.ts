@@ -1,10 +1,13 @@
 import { ConfigLoader } from './configLoader';
 import type { LogLevel } from './logger';
 import type { PlatformType } from '../platform/types';
+import type { AntigravityAccountConfig } from './configLoader';
 
 export type ExtractionMode = 'legacy' | 'structured';
 
 export interface AppConfig {
+    language?: 'en' | 'ja';
+    antigravityAccounts?: AntigravityAccountConfig[];
     /** Discord Bot Token (optional — only required when 'discord' is in platforms). */
     discordToken?: string;
     /** Discord Application Client ID (optional — only required when 'discord' is in platforms). */
