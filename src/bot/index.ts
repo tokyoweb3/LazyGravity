@@ -1,4 +1,4 @@
-import { t } from "../utils/i18n";
+import { initI18n, t } from "../utils/i18n";
 import { logger } from '../utils/logger';
 import type { LogLevel } from '../utils/logger';
 import { logBuffer } from '../utils/logBuffer';
@@ -83,9 +83,12 @@ import { sendAutoAcceptUI } from '../ui/autoAcceptUi';
 import { sendOutputUI, OUTPUT_BTN_EMBED, OUTPUT_BTN_PLAIN } from '../ui/outputUi';
 import { handleScreenshot } from '../ui/screenshotUi';
 import { UserPreferenceRepository, OutputFormat } from '../database/userPreferenceRepository';
+import { AccountPreferenceRepository } from '../database/accountPreferenceRepository';
+import { ChannelPreferenceRepository } from '../database/channelPreferenceRepository';
 import { formatAsPlainText, splitPlainText } from '../utils/plainTextFormatter';
 import { createInteractionCreateHandler } from '../events/interactionCreateHandler';
 import { createMessageCreateHandler } from '../events/messageCreateHandler';
+import { listAccountNames, resolveValidAccountName } from '../utils/accountUtils';
 
 // Telegram platform support
 import { Bot, InputFile } from 'grammy';
@@ -897,6 +900,7 @@ async function sendPromptToAntigravity(
 
 export const startBot = async (cliLogLevel?: LogLevel) => {
     const config = loadConfig();
+initI18n(config.language ?? 'ja');
     logger.setLogLevel(cliLogLevel ?? config.logLevel);
 
     const dbPath = process.env.NODE_ENV === 'test' ? ':memory:' : 'antigravity.db';
@@ -905,6 +909,8 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
     const modelService = new ModelService();
     const templateRepo = new TemplateRepository(db);
     const userPrefRepo = new UserPreferenceRepository(db);
+    const accountPrefRepo = new AccountPreferenceRepository(db);
+    const channelPrefRepo = new ChannelPreferenceRepository(db);
 
     // Eagerly load default model from DB (single-user bot optimization)
     try {
@@ -925,7 +931,8 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
     await ensureAntigravityRunning();
 
     // Initialize CDP bridge (lazy connection: pool creation only)
-    const bridge = initCdpBridge(config.autoApproveFileEdits);
+    const accountPorts = Object.fromEntries((config.antigravityAccounts ?? []).map((a) => [a.name, a.cdpPort]));
+    const bridge = initCdpBridge(config.autoApproveFileEdits, accountPorts);
 
     // Initialize CDP-dependent services (constructor CDP dependency removed)
     const chatSessionService = new ChatSessionService();
@@ -1064,6 +1071,9 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             templateRepo,
             joinHandler,
             userPrefRepo,
+            accountPrefRepo,
+            channelPrefRepo,
+            config.antigravityAccounts ?? [{ name: 'default', cdpPort: 9222 }],
         ),
         handleTemplateUse: async (interaction, templateId) => {
             const template = templateRepo.findById(templateId);
@@ -1169,6 +1179,9 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         autoRenameChannel,
         handleScreenshot,
         userPrefRepo,
+        accountPrefRepo,
+        channelPrefRepo,
+        antigravityAccounts: config.antigravityAccounts,
     }));
 
     await client.login(discordToken);
@@ -1392,6 +1405,9 @@ async function handleSlashInteraction(
     templateRepo: TemplateRepository,
     joinHandler?: JoinCommandHandler,
     userPrefRepo?: UserPreferenceRepository,
+    accountPrefRepo?: AccountPreferenceRepository,
+    channelPrefRepo?: ChannelPreferenceRepository,
+    antigravityAccounts: { name: string; cdpPort: number }[] = [{ name: 'default', cdpPort: 9222 }],
 ): Promise<void> {
     const commandName = interaction.commandName;
 
@@ -1421,6 +1437,7 @@ async function handleSlashInteraction(
                         '`/mode` — Display and change execution mode',
                         '`/model [name]` — Display and change LLM model',
                         '`/output [format]` — Toggle Embed / Plain Text output',
+                        '`/loop [count]` — Set deep-think loop count for this channel',
                     ].join('\n')
                 },
                 {
@@ -1440,6 +1457,7 @@ async function handleSlashInteraction(
                     name: '🔧 System', value: [
                         '`/status` — Display overall bot status',
                         '`/autoaccept` — Toggle auto-approve mode for approval dialogs via buttons',
+                        '`/account [name]` — Show/switch Antigravity account',
                         '`/logs [lines] [level]` — View recent bot logs',
                         '`/cleanup [days]` — Clean up unused channels/categories',
                         '`/help` — Show this help',
@@ -1544,11 +1562,21 @@ async function handleSlashInteraction(
                 ? `📡 ON (${mirroringWorkspaces.join(', ')})`
                 : '⚪ OFF';
 
+            const currentAccount = bridge.selectedAccountByChannel?.get(interaction.channelId)
+                ?? channelPrefRepo?.getAccountName(interaction.channelId)
+                ?? accountPrefRepo?.getAccountName(interaction.user.id)
+                ?? 'default';
+            const currentLoop = bridge.deepThinkCountByChannel?.get(interaction.channelId)
+                ?? channelPrefRepo?.getDeepThinkCount(interaction.channelId)
+                ?? 1;
+
             const statusFields = [
                 { name: 'CDP Connection', value: activeNames.length > 0 ? `🟢 ${activeNames.length} project(s) connected` : '⚪ Disconnected', inline: true },
                 { name: 'Mode', value: MODE_DISPLAY_NAMES[currentMode] || currentMode, inline: true },
                 { name: 'Auto Approve', value: autoAcceptService.isEnabled() ? '🟢 ON' : '⚪ OFF', inline: true },
                 { name: 'Mirroring', value: mirrorStatus, inline: true },
+                { name: 'Account', value: currentAccount, inline: true },
+                { name: 'DeepThink', value: `${currentLoop}`, inline: true },
             ];
 
             let statusDescription = '';
@@ -1715,9 +1743,58 @@ async function handleSlashInteraction(
             break;
         }
 
+
+        case 'loop': {
+            const requestedCount = interaction.options.getInteger('count');
+            if (!requestedCount) {
+                const current = bridge.deepThinkCountByChannel?.get(interaction.channelId)
+                    ?? channelPrefRepo?.getDeepThinkCount(interaction.channelId)
+                    ?? 1;
+                await interaction.editReply({ content: t('Current DeepThink loops: **${count}**', { count: current }) });
+                break;
+            }
+            bridge.deepThinkCountByChannel?.set(interaction.channelId, requestedCount);
+            channelPrefRepo?.setDeepThinkCount(interaction.channelId, requestedCount);
+            await interaction.editReply({ content: t('🧠 DeepThink loops set to **${count}**.', { count: requestedCount }) });
+            break;
+        }
+
         case 'ping': {
             const apiLatency = interaction.client.ws.ping;
             await interaction.editReply({ content: `🏓 Pong! API Latency is **${apiLatency}ms**.` });
+            break;
+        }
+
+
+        case 'account': {
+            if (!accountPrefRepo) {
+                await interaction.editReply({ content: 'Account preference service not available.' });
+                break;
+            }
+            const requested = interaction.options.getString('name');
+            if (!requested) {
+                const current = bridge.selectedAccountByChannel?.get(interaction.channelId)
+                    ?? channelPrefRepo?.getAccountName(interaction.channelId)
+                    ?? accountPrefRepo.getAccountName(interaction.user.id)
+                    ?? 'default';
+                const names = listAccountNames(antigravityAccounts);
+                const effectiveCurrent = resolveValidAccountName(current, antigravityAccounts);
+                await interaction.editReply({ content: t('Current account: **${current}**\nAvailable: ${available}', { current: effectiveCurrent, available: names.join(', ') }) });
+                break;
+            }
+            const exists = listAccountNames(antigravityAccounts).includes(requested);
+            if (!exists) {
+                await interaction.editReply({ content: t('⚠️ Unknown account: **${name}**', { name: requested }) });
+                break;
+            }
+            accountPrefRepo.setAccountName(interaction.user.id, requested);
+            channelPrefRepo?.setAccountName(interaction.channelId, requested);
+            bridge.selectedAccountByChannel?.set(interaction.channelId, requested);
+            const channelWorkspace = wsHandler.getWorkspaceForChannel(interaction.channelId);
+            if (channelWorkspace) {
+                bridge.pool.setPreferredAccountForWorkspace?.(channelWorkspace, requested);
+            }
+            await interaction.editReply({ content: t('✅ Switched account to **${name}**.', { name: requested }) });
             break;
         }
 

@@ -13,6 +13,8 @@ export interface CdpServiceOptions {
     maxReconnectAttempts?: number;
     /** Delay between reconnect attempts (ms). Default: 2000 */
     reconnectDelayMs?: number;
+    accountName?: string;
+    accountPorts?: Record<string, number>;
 }
 
 export interface CdpContext {
@@ -80,13 +82,41 @@ export class CdpService extends EventEmitter {
     private currentWorkspacePath: string | null = null;
     /** Workspace switching flag (suppresses disconnected event) */
     private isSwitchingWorkspace: boolean = false;
+    private accountName: string;
+    private accountPorts: Record<string, number>;
 
     constructor(options: CdpServiceOptions = {}) {
         super();
-        this.ports = options.portsToScan || [...CDP_PORTS];
+        this.accountName = options.accountName || 'default';
+        this.accountPorts = options.accountPorts || {};
+        this.ports = options.portsToScan || this.resolveAccountPorts(this.accountName);
         if (options.cdpCallTimeout) this.cdpCallTimeout = options.cdpCallTimeout;
         this.maxReconnectAttempts = options.maxReconnectAttempts ?? 3;
         this.reconnectDelayMs = options.reconnectDelayMs ?? 2000;
+    }
+
+
+
+    private resolveAccountPorts(accountName: string): number[] {
+        const explicitPort = this.accountPorts[accountName];
+        if (Number.isInteger(explicitPort) && explicitPort > 0) return [explicitPort];
+
+        const raw = process.env.ANTIGRAVITY_ACCOUNTS;
+        if (!raw) return [...CDP_PORTS];
+        const parsed = raw
+            .split(',')
+            .map((item) => item.trim())
+            .filter((item) => item.length > 0)
+            .map((item) => {
+                const [name, portRaw] = item.split(':');
+                const port = Number(portRaw);
+                if (!name || !Number.isInteger(port) || port <= 0) return null;
+                return { name: name.trim(), port };
+            })
+            .filter((x): x is { name: string; port: number } => x !== null);
+        const match = parsed.find((a) => a.name === accountName);
+        if (match) return [match.port];
+        return [...CDP_PORTS];
     }
 
     private async getJson(url: string): Promise<any[]> {

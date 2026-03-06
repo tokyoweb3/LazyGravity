@@ -81,5 +81,19 @@
   "Fast Mode — for simple tasks": "Fast Mode — for simple tasks",
   "Plan Mode — for complex step-by-step tasks": "Plan Mode — for complex step-by-step tasks",
   "⚠️ Mode name not specified. Available modes: ": "⚠️ Mode name not specified. Available modes: ",
-  "⚠️ Invalid mode \"${modeName}\". Available modes: ${AVAILABLE_MODES.join(', ')}": "⚠️ Invalid mode \"${modeName}\". Available modes: ${AVAILABLE_MODES.join(', ')}"
+  "⚠️ Invalid mode \"${modeName}\". Available modes: ${AVAILABLE_MODES.join(', ')}": "⚠️ Invalid mode \"${modeName}\". Available modes: ${AVAILABLE_MODES.join(', ')}",
+  "Switch Antigravity account": "Switch Antigravity account",
+  "Account name": "Account name",
+  "List, register, or delete templates": "List, register, or delete templates",
+  "Display registered template list with execute buttons": "Display registered template list with execute buttons",
+  "Display and toggle auto-allow mode for approval dialogs": "Display and toggle auto-allow mode for approval dialogs",
+  "on / off (optional direct switch)": "on / off (optional direct switch)",
+  "Set deep-think loop count for this channel": "Set deep-think loop count for this channel",
+  "Loop count (1-20)": "Loop count (1-20)",
+  "⚠️ Usage: `/loop <1-20>`": "⚠️ Usage: `/loop <1-20>`",
+  "🧠 DeepThink loops set to **${count}**.": "🧠 DeepThink loops set to **${count}**.",
+  "Current DeepThink loops: **${count}**": "Current DeepThink loops: **${count}**",
+  "Current account: **${current}**\\nAvailable: ${available}": "Current account: **${current}**\\nAvailable: ${available}",
+  "⚠️ Unknown account: **${name}**": "⚠️ Unknown account: **${name}**",
+  "✅ Switched account to **${name}**.": "✅ Switched account to **${name}**."
 }

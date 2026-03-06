@@ -162,6 +162,31 @@ const outputCommand = new SlashCommandBuilder()
     );
 
 
+
+const accountCommand = new SlashCommandBuilder()
+    .setName('account')
+    .setDescription(t('Switch Antigravity account'))
+    .addStringOption((option) =>
+        option
+            .setName('name')
+            .setDescription(t('Account name'))
+            .setRequired(false)
+    );
+
+
+/** /loop command definition */
+const loopCommand = new SlashCommandBuilder()
+    .setName('loop')
+    .setDescription(t('Set deep-think loop count for this channel'))
+    .addIntegerOption((option) =>
+        option
+            .setName('count')
+            .setDescription(t('Loop count (1-20)'))
+            .setRequired(false)
+            .setMinValue(1)
+            .setMaxValue(20)
+    );
+
 /** /logs command definition */
 const logsCommand = new SlashCommandBuilder()
     .setName('logs')
@@ -209,7 +234,9 @@ export const slashCommands = [
     joinCommand,
     mirrorCommand,
     outputCommand,
+    loopCommand,
     pingCommand,
+    accountCommand,
     logsCommand,
 ];
 
