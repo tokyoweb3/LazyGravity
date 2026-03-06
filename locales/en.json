@@ -87,5 +87,14 @@
   "List, register, or delete templates": "List, register, or delete templates",
   "Display registered template list with execute buttons": "Display registered template list with execute buttons",
   "Display and toggle auto-allow mode for approval dialogs": "Display and toggle auto-allow mode for approval dialogs",
+  "on / off (optional direct switch)": "on / off (optional direct switch)",
+  "Set deep-think loop count for this channel": "Set deep-think loop count for this channel",
+  "Loop count (1-20)": "Loop count (1-20)",
+  "⚠️ Usage: `/loop <1-20>`": "⚠️ Usage: `/loop <1-20>`",
+  "🧠 DeepThink loops set to **${count}**.": "🧠 DeepThink loops set to **${count}**.",
+  "Current DeepThink loops: **${count}**": "Current DeepThink loops: **${count}**",
+  "Current account: **${current}**\\nAvailable: ${available}": "Current account: **${current}**\\nAvailable: ${available}",
+  "⚠️ Unknown account: **${name}**": "⚠️ Unknown account: **${name}**",
+  "✅ Switched account to **${name}**.": "✅ Switched account to **${name}**."
   "on / off (optional direct switch)": "on / off (optional direct switch)"
 }

@@ -111,5 +111,14 @@
   "List, register, or delete templates": "テンプレートの一覧表示・登録・削除を行います",
   "Display registered template list with execute buttons": "実行ボタン付きで登録テンプレート一覧を表示します",
   "Display and toggle auto-allow mode for approval dialogs": "承認ダイアログの自動許可モードを表示・切り替えします",
+  "on / off (optional direct switch)": "on / off（省略可）",
+  "Set deep-think loop count for this channel": "このチャンネルのDeepThink回数を設定します",
+  "Loop count (1-20)": "回数 (1-20)",
+  "⚠️ Usage: `/loop <1-20>`": "⚠️ 使用方法: `/loop <1-20>`",
+  "🧠 DeepThink loops set to **${count}**.": "🧠 DeepThink回数を **${count}** に設定しました。",
+  "Current DeepThink loops: **${count}**": "現在のDeepThink回数: **${count}**",
+  "Current account: **${current}**\\nAvailable: ${available}": "現在のアカウント: **${current}**\\n利用可能: ${available}",
+  "⚠️ Unknown account: **${name}**": "⚠️ 不明なアカウント: **${name}**",
+  "✅ Switched account to **${name}**.": "✅ アカウントを **${name}** に切り替えました。"
   "on / off (optional direct switch)": "on / off（省略可）"
 }

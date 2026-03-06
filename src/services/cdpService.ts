@@ -14,6 +14,7 @@ export interface CdpServiceOptions {
     /** Delay between reconnect attempts (ms). Default: 2000 */
     reconnectDelayMs?: number;
     accountName?: string;
+    accountPorts?: Record<string, number>;
 }
 
 export interface CdpContext {
@@ -82,10 +83,12 @@ export class CdpService extends EventEmitter {
     /** Workspace switching flag (suppresses disconnected event) */
     private isSwitchingWorkspace: boolean = false;
     private accountName: string;
+    private accountPorts: Record<string, number>;
 
     constructor(options: CdpServiceOptions = {}) {
         super();
         this.accountName = options.accountName || 'default';
+        this.accountPorts = options.accountPorts || {};
         this.ports = options.portsToScan || this.resolveAccountPorts(this.accountName);
         if (options.cdpCallTimeout) this.cdpCallTimeout = options.cdpCallTimeout;
         this.maxReconnectAttempts = options.maxReconnectAttempts ?? 3;
@@ -95,6 +98,9 @@ export class CdpService extends EventEmitter {
 
 
     private resolveAccountPorts(accountName: string): number[] {
+        const explicitPort = this.accountPorts[accountName];
+        if (Number.isInteger(explicitPort) && explicitPort > 0) return [explicitPort];
+
         const raw = process.env.ANTIGRAVITY_ACCOUNTS;
         if (!raw) return [...CDP_PORTS];
         const parsed = raw

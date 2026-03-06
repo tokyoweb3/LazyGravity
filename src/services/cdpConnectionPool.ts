@@ -143,6 +143,17 @@ export class CdpConnectionPool {
         return this.userMessageDetectors.get(buildConnectionKey(projectName, effectiveAccount));
     }
 
+
+    setPreferredAccountForWorkspace(workspacePath: string, accountName: string): void {
+        const projectName = this.extractProjectName(workspacePath);
+        this.workspaceToAccount.set(projectName, accountName);
+    }
+
+    getPreferredAccountForWorkspace(workspacePath: string): string | null {
+        const projectName = this.extractProjectName(workspacePath);
+        return this.workspaceToAccount.get(projectName) ?? null;
+    }
+
     getActiveWorkspaceNames(): string[] {
         const active: string[] = [];
         for (const [key, cdp] of this.connections) {

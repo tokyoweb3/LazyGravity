@@ -31,6 +31,7 @@ export interface CdpBridge {
     /** Session-level approval notification destination (workspace+sessionTitle -> channel) */
     approvalChannelBySession: Map<string, PlatformChannel>;
     selectedAccountByChannel?: Map<string, string>;
+    deepThinkCountByChannel?: Map<string, number>;
 }
 
 const APPROVE_ACTION_PREFIX = 'approve_action';
@@ -238,8 +239,12 @@ export function parseErrorPopupCustomId(customId: string): { action: 'dismiss' |
 }
 
 /** Initialize the CDP bridge (lazy connection: pool creation only) */
-export function initCdpBridge(autoApproveDefault: boolean): CdpBridge {
+export function initCdpBridge(
+    autoApproveDefault: boolean,
+    accountPorts: Record<string, number> = {},
+): CdpBridge {
     const pool = new CdpConnectionPool({
+        accountPorts,
         cdpCallTimeout: 15000,
         // Keep CDP reconnection lazy: do not reopen windows in background.
         // Reconnection is triggered when the next chat/template message is sent.
@@ -259,6 +264,7 @@ export function initCdpBridge(autoApproveDefault: boolean): CdpBridge {
         approvalChannelByWorkspace: new Map(),
         approvalChannelBySession: new Map(),
         selectedAccountByChannel: new Map(),
+        deepThinkCountByChannel: new Map(),
     };
 }
 
