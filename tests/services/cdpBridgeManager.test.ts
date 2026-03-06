@@ -1,10 +1,12 @@
 import {
     buildApprovalCustomId,
     buildPlanningCustomId,
+    buildRunCommandCustomId,
     getCurrentCdp,
     initCdpBridge,
     parseApprovalCustomId,
     parsePlanningCustomId,
+    parseRunCommandCustomId,
     registerApprovalSessionChannel,
     registerApprovalWorkspaceChannel,
     resolveApprovalChannelForCurrentChat,
@@ -103,5 +105,27 @@ describe('cdpBridgeManager', () => {
     it('parsePlanningCustomId returns null for non-planning IDs', () => {
         expect(parsePlanningCustomId('approve_action:ws-a')).toBeNull();
         expect(parsePlanningCustomId('random_string')).toBeNull();
+    });
+
+    it('round-trips build/parse of run command run action ID', () => {
+        const customId = buildRunCommandCustomId('run', 'my-workspace', '123456');
+        const parsed = parseRunCommandCustomId(customId);
+        expect(parsed).toEqual({ action: 'run', projectName: 'my-workspace', channelId: '123456' });
+    });
+
+    it('round-trips build/parse of run command reject action ID', () => {
+        const customId = buildRunCommandCustomId('reject', 'my-workspace', '789');
+        const parsed = parseRunCommandCustomId(customId);
+        expect(parsed).toEqual({ action: 'reject', projectName: 'my-workspace', channelId: '789' });
+    });
+
+    it('supports run command action IDs without channelId', () => {
+        const parsed = parseRunCommandCustomId('run_command_run_action:legacy-workspace');
+        expect(parsed).toEqual({ action: 'run', projectName: 'legacy-workspace', channelId: null });
+    });
+
+    it('parseRunCommandCustomId returns null for non-run-command IDs', () => {
+        expect(parseRunCommandCustomId('approve_action:ws-a')).toBeNull();
+        expect(parseRunCommandCustomId('random_string')).toBeNull();
     });
 });

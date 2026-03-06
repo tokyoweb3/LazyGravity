@@ -39,6 +39,7 @@ function buildDeps(overrides: Record<string, any> = {}) {
         ensureApprovalDetector: jest.fn(),
         ensureErrorPopupDetector: jest.fn(),
         ensurePlanningDetector: jest.fn(),
+        ensureRunCommandDetector: jest.fn(),
         registerApprovalWorkspaceChannel: jest.fn(),
         registerApprovalSessionChannel: jest.fn(),
         downloadInboundImageAttachments: jest.fn().mockResolvedValue([]),

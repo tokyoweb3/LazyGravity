@@ -13,6 +13,7 @@ import {
     ensureApprovalDetector as ensureApprovalDetectorFn,
     ensureErrorPopupDetector as ensureErrorPopupDetectorFn,
     ensurePlanningDetector as ensurePlanningDetectorFn,
+    ensureRunCommandDetector as ensureRunCommandDetectorFn,
     getCurrentCdp as getCurrentCdpFn,
     registerApprovalSessionChannel as registerApprovalSessionChannelFn,
     registerApprovalWorkspaceChannel as registerApprovalWorkspaceChannelFn,
@@ -65,6 +66,7 @@ export interface MessageCreateHandlerDeps {
     ensureApprovalDetector?: (bridge: CdpBridge, cdp: CdpService, projectName: string) => void;
     ensureErrorPopupDetector?: (bridge: CdpBridge, cdp: CdpService, projectName: string) => void;
     ensurePlanningDetector?: (bridge: CdpBridge, cdp: CdpService, projectName: string) => void;
+    ensureRunCommandDetector?: (bridge: CdpBridge, cdp: CdpService, projectName: string) => void;
     registerApprovalWorkspaceChannel?: (bridge: CdpBridge, projectName: string, channel: PlatformChannel) => void;
     registerApprovalSessionChannel?: (bridge: CdpBridge, projectName: string, sessionTitle: string, channel: PlatformChannel) => void;
     downloadInboundImageAttachments?: (message: Message) => Promise<InboundImageAttachment[]>;
@@ -78,6 +80,7 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
     const ensureApprovalDetector = deps.ensureApprovalDetector ?? ensureApprovalDetectorFn;
     const ensureErrorPopupDetector = deps.ensureErrorPopupDetector ?? ensureErrorPopupDetectorFn;
     const ensurePlanningDetector = deps.ensurePlanningDetector ?? ensurePlanningDetectorFn;
+    const ensureRunCommandDetector = deps.ensureRunCommandDetector ?? ensureRunCommandDetectorFn;
     const registerApprovalWorkspaceChannel = deps.registerApprovalWorkspaceChannel ?? registerApprovalWorkspaceChannelFn;
     const registerApprovalSessionChannel = deps.registerApprovalSessionChannel ?? registerApprovalSessionChannelFn;
     const downloadInboundImageAttachments = deps.downloadInboundImageAttachments ?? downloadInboundImageAttachmentsFn;
@@ -266,6 +269,7 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                             ensureApprovalDetector(deps.bridge, cdp, projectName);
                             ensureErrorPopupDetector(deps.bridge, cdp, projectName);
                             ensurePlanningDetector(deps.bridge, cdp, projectName);
+                            ensureRunCommandDetector(deps.bridge, cdp, projectName);
 
                             const session = deps.chatSessionRepo.findByChannelId(message.channelId);
                             if (session?.displayName) {

@@ -4,6 +4,7 @@ import { CdpService, CdpServiceOptions } from './cdpService';
 import { ApprovalDetector } from './approvalDetector';
 import { ErrorPopupDetector } from './errorPopupDetector';
 import { PlanningDetector } from './planningDetector';
+import { RunCommandDetector } from './runCommandDetector';
 import { UserMessageDetector } from './userMessageDetector';
 
 /**
@@ -18,6 +19,7 @@ export class CdpConnectionPool {
     private readonly approvalDetectors = new Map<string, ApprovalDetector>();
     private readonly errorPopupDetectors = new Map<string, ErrorPopupDetector>();
     private readonly planningDetectors = new Map<string, PlanningDetector>();
+    private readonly runCommandDetectors = new Map<string, RunCommandDetector>();
     private readonly userMessageDetectors = new Map<string, UserMessageDetector>();
     private readonly connectingPromises = new Map<string, Promise<CdpService>>();
     private readonly cdpOptions: CdpServiceOptions;
@@ -105,6 +107,12 @@ export class CdpConnectionPool {
             this.planningDetectors.delete(projectName);
         }
 
+        const runCmdDetector = this.runCommandDetectors.get(projectName);
+        if (runCmdDetector) {
+            runCmdDetector.stop();
+            this.runCommandDetectors.delete(projectName);
+        }
+
         const userMsgDetector = this.userMessageDetectors.get(projectName);
         if (userMsgDetector) {
             userMsgDetector.stop();
@@ -176,6 +184,24 @@ export class CdpConnectionPool {
      */
     getPlanningDetector(projectName: string): PlanningDetector | undefined {
         return this.planningDetectors.get(projectName);
+    }
+
+    /**
+     * Register a run command detector for a workspace.
+     */
+    registerRunCommandDetector(projectName: string, detector: RunCommandDetector): void {
+        const existing = this.runCommandDetectors.get(projectName);
+        if (existing && existing.isActive()) {
+            existing.stop();
+        }
+        this.runCommandDetectors.set(projectName, detector);
+    }
+
+    /**
+     * Get the run command detector for a workspace.
+     */
+    getRunCommandDetector(projectName: string): RunCommandDetector | undefined {
+        return this.runCommandDetectors.get(projectName);
     }
 
     /**
@@ -253,6 +279,11 @@ export class CdpConnectionPool {
             if (planDetector) {
                 planDetector.stop();
                 this.planningDetectors.delete(projectName);
+            }
+            const runCmdDetector = this.runCommandDetectors.get(projectName);
+            if (runCmdDetector) {
+                runCmdDetector.stop();
+                this.runCommandDetectors.delete(projectName);
             }
             const userMsgDetector = this.userMessageDetectors.get(projectName);
             if (userMsgDetector) {

@@ -57,11 +57,13 @@ import {
     ensureApprovalDetector,
     ensureErrorPopupDetector,
     ensurePlanningDetector,
+    ensureRunCommandDetector,
     getCurrentCdp,
     initCdpBridge,
     parseApprovalCustomId,
     parseErrorPopupCustomId,
     parsePlanningCustomId,
+    parseRunCommandCustomId,
     registerApprovalSessionChannel,
     registerApprovalWorkspaceChannel,
 } from '../services/cdpBridgeManager';
@@ -1036,6 +1038,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         parseApprovalCustomId,
         parseErrorPopupCustomId,
         parsePlanningCustomId,
+        parseRunCommandCustomId,
         joinHandler,
         userPrefRepo,
         handleSlashInteraction: async (
@@ -1095,6 +1098,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                     ensureApprovalDetector(bridge, cdp, projectName);
                     ensureErrorPopupDetector(bridge, cdp, projectName);
                     ensurePlanningDetector(bridge, cdp, projectName);
+                    ensureRunCommandDetector(bridge, cdp, projectName);
                 } catch (e: any) {
                     await interaction.followUp({
                         content: `Failed to connect to workspace: ${e.message}`,

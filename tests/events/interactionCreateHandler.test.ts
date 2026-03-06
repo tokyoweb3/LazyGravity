@@ -27,6 +27,7 @@ describe('interactionCreateHandler', () => {
             parseApprovalCustomId: jest.fn(),
             parseErrorPopupCustomId: jest.fn().mockReturnValue(null),
             parsePlanningCustomId: jest.fn().mockReturnValue(null),
+            parseRunCommandCustomId: jest.fn().mockReturnValue(null),
             handleSlashInteraction: jest.fn(),
         });
 
@@ -79,6 +80,7 @@ describe('interactionCreateHandler', () => {
             }),
             parseErrorPopupCustomId: jest.fn().mockReturnValue(null),
             parsePlanningCustomId: jest.fn().mockReturnValue(null),
+            parseRunCommandCustomId: jest.fn().mockReturnValue(null),
             handleSlashInteraction: jest.fn(),
         });
 
@@ -127,6 +129,7 @@ describe('interactionCreateHandler', () => {
             parseApprovalCustomId: jest.fn().mockReturnValue(null),
             parseErrorPopupCustomId: jest.fn().mockReturnValue(null),
             parsePlanningCustomId: jest.fn().mockReturnValue(null),
+            parseRunCommandCustomId: jest.fn().mockReturnValue(null),
             handleSlashInteraction: jest.fn(),
         });
 

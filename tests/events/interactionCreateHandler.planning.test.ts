@@ -34,6 +34,7 @@ describe('interactionCreateHandler - planning buttons', () => {
             parseApprovalCustomId: jest.fn().mockReturnValue(null),
             parseErrorPopupCustomId: jest.fn().mockReturnValue(null),
             parsePlanningCustomId: jest.fn().mockReturnValue(null),
+            parseRunCommandCustomId: jest.fn().mockReturnValue(null),
             handleSlashInteraction: jest.fn(),
             ...overrides,
         };

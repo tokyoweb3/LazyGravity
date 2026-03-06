@@ -277,6 +277,56 @@ Antigravity renders code blocks in a non-standard way.
 
 ---
 
+## 12. Run Command Approval
+
+Terminal command execution confirmation dialog (Run/Reject).
+
+> **Last verified**: 2026-03 (DOM provided by user in [#81](https://github.com/tokyoweb3/LazyGravity/issues/81))
+
+### Verified DOM Structure
+
+```html
+<div class="flex flex-col gap-2 border-gray-500/25 border rounded-lg my-1">
+  <div>
+    <div class="mb-1 px-2 py-1 text-sm border-b border-gray-500/25 ...">
+      <span class="opacity-60">Run command?</span>
+    </div>
+    <div class="flex grow items-start justify-between px-2 py-1 cursor-pointer">
+      <pre class="whitespace-pre-wrap break-all font-mono text-sm">
+        <span class="... opacity-50">~/Code/login</span>
+        <span class="opacity-50"> $ </span>python3 -m http.server 8000
+      </pre>
+    </div>
+    <div class="flex ... border-t border-gray-500/25 ...">
+      <!-- Permission dropdown: "Ask every time" -->
+      <button>Reject</button>    <!-- bg-secondary -->
+      <button>Run</button>       <!-- bg-primary, split button with chevron -->
+    </div>
+  </div>
+</div>
+```
+
+### Detection
+
+| Selector | Purpose | File |
+|----------|---------|------|
+| `span` with text matching `run command?` | Header text identifying the dialog | `runCommandDetector.ts` |
+| `div[class*="rounded-lg"][class*="border"]` | Dialog container (closest ancestor of header) | `runCommandDetector.ts` |
+| `pre` (inside container) | Command text display (`<dir> $ <command>`) | `runCommandDetector.ts` |
+
+### Button Text Patterns
+
+- **Run**: `run`, `実行`, `execute`
+- **Reject**: `reject`, `cancel`, `拒否`, `キャンセル`
+
+### Command Extraction
+
+The `<pre>` element contains: `<working-directory> $ <command>`. Split on ` $ ` to extract:
+- `workingDirectory`: e.g. `~/Code/login`
+- `commandText`: e.g. `python3 -m http.server 8000`
+
+---
+
 ## Maintenance Notes
 
 ### When Antigravity updates its DOM

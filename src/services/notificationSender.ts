@@ -36,6 +36,8 @@ const PLANNING_PROCEED_ACTION_PREFIX = 'planning_proceed_action';
 const ERROR_POPUP_DISMISS_ACTION_PREFIX = 'error_popup_dismiss_action';
 const ERROR_POPUP_COPY_DEBUG_ACTION_PREFIX = 'error_popup_copy_debug_action';
 const ERROR_POPUP_RETRY_ACTION_PREFIX = 'error_popup_retry_action';
+const RUN_COMMAND_RUN_ACTION_PREFIX = 'run_command_run_action';
+const RUN_COMMAND_REJECT_ACTION_PREFIX = 'run_command_reject_action';
 
 // ---------------------------------------------------------------------------
 // Notification colours
@@ -198,6 +200,43 @@ export function buildErrorPopupNotification(opts: {
             button(customId(ERROR_POPUP_DISMISS_ACTION_PREFIX, projectName, channelId), 'Dismiss', 'secondary'),
             button(customId(ERROR_POPUP_COPY_DEBUG_ACTION_PREFIX, projectName, channelId), 'Copy Debug', 'primary'),
             button(customId(ERROR_POPUP_RETRY_ACTION_PREFIX, projectName, channelId), 'Retry', 'success'),
+        ),
+    ];
+
+    return { richContent, components };
+}
+
+/** Build the run command notification message. */
+export function buildRunCommandNotification(opts: {
+    readonly title: string;
+    readonly commandText: string;
+    readonly workingDirectory: string;
+    readonly projectName: string;
+    readonly channelId: string | null;
+    /** Additional fields appended before footer. */
+    readonly extraFields?: readonly { readonly name: string; readonly value: string; readonly inline?: boolean }[];
+}): MessagePayload {
+    const { title, commandText, workingDirectory, projectName, channelId, extraFields } = opts;
+
+    const richContent = pipe(
+        createRichContent(),
+        (rc) => withTitle(rc, title),
+        (rc) => withDescription(rc, `\`\`\`\n${commandText}\n\`\`\``),
+        (rc) => withColor(rc, COLOR_APPROVAL),
+        (rc) => addField(rc, 'Directory', workingDirectory || '(unknown)', true),
+        (rc) => addField(rc, 'Project', projectName, true),
+        (rc) =>
+            extraFields
+                ? extraFields.reduce<typeof rc>((acc, f) => addField(acc, f.name, f.value, f.inline), rc)
+                : rc,
+        (rc) => withFooter(rc, 'Run command approval required'),
+        (rc) => withTimestamp(rc),
+    );
+
+    const components: readonly ComponentRow[] = [
+        buttonRow(
+            button(customId(RUN_COMMAND_RUN_ACTION_PREFIX, projectName, channelId), 'Run', 'success'),
+            button(customId(RUN_COMMAND_REJECT_ACTION_PREFIX, projectName, channelId), 'Reject', 'danger'),
         ),
     ];
 

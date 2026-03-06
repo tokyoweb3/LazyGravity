@@ -66,6 +66,7 @@ export interface InteractionCreateHandlerDeps {
     parseApprovalCustomId: (customId: string) => { action: 'approve' | 'always_allow' | 'deny'; projectName: string | null; channelId: string | null } | null;
     parsePlanningCustomId: (customId: string) => { action: 'open' | 'proceed'; projectName: string | null; channelId: string | null } | null;
     parseErrorPopupCustomId: (customId: string) => { action: 'dismiss' | 'copy_debug' | 'retry'; projectName: string | null; channelId: string | null } | null;
+    parseRunCommandCustomId: (customId: string) => { action: 'run' | 'reject'; projectName: string | null; channelId: string | null } | null;
     handleSlashInteraction: (
         interaction: ChatInputCommandInteraction,
         handler: SlashCommandHandler,
@@ -441,6 +442,73 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                                     await interaction.followUp({ content: t('An error occurred while processing the error popup action.'), flags: MessageFlags.Ephemeral }).catch(logger.error);
                                 }
                             } catch { /* ignore */ }
+                        }
+                    }
+                    return;
+                }
+
+                const runCommandAction = deps.parseRunCommandCustomId(interaction.customId);
+                if (runCommandAction) {
+                    if (runCommandAction.channelId && runCommandAction.channelId !== interaction.channelId) {
+                        await interaction.reply({
+                            content: t('This run command action is linked to a different session channel.'),
+                            flags: MessageFlags.Ephemeral,
+                        }).catch(logger.error);
+                        return;
+                    }
+
+                    const runCmdWorkspace = runCommandAction.projectName ?? deps.bridge.lastActiveWorkspace;
+                    const runCmdDetector = runCmdWorkspace
+                        ? deps.bridge.pool.getRunCommandDetector(runCmdWorkspace)
+                        : undefined;
+
+                    if (!runCmdDetector) {
+                        try {
+                            await interaction.reply({ content: t('Run command detector not found.'), flags: MessageFlags.Ephemeral });
+                        } catch { /* ignore */ }
+                        return;
+                    }
+
+                    let success = false;
+                    let actionLabel = '';
+                    if (runCommandAction.action === 'run') {
+                        success = await runCmdDetector.runButton();
+                        actionLabel = t('Run');
+                    } else {
+                        success = await runCmdDetector.rejectButton();
+                        actionLabel = t('Reject');
+                    }
+
+                    try {
+                        if (success) {
+                            const originalEmbed = interaction.message.embeds[0];
+                            const updatedEmbed = originalEmbed
+                                ? EmbedBuilder.from(originalEmbed)
+                                : new EmbedBuilder().setTitle('Run Command');
+                            const historyText = `${actionLabel} by <@${interaction.user.id}> (${new Date().toLocaleString('ja-JP')})`;
+                            updatedEmbed
+                                .setColor(runCommandAction.action === 'reject' ? 0xE74C3C : 0x2ECC71)
+                                .addFields({ name: 'Action History', value: historyText, inline: false })
+                                .setTimestamp();
+
+                            await interaction.update({
+                                embeds: [updatedEmbed],
+                                components: disableAllButtons(interaction.message.components),
+                            });
+                        } else {
+                            await interaction.reply({ content: t('Run command button not found.'), flags: MessageFlags.Ephemeral });
+                        }
+                    } catch (interactionError: any) {
+                        if (interactionError?.code === 10062 || interactionError?.code === 40060) {
+                            logger.warn('[RunCommand] Interaction expired. Responding directly in the channel.');
+                            if (interaction.channel && 'send' in interaction.channel) {
+                                const fallbackMessage = success
+                                    ? `${actionLabel} completed.`
+                                    : t('Run command button not found.');
+                                await (interaction.channel as any).send(fallbackMessage).catch(logger.error);
+                            }
+                        } else {
+                            throw interactionError;
                         }
                     }
                     return;

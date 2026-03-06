@@ -6,6 +6,7 @@ import {
     buildAutoApprovedNotification,
     buildPlanningNotification,
     buildErrorPopupNotification,
+    buildRunCommandNotification,
     buildResolvedOverlay,
 } from './notificationSender';
 import { ApprovalDetector, ApprovalInfo } from './approvalDetector';
@@ -14,6 +15,7 @@ import { CdpConnectionPool } from './cdpConnectionPool';
 import { CdpService } from './cdpService';
 import { ErrorPopupDetector, ErrorPopupInfo } from './errorPopupDetector';
 import { PlanningDetector, PlanningInfo } from './planningDetector';
+import { RunCommandDetector, RunCommandInfo } from './runCommandDetector';
 import { QuotaService } from './quotaService';
 import { UserMessageDetector, UserMessageInfo } from './userMessageDetector';
 
@@ -40,6 +42,8 @@ const PLANNING_PROCEED_ACTION_PREFIX = 'planning_proceed_action';
 const ERROR_POPUP_DISMISS_ACTION_PREFIX = 'error_popup_dismiss_action';
 const ERROR_POPUP_COPY_DEBUG_ACTION_PREFIX = 'error_popup_copy_debug_action';
 const ERROR_POPUP_RETRY_ACTION_PREFIX = 'error_popup_retry_action';
+const RUN_COMMAND_RUN_ACTION_PREFIX = 'run_command_run_action';
+const RUN_COMMAND_REJECT_ACTION_PREFIX = 'run_command_reject_action';
 
 function normalizeSessionTitle(title: string): string {
     return title.trim().toLowerCase();
@@ -232,6 +236,40 @@ export function parseErrorPopupCustomId(customId: string): { action: 'dismiss' |
         const rest = customId.substring(`${ERROR_POPUP_RETRY_ACTION_PREFIX}:`.length);
         const [projectName, channelId] = rest.split(':');
         return { action: 'retry', projectName: projectName || null, channelId: channelId || null };
+    }
+    return null;
+}
+
+export function buildRunCommandCustomId(
+    action: 'run' | 'reject',
+    projectName: string,
+    channelId?: string,
+): string {
+    const prefix = action === 'run'
+        ? RUN_COMMAND_RUN_ACTION_PREFIX
+        : RUN_COMMAND_REJECT_ACTION_PREFIX;
+    if (channelId && channelId.trim().length > 0) {
+        return `${prefix}:${projectName}:${channelId}`;
+    }
+    return `${prefix}:${projectName}`;
+}
+
+export function parseRunCommandCustomId(customId: string): { action: 'run' | 'reject'; projectName: string | null; channelId: string | null } | null {
+    if (customId === RUN_COMMAND_RUN_ACTION_PREFIX) {
+        return { action: 'run', projectName: null, channelId: null };
+    }
+    if (customId === RUN_COMMAND_REJECT_ACTION_PREFIX) {
+        return { action: 'reject', projectName: null, channelId: null };
+    }
+    if (customId.startsWith(`${RUN_COMMAND_RUN_ACTION_PREFIX}:`)) {
+        const rest = customId.substring(`${RUN_COMMAND_RUN_ACTION_PREFIX}:`.length);
+        const [projectName, channelId] = rest.split(':');
+        return { action: 'run', projectName: projectName || null, channelId: channelId || null };
+    }
+    if (customId.startsWith(`${RUN_COMMAND_REJECT_ACTION_PREFIX}:`)) {
+        const rest = customId.substring(`${RUN_COMMAND_REJECT_ACTION_PREFIX}:`.length);
+        const [projectName, channelId] = rest.split(':');
+        return { action: 'reject', projectName: projectName || null, channelId: channelId || null };
     }
     return null;
 }
@@ -497,6 +535,89 @@ export function ensureErrorPopupDetector(
     detector.start();
     bridge.pool.registerErrorPopupDetector(projectName, detector);
     logger.debug(`[ErrorPopupDetector:${projectName}] Started error popup detection`);
+}
+
+/**
+ * Helper to start a run command detector for each workspace.
+ * Detects "Run command?" confirmation dialogs and forwards them to Discord.
+ * Does nothing if a detector for the same workspace is already running.
+ */
+export function ensureRunCommandDetector(
+    bridge: CdpBridge,
+    cdp: CdpService,
+    projectName: string,
+): void {
+    const existing = bridge.pool.getRunCommandDetector(projectName);
+    if (existing && existing.isActive()) return;
+
+    let lastNotification: { sent: PlatformSentMessage; payload: MessagePayload } | null = null;
+
+    const detector = new RunCommandDetector({
+        cdpService: cdp,
+        pollIntervalMs: 2000,
+        onResolved: () => {
+            if (!lastNotification) return;
+            const { sent, payload } = lastNotification;
+            lastNotification = null;
+            const resolved = buildResolvedOverlay(payload, t('Resolved in Antigravity'));
+            sent.edit(resolved).catch(logger.error);
+        },
+        onRunCommandRequired: async (info: RunCommandInfo) => {
+            logger.debug(`[RunCommandDetector:${projectName}] Run command detected (cmd="${info.commandText}")`);
+
+            const currentChatTitle = await getCurrentChatTitle(cdp);
+            const targetChannel = resolveApprovalChannelForCurrentChat(bridge, projectName, currentChatTitle);
+            const targetChannelId = targetChannel ? targetChannel.id : '';
+
+            if (!targetChannel || !targetChannelId) {
+                logger.warn(
+                    `[RunCommandDetector:${projectName}] Skipped run command notification because chat is not linked to a session` +
+                    `${currentChatTitle ? ` (title="${currentChatTitle}")` : ''}`,
+                );
+                return;
+            }
+
+            if (bridge.autoAccept.isEnabled()) {
+                const accepted = await detector.runButton();
+
+                const autoPayload = buildAutoApprovedNotification({
+                    accepted,
+                    projectName,
+                    description: `Run: ${info.commandText}`,
+                    approveText: info.runText ?? 'Run',
+                });
+                await targetChannel.send(autoPayload).catch(logger.error);
+
+                if (accepted) {
+                    return;
+                }
+            }
+
+            const payload = buildRunCommandNotification({
+                title: t('Run Command?'),
+                commandText: info.commandText,
+                workingDirectory: info.workingDirectory,
+                projectName,
+                channelId: targetChannelId,
+                extraFields: [
+                    { name: t('Run button'), value: info.runText, inline: true },
+                    { name: t('Reject button'), value: info.rejectText, inline: true },
+                ],
+            });
+
+            const sent = await targetChannel.send(payload).catch((err: any) => {
+                logger.error(err);
+                return null;
+            });
+            if (sent) {
+                lastNotification = { sent, payload };
+            }
+        },
+    });
+
+    detector.start();
+    bridge.pool.registerRunCommandDetector(projectName, detector);
+    logger.debug(`[RunCommandDetector:${projectName}] Started run command detection`);
 }
 
 /**
