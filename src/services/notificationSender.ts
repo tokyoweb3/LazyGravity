@@ -217,13 +217,17 @@ export function buildRunCommandNotification(opts: {
     readonly extraFields?: readonly { readonly name: string; readonly value: string; readonly inline?: boolean }[];
 }): MessagePayload {
     const { title, commandText, workingDirectory, projectName, channelId, extraFields } = opts;
+    const safeCommandText = (commandText || '')
+        .replace(/```/g, '`\u200b``')
+        .slice(0, 3800);
+    const safeWorkingDirectory = (workingDirectory || '(unknown)').slice(0, 1024);
 
     const richContent = pipe(
         createRichContent(),
         (rc) => withTitle(rc, title),
-        (rc) => withDescription(rc, `\`\`\`\n${commandText}\n\`\`\``),
+        (rc) => withDescription(rc, `\`\`\`\n${safeCommandText}\n\`\`\``),
         (rc) => withColor(rc, COLOR_APPROVAL),
-        (rc) => addField(rc, 'Directory', workingDirectory || '(unknown)', true),
+        (rc) => addField(rc, 'Directory', safeWorkingDirectory, true),
         (rc) => addField(rc, 'Project', projectName, true),
         (rc) =>
             extraFields

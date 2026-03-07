@@ -55,8 +55,8 @@ const DETECT_RUN_COMMAND_SCRIPT = `(() => {
 
     const normalize = (text) => (text || '').toLowerCase().replace(/\\s+/g, ' ').trim();
 
-    // Find the "Run command?" header span
-    const allSpans = Array.from(document.querySelectorAll('span'));
+    // Find the "Run command?" header span (reverse order to prefer newest card)
+    const allSpans = Array.from(document.querySelectorAll('span')).reverse();
     const headerSpan = allSpans.find(span => {
         if (!span.offsetParent && span.offsetParent !== document.body) {
             const rect = span.getBoundingClientRect();

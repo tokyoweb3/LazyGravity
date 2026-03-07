@@ -563,7 +563,7 @@ export function ensureRunCommandDetector(
             sent.edit(resolved).catch(logger.error);
         },
         onRunCommandRequired: async (info: RunCommandInfo) => {
-            logger.debug(`[RunCommandDetector:${projectName}] Run command detected (cmd="${info.commandText}")`);
+            logger.debug(`[RunCommandDetector:${projectName}] Run command detected`);
 
             const currentChatTitle = await getCurrentChatTitle(cdp);
             const targetChannel = resolveApprovalChannelForCurrentChat(bridge, projectName, currentChatTitle);
