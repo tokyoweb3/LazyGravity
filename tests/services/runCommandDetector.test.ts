@@ -375,6 +375,14 @@ describe('RunCommandDetector - run command dialog detection and remote execution
                 rejectText: 'Reject',
             }),
         );
+
+        // Verify the detection script itself contains the 'accept' pattern
+        expect(mockCdpService.call).toHaveBeenCalledWith(
+            'Runtime.evaluate',
+            expect.objectContaining({
+                expression: expect.stringContaining("'accept'"),
+            }),
+        );
     });
 
     it('runButton() uses detected Accept text when dialog has Accept pattern', async () => {
