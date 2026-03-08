@@ -50,7 +50,7 @@ const DETECT_RUN_COMMAND_SCRIPT = `(() => {
         'run command?', 'run command', 'execute command',
         'コマンドを実行', 'コマンド実行'
     ];
-    const RUN_PATTERNS = ['run', '実行', 'execute'];
+    const RUN_PATTERNS = ['run', 'accept', '実行', 'execute'];
     const REJECT_PATTERNS = ['reject', 'cancel', '拒否', 'キャンセル'];
 
     const normalize = (text) => (text || '').toLowerCase().replace(/\\s+/g, ' ').trim();

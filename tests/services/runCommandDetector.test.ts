@@ -348,6 +348,62 @@ describe('RunCommandDetector - run command dialog detection and remote execution
         );
     });
 
+    it('detects dialog with Accept/Reject buttons (alternative pattern)', async () => {
+        const onRunCommandRequired = jest.fn();
+        const mockInfo = makeRunCommandInfo({
+            runText: 'Accept',
+            rejectText: 'Reject',
+        });
+
+        mockCdpService.call.mockResolvedValue({
+            result: { value: mockInfo },
+        });
+
+        detector = new RunCommandDetector({
+            cdpService: mockCdpService,
+            pollIntervalMs: 500,
+            onRunCommandRequired,
+        });
+        detector.start();
+
+        await jest.advanceTimersByTimeAsync(500);
+
+        expect(onRunCommandRequired).toHaveBeenCalledTimes(1);
+        expect(onRunCommandRequired).toHaveBeenCalledWith(
+            expect.objectContaining({
+                runText: 'Accept',
+                rejectText: 'Reject',
+            }),
+        );
+    });
+
+    it('runButton() uses detected Accept text when dialog has Accept pattern', async () => {
+        const mockInfo = makeRunCommandInfo({ runText: 'Accept' });
+
+        mockCdpService.call
+            .mockResolvedValueOnce({ result: { value: mockInfo } })
+            .mockResolvedValueOnce({ result: { value: { ok: true } } });
+
+        detector = new RunCommandDetector({
+            cdpService: mockCdpService,
+            pollIntervalMs: 500,
+            onRunCommandRequired: jest.fn(),
+        });
+        detector.start();
+
+        await jest.advanceTimersByTimeAsync(500);
+
+        const result = await detector.runButton();
+
+        expect(result).toBe(true);
+        expect(mockCdpService.call).toHaveBeenLastCalledWith(
+            'Runtime.evaluate',
+            expect.objectContaining({
+                expression: expect.stringContaining('Accept'),
+            }),
+        );
+    });
+
     it('calls onResolved when dialog disappears after detection', async () => {
         const onResolved = jest.fn();
         const mockInfo = makeRunCommandInfo();
