@@ -1,4 +1,5 @@
 import * as net from 'net';
+import * as http from 'http';
 import * as os from 'os';
 import { execFile, spawn } from 'child_process';
 import { CDP_PORTS } from '../../utils/cdpPorts';
@@ -11,6 +12,7 @@ const C = {
     dim: '\x1b[2m',
     cyan: '\x1b[36m',
     green: '\x1b[32m',
+    yellow: '\x1b[33m',
     red: '\x1b[31m',
 } as const;
 
@@ -81,6 +83,46 @@ function openLinux(port: number): Promise<void> {
     });
 }
 
+/**
+ * Poll CDP endpoint until it responds or timeout is reached.
+ */
+function waitForCdp(port: number, timeoutMs: number = 15000, intervalMs: number = 1000): Promise<boolean> {
+    const start = Date.now();
+    return new Promise((resolve) => {
+        const check = (): void => {
+            const req = http.get(`http://127.0.0.1:${port}/json/list`, (res) => {
+                let data = '';
+                res.on('data', (chunk) => (data += chunk));
+                res.on('end', () => {
+                    try {
+                        const parsed = JSON.parse(data);
+                        if (Array.isArray(parsed)) {
+                            resolve(true);
+                            return;
+                        }
+                    } catch { /* not ready */ }
+                    retry();
+                });
+            });
+            req.on('error', () => retry());
+            req.setTimeout(2000, () => {
+                req.destroy();
+                retry();
+            });
+        };
+
+        const retry = (): void => {
+            if (Date.now() - start >= timeoutMs) {
+                resolve(false);
+                return;
+            }
+            setTimeout(check, intervalMs);
+        };
+
+        check();
+    });
+}
+
 export async function openAction(): Promise<void> {
     const platform = os.platform();
 
@@ -107,7 +149,15 @@ export async function openAction(): Promise<void> {
             await openLinux(port);
         }
 
-        console.log(`  ${C.green}${APP_NAME} opened on CDP port ${port}${C.reset}`);
+        console.log(`  ${C.dim}Waiting for CDP to respond on port ${port}...${C.reset}`);
+
+        const ready = await waitForCdp(port);
+        if (ready) {
+            console.log(`  ${C.green}${APP_NAME} is ready on CDP port ${port}${C.reset}`);
+        } else {
+            console.log(`  ${C.yellow}${APP_NAME} launched but CDP not yet responding on port ${port}${C.reset}`);
+            console.log(`  ${C.dim}It may still be starting up. Try running start in a few seconds.${C.reset}`);
+        }
         console.log(`  ${C.dim}Run ${C.reset}${C.cyan}lazy-gravity start${C.reset}${C.dim} to connect the bot.${C.reset}\n`);
     } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);

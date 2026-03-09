@@ -48,10 +48,14 @@ export async function ensureAntigravityRunning(): Promise<void> {
     logger.warn('='.repeat(70));
     logger.warn('  Antigravity CDP ports are not responding');
     logger.warn('');
-    logger.warn('  Please run AntigravityDebug.command before starting the Bot');
+    logger.warn('  Run the following command to open Antigravity with CDP enabled:');
+    logger.warn('');
+    logger.warn('    lazy-gravity open');
     logger.warn('');
     logger.warn('  Or manually:');
     logger.warn(`    ${getAntigravityCdpHint(9222)}`);
+    logger.warn('');
+    logger.warn('  Then run:  lazy-gravity start');
     logger.warn('='.repeat(70));
     logger.warn('');
 }

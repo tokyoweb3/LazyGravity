@@ -74,6 +74,10 @@ export function buildProjectListPayload(
     );
 
     if (workspaces.length === 0) {
+        rc = withDescription(
+            rc,
+            t('No projects found.\nCreate a project directory in your workspace base folder, then try again.'),
+        );
         return { richContent: rc, components: [] };
     }
 
@@ -146,6 +150,9 @@ export function buildProjectListUI(
         .setTimestamp();
 
     if (workspaces.length === 0) {
+        embed.setDescription(
+            t('No projects found.\nCreate a project directory in your workspace base folder, then try again.'),
+        );
         return { embeds: [embed], components: [] };
     }
 
