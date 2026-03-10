@@ -128,6 +128,20 @@ export class CdpService extends EventEmitter {
             );
         }
 
+        // No workbench page found — try to open the chat panel automatically
+        // before falling back to Launchpad
+        if (!target) {
+            const anyPage = allPages.find(t => t.webSocketDebuggerUrl);
+            if (anyPage) {
+                logger.debug('[CdpService] No workbench page found. Attempting to open chat panel via Cmd+L / Ctrl+L...');
+                await this.openChatPanelViaKeyboard(anyPage.webSocketDebuggerUrl);
+
+                // Re-scan after opening chat panel
+                target = await this.findWorkbenchTarget();
+            }
+        }
+
+        // Last resort: accept Launchpad as target
         if (!target) {
             target = allPages.find(t =>
                 t.webSocketDebuggerUrl &&
@@ -652,6 +666,104 @@ export class CdpService extends EventEmitter {
         throw new Error(
             `Workbench page for workspace "${projectName}" not found within ${maxWaitMs / 1000} seconds`,
         );
+    }
+
+    /**
+     * Scan all CDP ports and return the first workbench-like target page.
+     */
+    private async findWorkbenchTarget(): Promise<any | null> {
+        let allPages: any[] = [];
+        for (const port of this.ports) {
+            try {
+                const list = await this.getJson(`http://127.0.0.1:${port}/json/list`);
+                allPages.push(...list);
+            } catch {
+                // port not responding
+            }
+        }
+
+        return (
+            allPages.find(t =>
+                t.type === 'page' &&
+                t.webSocketDebuggerUrl &&
+                !t.title?.includes('Launchpad') &&
+                !t.url?.includes('workbench-jetski-agent') &&
+                (t.url?.includes('workbench') || t.title?.includes('Antigravity') || t.title?.includes('Cascade')),
+            ) ??
+            allPages.find(t =>
+                t.webSocketDebuggerUrl &&
+                (t.url?.includes('workbench') || t.title?.includes('Antigravity') || t.title?.includes('Cascade')) &&
+                !t.title?.includes('Launchpad'),
+            ) ??
+            null
+        );
+    }
+
+    /**
+     * Temporarily connect to a page and send Cmd+L / Ctrl+L to open the chat panel.
+     */
+    private async openChatPanelViaKeyboard(wsUrl: string): Promise<void> {
+        const tempWs = new WebSocket(wsUrl);
+        let idCounter = 1;
+
+        try {
+            await new Promise<void>((resolve, reject) => {
+                tempWs.on('open', resolve);
+                tempWs.on('error', reject);
+                setTimeout(() => reject(new Error('Timeout')), 5000);
+            });
+
+            const send = (method: string, params: any = {}): Promise<void> =>
+                new Promise((resolve, reject) => {
+                    const id = idCounter++;
+                    tempWs.send(JSON.stringify({ id, method, params }));
+                    const timeout = setTimeout(() => reject(new Error('Timeout')), 3000);
+                    const onMsg = (raw: WebSocket.Data): void => {
+                        try {
+                            const data = JSON.parse(raw.toString());
+                            if (data.id === id) {
+                                clearTimeout(timeout);
+                                tempWs.off('message', onMsg);
+                                resolve();
+                            }
+                        } catch { /* ignore */ }
+                    };
+                    tempWs.on('message', onMsg);
+                });
+
+            const modifiers = process.platform === 'darwin' ? 4 : 2; // Meta : Ctrl
+            await send('Input.dispatchKeyEvent', {
+                type: 'keyDown',
+                key: 'l',
+                code: 'KeyL',
+                modifiers,
+                windowsVirtualKeyCode: 76,
+                nativeVirtualKeyCode: 76,
+            });
+            await send('Input.dispatchKeyEvent', {
+                type: 'keyUp',
+                key: 'l',
+                code: 'KeyL',
+                modifiers,
+                windowsVirtualKeyCode: 76,
+                nativeVirtualKeyCode: 76,
+            });
+
+            // Wait until a workbench target appears, up to a bounded timeout
+            const deadline = Date.now() + 10000;
+            while (Date.now() < deadline) {
+                await new Promise(r => setTimeout(r, 500));
+                if (await this.findWorkbenchTarget()) {
+                    break;
+                }
+            }
+        } catch (e) {
+            logger.debug(`[CdpService] Failed to open chat panel automatically: ${e}`);
+        } finally {
+            if (tempWs.readyState === WebSocket.OPEN) {
+                tempWs.close();
+            }
+        }
     }
 
     private async runCommand(command: string, args: string[]): Promise<void> {
