@@ -128,6 +128,20 @@ export class CdpService extends EventEmitter {
             );
         }
 
+        // No workbench page found — try to open the chat panel automatically
+        // before falling back to Launchpad
+        if (!target) {
+            const anyPage = allPages.find(t => t.webSocketDebuggerUrl);
+            if (anyPage) {
+                logger.debug('[CdpService] No workbench page found. Attempting to open chat panel via Cmd+L / Ctrl+L...');
+                await this.openChatPanelViaKeyboard(anyPage.webSocketDebuggerUrl);
+
+                // Re-scan after opening chat panel
+                target = await this.findWorkbenchTarget();
+            }
+        }
+
+        // Last resort: accept Launchpad as target
         if (!target) {
             target = allPages.find(t =>
                 t.webSocketDebuggerUrl &&
@@ -145,20 +159,6 @@ export class CdpService extends EventEmitter {
                 }
             }
             return target.webSocketDebuggerUrl;
-        }
-
-        // No workbench page found — try to open the chat panel automatically
-        const anyPage = allPages.find(t => t.webSocketDebuggerUrl);
-        if (anyPage) {
-            logger.debug('[CdpService] No workbench page found. Attempting to open chat panel via Cmd+L / Ctrl+L...');
-            await this.openChatPanelViaKeyboard(anyPage.webSocketDebuggerUrl);
-
-            // Re-scan after opening chat panel
-            const retryTarget = await this.findWorkbenchTarget();
-            if (retryTarget) {
-                this.targetUrl = retryTarget.webSocketDebuggerUrl;
-                return retryTarget.webSocketDebuggerUrl;
-            }
         }
 
         throw new Error('CDP target not found on any port.');
@@ -749,8 +749,14 @@ export class CdpService extends EventEmitter {
                 nativeVirtualKeyCode: 76,
             });
 
-            // Wait for the chat panel to initialize
-            await new Promise(r => setTimeout(r, 3000));
+            // Wait until a workbench target appears, up to a bounded timeout
+            const deadline = Date.now() + 10000;
+            while (Date.now() < deadline) {
+                await new Promise(r => setTimeout(r, 500));
+                if (await this.findWorkbenchTarget()) {
+                    break;
+                }
+            }
         } catch (e) {
             logger.debug(`[CdpService] Failed to open chat panel automatically: ${e}`);
         } finally {
