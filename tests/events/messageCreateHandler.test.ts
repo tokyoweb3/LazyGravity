@@ -97,7 +97,7 @@ describe('messageCreateHandler', () => {
         expect(sendPromptToAntigravity).toHaveBeenCalled();
     });
 
-    it('stops prompt delivery when a renamed session cannot be re-activated', async () => {
+    it('stops prompt delivery when a renamed session cannot be re-activated and recovery fails', async () => {
         const sendPromptToAntigravity = jest.fn();
         const reply = jest.fn().mockResolvedValue(undefined);
 
@@ -105,17 +105,123 @@ describe('messageCreateHandler', () => {
             sendPromptToAntigravity,
             chatSessionService: {
                 activateSessionByTitle: jest.fn().mockResolvedValue({ ok: false, error: 'not found' }),
+                getCurrentSessionInfo: jest.fn().mockResolvedValue({ title: '', hasActiveChat: false }),
             },
             chatSessionRepo: {
                 findByChannelId: jest.fn().mockReturnValue({
                     isRenamed: true,
                     displayName: 'legacy-session',
+                    categoryId: 'cat-1',
                 }),
+                findByCategoryId: jest.fn().mockReturnValue([]),
             },
         }));
 
         await handler(buildMessage({ reply }));
 
+        expect(sendPromptToAntigravity).not.toHaveBeenCalled();
+        expect(reply).toHaveBeenCalled();
+    });
+
+    it('recovers from session title change by adopting the new title', async () => {
+        const sendPromptToAntigravity = mockSendPromptImmediate();
+        const updateDisplayName = jest.fn().mockReturnValue(true);
+        const activateSessionByTitle = jest.fn()
+            .mockResolvedValueOnce({ ok: false, error: 'Activated chat did not match target title (expected="Original Title", actual="New Title")' })
+            .mockResolvedValueOnce({ ok: true });
+
+        const handler = createMessageCreateHandler(buildDeps({
+            sendPromptToAntigravity,
+            chatSessionService: {
+                activateSessionByTitle,
+                getCurrentSessionInfo: jest.fn().mockResolvedValue({
+                    title: 'New Title',
+                    hasActiveChat: true,
+                }),
+            },
+            chatSessionRepo: {
+                findByChannelId: jest.fn().mockReturnValue({
+                    isRenamed: true,
+                    displayName: 'Original Title',
+                    categoryId: 'cat-1',
+                    channelId: 'ch-1',
+                }),
+                findByCategoryId: jest.fn().mockReturnValue([]),
+                updateDisplayName,
+            },
+        }));
+
+        await handler(buildMessage());
+
+        expect(updateDisplayName).toHaveBeenCalledWith('ch-1', 'New Title');
+        expect(activateSessionByTitle).toHaveBeenCalledTimes(2);
+        expect(sendPromptToAntigravity).toHaveBeenCalled();
+    });
+
+    it('does not adopt new title if it belongs to a sibling channel', async () => {
+        const sendPromptToAntigravity = jest.fn();
+        const reply = jest.fn().mockResolvedValue(undefined);
+        const updateDisplayName = jest.fn();
+
+        const handler = createMessageCreateHandler(buildDeps({
+            sendPromptToAntigravity,
+            chatSessionService: {
+                activateSessionByTitle: jest.fn().mockResolvedValue({ ok: false, error: 'title mismatch' }),
+                getCurrentSessionInfo: jest.fn().mockResolvedValue({
+                    title: 'Sibling Session',
+                    hasActiveChat: true,
+                }),
+            },
+            chatSessionRepo: {
+                findByChannelId: jest.fn().mockReturnValue({
+                    isRenamed: true,
+                    displayName: 'Original Title',
+                    categoryId: 'cat-1',
+                    channelId: 'ch-1',
+                }),
+                findByCategoryId: jest.fn().mockReturnValue([
+                    { channelId: 'ch-2', displayName: 'Sibling Session' },
+                ]),
+                updateDisplayName,
+            },
+        }));
+
+        await handler(buildMessage({ reply }));
+
+        expect(updateDisplayName).not.toHaveBeenCalled();
+        expect(sendPromptToAntigravity).not.toHaveBeenCalled();
+        expect(reply).toHaveBeenCalled();
+    });
+
+    it('does not adopt title when no active chat exists during recovery', async () => {
+        const sendPromptToAntigravity = jest.fn();
+        const reply = jest.fn().mockResolvedValue(undefined);
+        const updateDisplayName = jest.fn();
+
+        const handler = createMessageCreateHandler(buildDeps({
+            sendPromptToAntigravity,
+            chatSessionService: {
+                activateSessionByTitle: jest.fn().mockResolvedValue({ ok: false, error: 'not found' }),
+                getCurrentSessionInfo: jest.fn().mockResolvedValue({
+                    title: 'Agent',
+                    hasActiveChat: false,
+                }),
+            },
+            chatSessionRepo: {
+                findByChannelId: jest.fn().mockReturnValue({
+                    isRenamed: true,
+                    displayName: 'Original Title',
+                    categoryId: 'cat-1',
+                    channelId: 'ch-1',
+                }),
+                findByCategoryId: jest.fn().mockReturnValue([]),
+                updateDisplayName,
+            },
+        }));
+
+        await handler(buildMessage({ reply }));
+
+        expect(updateDisplayName).not.toHaveBeenCalled();
         expect(sendPromptToAntigravity).not.toHaveBeenCalled();
         expect(reply).toHaveBeenCalled();
     });
