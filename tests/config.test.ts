@@ -137,6 +137,19 @@ describe('Config', () => {
         ]);
     });
 
+    it('parses ANTIGRAVITY_ACCOUNTS with optional user-data-dir from env', () => {
+        process.env.DISCORD_BOT_TOKEN = 'secret_token';
+        process.env.CLIENT_ID = 'client123';
+        process.env.ALLOWED_USER_IDS = 'user1';
+        process.env.ANTIGRAVITY_ACCOUNTS = 'default:9222,work:9333@/Users/test/work';
+
+        const config = loadConfig();
+        expect(config.antigravityAccounts).toEqual([
+            { name: 'default', cdpPort: 9222 },
+            { name: 'work', cdpPort: 9333, userDataDir: '/Users/test/work' },
+        ]);
+    });
+
     it('defaults platforms to ["discord"] when PLATFORMS is not set', () => {
         process.env.DISCORD_BOT_TOKEN = 'secret_token';
         process.env.CLIENT_ID = 'client123';

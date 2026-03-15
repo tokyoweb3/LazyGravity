@@ -18,6 +18,7 @@ import { wrapDiscordChannel } from '../platform/discord/wrappers';
 import type { PlatformType } from '../platform/types';
 import { loadConfig, resolveResponseDeliveryMode } from '../utils/config';
 import type { ExtractionMode } from '../utils/config';
+import type { AntigravityAccountConfig } from '../utils/configLoader';
 import { parseMessageContent } from '../commands/messageParser';
 import { SlashCommandHandler } from '../commands/slashCommandHandler';
 import { registerSlashCommands } from '../commands/registerSlashCommands';
@@ -942,7 +943,12 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
     const accountPorts = Object.fromEntries(
         (config.antigravityAccounts ?? []).map((account) => [account.name, account.cdpPort]),
     );
-    const bridge = initCdpBridge(config.autoApproveFileEdits, accountPorts);
+    const accountUserDataDirs = Object.fromEntries(
+        (config.antigravityAccounts ?? [])
+            .filter((account) => typeof account.userDataDir === 'string' && account.userDataDir.trim().length > 0)
+            .map((account) => [account.name, account.userDataDir!.trim()]),
+    );
+    const bridge = initCdpBridge(config.autoApproveFileEdits, accountPorts, accountUserDataDirs);
 
     // Initialize CDP-dependent services (constructor CDP dependency removed)
     const chatSessionService = new ChatSessionService();
@@ -1473,7 +1479,7 @@ export async function handleSlashInteraction(
     userPrefRepo?: UserPreferenceRepository,
     accountPrefRepo?: AccountPreferenceRepository,
     channelPrefRepo?: ChannelPreferenceRepository,
-    antigravityAccounts: { name: string; cdpPort: number }[] = [{ name: 'default', cdpPort: 9222 }],
+    antigravityAccounts: AntigravityAccountConfig[] = [{ name: 'default', cdpPort: 9222 }],
 ): Promise<void> {
     const commandName = interaction.commandName;
     const getAccountPort = (accountName: string): number | null => {
@@ -1843,6 +1849,11 @@ export async function handleSlashInteraction(
                 const accountPorts = Object.fromEntries(
                     antigravityAccounts.map((account) => [account.name, account.cdpPort]),
                 );
+                const accountUserDataDirs = Object.fromEntries(
+                    antigravityAccounts
+                        .filter((account) => typeof account.userDataDir === 'string' && account.userDataDir.trim().length > 0)
+                        .map((account) => [account.name, account.userDataDir!.trim()]),
+                );
                 const projectName = bridge.pool.extractProjectName(workspacePath);
 
                 logger.info(
@@ -1855,6 +1866,7 @@ export async function handleSlashInteraction(
                     const cdp = new CdpService({
                         accountName: selectedAccount,
                         accountPorts,
+                        accountUserDataDirs,
                         cdpCallTimeout: 15000,
                         maxReconnectAttempts: 0,
                     });

@@ -16,7 +16,7 @@ export interface AppConfig {
     autoApproveFileEdits: boolean;
     logLevel: LogLevel;
     extractionMode: ExtractionMode;
-    /** Named Antigravity instances mapped to CDP ports. */
+    /** Named Antigravity instances mapped to CDP ports and optional user-data-dir. */
     antigravityAccounts: AntigravityAccountConfig[];
     /** Telegram Bot Token (optional — required when 'telegram' is in platforms). */
     telegramToken?: string;

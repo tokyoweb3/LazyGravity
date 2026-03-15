@@ -4,6 +4,7 @@ export const DEFAULT_CDP_PORTS = [9222, 9223, 9333, 9444, 9555, 9666] as const;
 export interface AntigravityAccountConfigLike {
     name: string;
     cdpPort: number;
+    userDataDir?: string;
 }
 
 function parsePort(raw: string | undefined): number | null {
@@ -28,7 +29,14 @@ export function normalizeAntigravityAccounts(
         const cdpPort = parsePort(String(account.cdpPort));
         if (!name || cdpPort === null || seenNames.has(name)) continue;
         seenNames.add(name);
-        normalized.push({ name, cdpPort });
+        const userDataDir = typeof account.userDataDir === 'string'
+            ? account.userDataDir.trim()
+            : '';
+        normalized.push({
+            name,
+            cdpPort,
+            ...(userDataDir ? { userDataDir } : {}),
+        });
     }
 
     return normalized.length > 0
@@ -48,15 +56,40 @@ export function parseAntigravityAccounts(
         .map((entry) => entry.trim())
         .filter((entry) => entry.length > 0)
         .map((entry) => {
-            const [nameRaw, portRaw] = entry.split(':');
-            const name = nameRaw?.trim();
-            const cdpPort = parsePort(portRaw?.trim());
+            const colonIndex = entry.indexOf(':');
+            if (colonIndex <= 0) return null;
+
+            const name = entry.slice(0, colonIndex).trim();
+            const rest = entry.slice(colonIndex + 1).trim();
+            const atIndex = rest.indexOf('@');
+            const portRaw = atIndex >= 0 ? rest.slice(0, atIndex).trim() : rest;
+            const userDataDirRaw = atIndex >= 0 ? rest.slice(atIndex + 1).trim() : '';
+            const cdpPort = parsePort(portRaw);
             if (!name || cdpPort === null) return null;
-            return { name, cdpPort };
+            return {
+                name,
+                cdpPort,
+                ...(userDataDirRaw ? { userDataDir: userDataDirRaw } : {}),
+            };
         })
         .filter((account): account is AntigravityAccountConfigLike => account !== null);
 
     return normalizeAntigravityAccounts(parsed);
+}
+
+export function serializeAntigravityAccounts(
+    accounts: readonly AntigravityAccountConfigLike[] | undefined,
+): string {
+    return normalizeAntigravityAccounts(accounts)
+        .map((account) => {
+            const userDataDir = typeof account.userDataDir === 'string'
+                ? account.userDataDir.trim()
+                : '';
+            return userDataDir
+                ? `${account.name}:${account.cdpPort}@${userDataDir}`
+                : `${account.name}:${account.cdpPort}`;
+        })
+        .join(',');
 }
 
 export function getConfiguredCdpPorts(rawValue?: string): number[] {

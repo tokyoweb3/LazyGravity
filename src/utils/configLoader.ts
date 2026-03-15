@@ -34,12 +34,13 @@ export interface PersistedConfig {
     telegramToken?: string;
     telegramAllowedUserIds?: string[];
     platforms?: PlatformType[];
-    antigravityAccounts?: AntigravityAccountConfig[];
+    antigravityAccounts?: string | AntigravityAccountConfig[];
 }
 
 export interface AntigravityAccountConfig {
     name: string;
     cdpPort: number;
+    userDataDir?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -209,13 +210,19 @@ function resolveTelegramAllowedUserIds(persisted: PersistedConfig): string[] | u
 
 function resolveAntigravityAccounts(
     envValue: string | undefined,
-    persistedValue: AntigravityAccountConfig[] | undefined,
+    persistedValue: string | AntigravityAccountConfig[] | undefined,
 ): AntigravityAccountConfig[] {
     if (envValue && envValue.trim().length > 0) {
         return parseAntigravityAccounts(envValue);
     }
 
-    return normalizeAntigravityAccounts(persistedValue);
+    if (typeof persistedValue === 'string' && persistedValue.trim().length > 0) {
+        return parseAntigravityAccounts(persistedValue);
+    }
+
+    return Array.isArray(persistedValue)
+        ? normalizeAntigravityAccounts(persistedValue)
+        : normalizeAntigravityAccounts(undefined);
 }
 
 const VALID_PLATFORMS: readonly PlatformType[] = ['discord', 'telegram'];

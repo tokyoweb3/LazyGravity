@@ -660,6 +660,11 @@ async function handleProjectReopen(deps: TelegramCommandDeps, message: PlatformM
     const accountPorts = Object.fromEntries(
         (deps.antigravityAccounts ?? []).map((account) => [account.name, account.cdpPort]),
     );
+    const accountUserDataDirs = Object.fromEntries(
+        (deps.antigravityAccounts ?? [])
+            .filter((account) => typeof account.userDataDir === 'string' && account.userDataDir.trim().length > 0)
+            .map((account) => [account.name, account.userDataDir!.trim()]),
+    );
     
     const port = accountPorts[selectedAccount] ?? null;
     const projectName = deps.bridge.pool.extractProjectName(workspacePath);
@@ -675,6 +680,7 @@ async function handleProjectReopen(deps: TelegramCommandDeps, message: PlatformM
         const cdp = new CdpService({
             accountName: selectedAccount,
             accountPorts,
+            accountUserDataDirs,
             cdpCallTimeout: 15000,
             maxReconnectAttempts: 0,
         });

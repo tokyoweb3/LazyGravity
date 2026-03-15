@@ -15,6 +15,7 @@ export interface CdpServiceOptions {
     reconnectDelayMs?: number;
     accountName?: string;
     accountPorts?: Record<string, number>;
+    accountUserDataDirs?: Record<string, string>;
 }
 
 export interface CdpContext {
@@ -91,11 +92,13 @@ export class CdpService extends EventEmitter {
     private isSwitchingWorkspace: boolean = false;
     private accountName: string;
     private accountPorts: Record<string, number>;
+    private accountUserDataDirs: Record<string, string>;
 
     constructor(options: CdpServiceOptions = {}) {
         super();
         this.accountName = options.accountName || 'default';
         this.accountPorts = options.accountPorts || {};
+        this.accountUserDataDirs = options.accountUserDataDirs || {};
         this.ports = options.portsToScan || this.resolveAccountPorts(this.accountName);
         if (options.cdpCallTimeout) this.cdpCallTimeout = options.cdpCallTimeout;
         this.maxReconnectAttempts = options.maxReconnectAttempts ?? 3;
@@ -108,6 +111,14 @@ export class CdpService extends EventEmitter {
             return [explicitPort];
         }
         return [...CDP_PORTS];
+    }
+
+    private resolveConfiguredUserDataDir(accountName: string): string | null {
+        const configured = this.accountUserDataDirs[accountName];
+        if (typeof configured === 'string' && configured.trim().length > 0) {
+            return configured.trim();
+        }
+        return null;
     }
 
     private async getJson(url: string): Promise<any[]> {
@@ -616,8 +627,9 @@ export class CdpService extends EventEmitter {
         explicitOpen: boolean = false,
     ): Promise<boolean> {
         const targetPort = this.ports[0] ?? null;
+        const configuredUserDataDir = this.resolveConfiguredUserDataDir(this.accountName);
         const resolvedUserDataDir = explicitOpen && targetPort !== null
-            ? await this.resolveRunningUserDataDirForPort(targetPort)
+            ? (configuredUserDataDir ?? await this.resolveRunningUserDataDirForPort(targetPort))
             : null;
 
         if (explicitOpen && this.accountName !== 'default' && targetPort !== null && !resolvedUserDataDir) {
