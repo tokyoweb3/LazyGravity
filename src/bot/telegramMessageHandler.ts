@@ -29,6 +29,9 @@ import { cleanupInboundImageAttachments } from '../utils/imageHandler';
 import type { InboundImageAttachment } from '../utils/imageHandler';
 import type { ExtractionMode } from '../utils/config';
 import type { ChatSessionService } from '../services/chatSessionService';
+import type { AccountPreferenceRepository } from '../database/accountPreferenceRepository';
+import type { ChannelPreferenceRepository } from '../database/channelPreferenceRepository';
+import type { AntigravityAccountConfig } from '../utils/configLoader';
 
 export interface TelegramMessageHandlerDeps {
     readonly bridge: CdpBridge;
@@ -47,6 +50,9 @@ export interface TelegramMessageHandlerDeps {
     /** Bot API object for getFile calls. */
     readonly botApi?: import('../platform/telegram/wrappers').TelegramBotLike['api'];
     readonly chatSessionService?: ChatSessionService;
+    readonly accountPrefRepo?: AccountPreferenceRepository;
+    readonly channelPrefRepo?: ChannelPreferenceRepository;
+    readonly antigravityAccounts?: AntigravityAccountConfig[];
 }
 
 /**
@@ -99,6 +105,10 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
                     fetchQuota: deps.fetchQuota,
                     activeMonitors: deps.activeMonitors,
                     chatSessionService: deps.chatSessionService,
+                    accountPrefRepo: deps.accountPrefRepo,
+                    channelPrefRepo: deps.channelPrefRepo,
+                    antigravityAccounts: deps.antigravityAccounts,
+                    botApi: deps.botApi,
                 },
                 message,
                 cmd,

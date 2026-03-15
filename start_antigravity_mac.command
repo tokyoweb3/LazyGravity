@@ -2,7 +2,21 @@
 # Launcher to start Antigravity with a CDP debugging port
 # Automatically detects and uses an available port
 
-PORTS=(9222 9333 9444 9555 9666)
+if [ -n "$ANTIGRAVITY_ACCOUNTS" ]; then
+    PORTS=()
+    IFS=',' read -ra ACCOUNT_ENTRIES <<< "$ANTIGRAVITY_ACCOUNTS"
+    for entry in "${ACCOUNT_ENTRIES[@]}"; do
+        port="${entry##*:}"
+        if [[ "$port" =~ ^[0-9]+$ ]]; then
+            PORTS+=("$port")
+        fi
+    done
+    if [ ${#PORTS[@]} -eq 0 ]; then
+        PORTS=(9222 9223 9333 9444 9555 9666)
+    fi
+else
+    PORTS=(9222 9223 9333 9444 9555 9666)
+fi
 SELECTED_PORT=""
 
 for port in "${PORTS[@]}"; do

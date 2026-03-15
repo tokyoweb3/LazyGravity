@@ -1,3 +1,4 @@
+import { logger } from '../utils/logger';
 /**
  * Telegram /project command handler.
  *
@@ -13,7 +14,7 @@
 import type { PlatformMessage, PlatformSelectInteraction, SelectMenuDef } from '../platform/types';
 import type { TelegramBindingRepository } from '../database/telegramBindingRepository';
 import type { WorkspaceService } from '../services/workspaceService';
-import { logger } from '../utils/logger';
+
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -62,7 +63,13 @@ export function parseTelegramProjectCommand(text: string): ParsedProjectCommand 
 // Dependencies
 // ---------------------------------------------------------------------------
 
+import type { CdpBridge } from '../services/cdpBridgeManager';
+import { escapeHtml } from '../platform/telegram/telegramFormatter';
+
+
 export interface TelegramProjectCommandDeps {
+    readonly botApi?: any;
+    readonly bridge?: CdpBridge;
     readonly workspaceService: WorkspaceService;
     readonly telegramBindingRepo: TelegramBindingRepository;
 }
@@ -130,6 +137,64 @@ export async function handleTelegramProjectCommand(
 /**
  * Handle a workspace selection callback from inline keyboard.
  */
+
+export async function tryCreateTopicAndBind(
+    botApi: any,
+    originalChannelId: string,
+    workspacePath: string,
+    telegramBindingRepo: any,
+    pool: any
+): Promise<string> {
+    const baseChatId = originalChannelId.split('_')[0];
+
+    try {
+        const chat = await botApi.getChat(baseChatId);
+        logger.debug(`[Telegram] getChat(${baseChatId}) returned:`, chat);
+        if (chat?.is_forum) {
+            const projectName = pool.extractProjectName(workspacePath) || 'Project';
+            const topicName = `[Session] ${projectName}`.substring(0, 128);
+            const topic = await botApi.createForumTopic(baseChatId, topicName);
+            const threadId = topic.message_thread_id;
+            const newChannelId = `${baseChatId}_${threadId}`;
+
+            telegramBindingRepo.upsert({
+                chatId: newChannelId,
+                workspacePath,
+            });
+
+            await botApi.sendMessage(baseChatId, `✅ <b>${escapeHtml(projectName)}</b> session started in this topic.`, {
+                message_thread_id: threadId,
+                parse_mode: 'HTML'
+            }).catch((e: any) => logger.warn('Failed to send welcome message to new topic', e));
+
+            return newChannelId;
+        }
+    } catch (error: any) {
+        logger.debug(`[Telegram] Could not create forum topic for chat ${baseChatId}`, error);
+        
+        // If the error is specifically a permissions error for creating topics
+        const errStr = String(error);
+        if (errStr.includes('not enough rights') || errStr.includes('400')) {
+            await botApi.sendMessage(
+                baseChatId,
+                '⚠️ <b>Permission Error:</b> I do not have permission to create a Topic (Forum) in this group.\n\n' +
+                'Please follow these steps to fix:\n' +
+                '1. Go to Group Info -> Edit -> Administrators\n' +
+                '2. Select this bot (<code>@' + (botApi.me?.username || 'bot') + '</code>)\n' +
+                '3. Enable the <b>"Manage Topics"</b> (or "Change Group Info") permission\n' +
+                '4. Try binding the project or using /new again.',
+                { parse_mode: 'HTML' }
+            ).catch((e: any) => logger.warn('Failed to send permission error message', e));
+        }
+    }
+
+    telegramBindingRepo.upsert({
+        chatId: originalChannelId,
+        workspacePath,
+    });
+    return originalChannelId;
+}
+
 export async function handleTelegramProjectSelect(
     deps: TelegramProjectCommandDeps,
     interaction: PlatformSelectInteraction,
@@ -148,14 +213,31 @@ export async function handleTelegramProjectSelect(
         return;
     }
 
-    deps.telegramBindingRepo.upsert({
-        chatId,
-        workspacePath: selectedWorkspace,
-    });
+    let finalChannelId = chatId;
+    if (deps.botApi && deps.bridge) {
+        finalChannelId = await tryCreateTopicAndBind(
+            deps.botApi,
+            chatId,
+            selectedWorkspace,
+            deps.telegramBindingRepo,
+            deps.bridge.pool
+        );
+    } else {
+        deps.telegramBindingRepo.upsert({
+            chatId,
+            workspacePath: selectedWorkspace,
+        });
+    }
 
-    await interaction.update({
-        text: `Workspace bound: <b>${selectedWorkspace}</b>\nSend a message to start chatting with Antigravity.`,
-    }).catch(logger.error);
+    if (finalChannelId !== chatId) {
+        await interaction.update({
+            text: `✅ Workspace bound to new topic: <b>${escapeHtml(selectedWorkspace)}</b>`,
+        }).catch(logger.error);
+    } else {
+        await interaction.update({
+            text: `Workspace bound: <b>${escapeHtml(selectedWorkspace)}</b>\nSend a message to start chatting with Antigravity.`,
+        }).catch(logger.error);
+    }
 
     logger.info(`[TelegramProject] Chat ${chatId} bound to workspace: ${selectedWorkspace}`);
 }

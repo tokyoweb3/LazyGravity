@@ -2,7 +2,7 @@ import { logger } from '../utils/logger';
 import { CDP_PORTS } from '../utils/cdpPorts';
 import { EventEmitter } from 'events';
 import * as http from 'http';
-import { spawn } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import { getAntigravityCliPath, extractProjectNameFromPath } from '../utils/pathUtils';
 import WebSocket from 'ws';
 
@@ -13,6 +13,8 @@ export interface CdpServiceOptions {
     maxReconnectAttempts?: number;
     /** Delay between reconnect attempts (ms). Default: 2000 */
     reconnectDelayMs?: number;
+    accountName?: string;
+    accountPorts?: Record<string, number>;
 }
 
 export interface CdpContext {
@@ -80,13 +82,25 @@ export class CdpService extends EventEmitter {
     private currentWorkspacePath: string | null = null;
     /** Workspace switching flag (suppresses disconnected event) */
     private isSwitchingWorkspace: boolean = false;
+    private accountName: string;
+    private accountPorts: Record<string, number>;
 
     constructor(options: CdpServiceOptions = {}) {
         super();
-        this.ports = options.portsToScan || [...CDP_PORTS];
+        this.accountName = options.accountName || 'default';
+        this.accountPorts = options.accountPorts || {};
+        this.ports = options.portsToScan || this.resolveAccountPorts(this.accountName);
         if (options.cdpCallTimeout) this.cdpCallTimeout = options.cdpCallTimeout;
         this.maxReconnectAttempts = options.maxReconnectAttempts ?? 3;
         this.reconnectDelayMs = options.reconnectDelayMs ?? 2000;
+    }
+
+    private resolveAccountPorts(accountName: string): number[] {
+        const explicitPort = this.accountPorts[accountName];
+        if (Number.isInteger(explicitPort) && explicitPort > 0) {
+            return [explicitPort];
+        }
+        return [...CDP_PORTS];
     }
 
     private async getJson(url: string): Promise<any[]> {
@@ -322,6 +336,22 @@ export class CdpService extends EventEmitter {
             return await this._discoverAndConnectForWorkspaceImpl(workspacePath, projectName);
         } finally {
             this.isSwitchingWorkspace = false;
+        }
+    }
+
+    async openWorkspace(workspacePath: string): Promise<boolean> {
+        const projectName = extractProjectNameFromPath(workspacePath);
+        this.currentWorkspacePath = workspacePath;
+
+        try {
+            return await this.discoverAndConnectForWorkspace(workspacePath);
+        } catch (error: any) {
+            logger.info(
+                `[CdpService] Explicit open requested for workspace "${projectName}" ` +
+                `on account "${this.accountName}" — retrying with launch ` +
+                `(reason: ${error?.message || String(error)})`,
+            );
+            return this.launchAndConnectWorkspace(workspacePath, projectName, true);
         }
     }
 
@@ -576,20 +606,64 @@ export class CdpService extends EventEmitter {
     private async launchAndConnectWorkspace(
         workspacePath: string,
         projectName: string,
+        explicitOpen: boolean = false,
     ): Promise<boolean> {
+        const targetPort = this.ports[0] ?? null;
+        const resolvedUserDataDir = explicitOpen && targetPort !== null
+            ? await this.resolveRunningUserDataDirForPort(targetPort)
+            : null;
+
+        if (explicitOpen && this.accountName !== 'default' && targetPort !== null && !resolvedUserDataDir) {
+            throw new Error(
+                `Could not determine user-data-dir for running account "${this.accountName}" ` +
+                `(CDP port ${targetPort}). Make sure that Antigravity instance is already running with that port.`,
+            );
+        }
+
+        if (!explicitOpen && this.accountName !== 'default' && targetPort !== null) {
+            logger.warn(
+                `[CdpService] Workspace "${projectName}" not found on account "${this.accountName}" ` +
+                `(port=${targetPort}). Skipping auto-launch to avoid opening the wrong Antigravity instance.`,
+            );
+            throw new Error(
+                `Workspace "${projectName}" is not open in account "${this.accountName}" ` +
+                `(CDP port ${targetPort}). Open it manually in that Antigravity instance and try again.`,
+            );
+        }
+
         // Open as folder using Antigravity CLI (not as workspace mode).
         // `open -a Antigravity` may open as workspace, resulting in title "Untitled (Workspace)".
         // CLI --new-window opens as folder, immediately reflecting directory name in title.
         const antigravityCli = getAntigravityCliPath();
 
-        logger.debug(`[CdpService] Launching Antigravity: ${antigravityCli} --new-window ${workspacePath}`);
+        const launchArgs = [
+            ...(resolvedUserDataDir ? ['--user-data-dir', resolvedUserDataDir] : []),
+            ...(targetPort !== null ? [`--remote-debugging-port=${targetPort}`] : []),
+            '--new-window',
+            workspacePath,
+        ];
+
+        logger.debug(
+            `[CdpService] Launching Antigravity for account "${this.accountName}" ` +
+            `(port=${targetPort ?? 'unknown'}, userDataDir=${resolvedUserDataDir ?? 'default'}) ` +
+            `${antigravityCli} ${launchArgs.join(' ')}`,
+        );
         try {
-            await this.runCommand(antigravityCli, ['--new-window', workspacePath]);
+            await this.runCommand(antigravityCli, launchArgs);
         } catch (error: any) {
             // Fall back to open -a if CLI not found (macOS only)
             logger.warn(`[CdpService] CLI launch failed, falling back to open -a (if macOS): ${error?.message || String(error)}`);
             if (process.platform === 'darwin') {
-                await this.runCommand('open', ['-a', 'Antigravity', workspacePath]);
+                const openArgs = [
+                    '-n',
+                    '-a',
+                    'Antigravity',
+                    '--args',
+                    ...(resolvedUserDataDir ? ['--user-data-dir', resolvedUserDataDir] : []),
+                    ...(targetPort !== null ? [`--remote-debugging-port=${targetPort}`] : []),
+                    workspacePath,
+                ];
+                await this.runCommand('open', openArgs);
             } else {
                 throw error;
             }
@@ -782,6 +856,70 @@ export class CdpService extends EventEmitter {
                 reject(new Error(`${command} exited with code ${code ?? 'unknown'}`));
             });
         });
+    }
+
+    private async resolveRunningUserDataDirForPort(port: number): Promise<string | null> {
+        const commandLines = await this.getProcessCommandLines();
+        if (commandLines.length === 0) return null;
+
+        const portPattern = new RegExp(`--remote-debugging-port(?:=|\\s+)${port}(?:\\s|$)`);
+
+        for (const line of commandLines) {
+            const lowerLine = line.toLowerCase();
+            if (!lowerLine.includes('antigravity') || !portPattern.test(line) || !line.includes('--user-data-dir')) {
+                continue;
+            }
+
+            const match = line.match(/--user-data-dir(?:=|\s+)("([^"]+)"|'([^']+)'|([^\s]+))/);
+            const userDataDir = match?.[2] || match?.[3] || match?.[4];
+            if (userDataDir) {
+                logger.info(`[CdpService] Resolved user-data-dir for CDP port ${port}: ${userDataDir}`);
+                return userDataDir;
+            }
+        }
+
+        return null;
+    }
+
+    private async getProcessCommandLines(): Promise<string[]> {
+        const run = (command: string, args: string[]): Promise<string> =>
+            new Promise((resolve, reject) => {
+                execFile(command, args, { windowsHide: true, maxBuffer: 20 * 1024 * 1024 }, (error, stdout) => {
+                    if (error) {
+                        reject(error);
+                        return;
+                    }
+                    resolve(stdout);
+                });
+            });
+
+        const parseLines = (output: string): string[] =>
+            output
+                .split('\n')
+                .map((line) => line.trim())
+                .filter((line) => line.length > 0);
+
+        try {
+            if (process.platform === 'win32') {
+                try {
+                    const psOutput = await run('powershell.exe', [
+                        '-NoProfile',
+                        '-Command',
+                        'Get-CimInstance Win32_Process | Select-Object -ExpandProperty CommandLine | Where-Object { $_ }',
+                    ]);
+                    return parseLines(psOutput);
+                } catch {
+                    const wmicOutput = await run('wmic', ['process', 'get', 'CommandLine']);
+                    return parseLines(wmicOutput).filter((line) => line !== 'CommandLine');
+                }
+            }
+
+            const psOutput = await run('ps', ['-axo', 'command=']);
+            return parseLines(psOutput);
+        } catch (error) {
+            logger.warn(`[CdpService] Failed to inspect Antigravity processes: ${error instanceof Error ? error.message : String(error)}`);
+            return [];
+        }
     }
 
     /**
