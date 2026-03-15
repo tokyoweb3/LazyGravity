@@ -32,6 +32,8 @@ export interface CdpBridge {
     approvalChannelByWorkspace: Map<string, PlatformChannel>;
     /** Session-level approval notification destination (workspace+sessionTitle -> channel) */
     approvalChannelBySession: Map<string, PlatformChannel>;
+    /** Channel-scoped preferred Antigravity account selection. */
+    selectedAccountByChannel?: Map<string, string>;
 }
 
 const APPROVE_ACTION_PREFIX = 'approve_action';
@@ -275,8 +277,12 @@ export function parseRunCommandCustomId(customId: string): { action: 'run' | 're
 }
 
 /** Initialize the CDP bridge (lazy connection: pool creation only) */
-export function initCdpBridge(autoApproveDefault: boolean): CdpBridge {
+export function initCdpBridge(
+    autoApproveDefault: boolean,
+    accountPorts: Record<string, number> = {},
+): CdpBridge {
     const pool = new CdpConnectionPool({
+        accountPorts,
         cdpCallTimeout: 15000,
         // Keep CDP reconnection lazy: do not reopen windows in background.
         // Reconnection is triggered when the next chat/template message is sent.
@@ -295,6 +301,7 @@ export function initCdpBridge(autoApproveDefault: boolean): CdpBridge {
         lastActiveChannel: null,
         approvalChannelByWorkspace: new Map(),
         approvalChannelBySession: new Map(),
+        selectedAccountByChannel: new Map(),
     };
 }
 

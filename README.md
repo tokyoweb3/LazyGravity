@@ -95,6 +95,7 @@ Just type in any bound channel:
 - `🛑 /stop` — Force-stop a running Antigravity task
 - `📸 /screenshot` — Capture and send Antigravity's current screen
 - `🔧 /status` — Show bot connection status, current mode, and active project
+- `👤 /account [name]` — Show or switch the Antigravity account used for the current channel
 - `✅ /autoaccept [on|off|status]` — Toggle auto-approval of file edit dialogs
 - `📝 /output [embed|plain]` — Toggle output format between Embed and Plain Text (plain text is easier to copy on mobile)
 - `📋 /logs [lines] [level]` — View recent bot logs (ephemeral)
@@ -180,6 +181,7 @@ DISCORD_BOT_TOKEN=your_bot_token_here
 GUILD_ID=your_guild_id_here
 ALLOWED_USER_IDS=123456789,987654321
 WORKSPACE_BASE_DIR=~/Code
+# ANTIGRAVITY_ACCOUNTS=default:9222,work:9333
 # ANTIGRAVITY_PATH=/path/to/antigravity.AppImage  # Optional: For Linux users or custom installations
 ```
 
@@ -241,6 +243,14 @@ ANTIGRAVITY_PATH=/opt/applications/antigravity.AppImage
 
 > **Tip**: CDP ports are auto-scanned from candidates (9222, 9223, 9333, 9444, 9555, 9666).
 > Launch Antigravity first, then start the bot — it connects automatically.
+
+If you run multiple Antigravity instances, you can configure named accounts in `.env`:
+
+```env
+ANTIGRAVITY_ACCOUNTS=default:9222,work:9333
+```
+
+Then use `/account work` in a Discord channel to bind that channel to the `work` instance.
 
 ---
 

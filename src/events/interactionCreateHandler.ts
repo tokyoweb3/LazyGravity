@@ -23,6 +23,8 @@ import {
     OUTPUT_BTN_PLAIN,
     sendOutputUI,
 } from '../ui/outputUi';
+import { AccountPreferenceRepository } from '../database/accountPreferenceRepository';
+import { ChannelPreferenceRepository } from '../database/channelPreferenceRepository';
 import { UserPreferenceRepository, OutputFormat } from '../database/userPreferenceRepository';
 import { ChatCommandHandler } from '../commands/chatCommandHandler';
 import {
@@ -41,6 +43,9 @@ import { ModelService } from '../services/modelService';
 import { AutoAcceptService } from '../services/autoAcceptService';
 import { JoinCommandHandler } from '../commands/joinCommandHandler';
 import { isSessionSelectId } from '../ui/sessionPickerUi';
+import type { AntigravityAccountConfig } from '../utils/configLoader';
+import { listAccountNames } from '../utils/accountUtils';
+import { ACCOUNT_SELECT_ID, sendAccountUI } from '../ui/accountUi';
 
 export interface InteractionCreateHandlerDeps {
     config: { allowedUserIds: string[] };
@@ -78,10 +83,16 @@ export interface InteractionCreateHandlerDeps {
         modelService: ModelService,
         autoAcceptService: AutoAcceptService,
         client: any,
+        accountPrefRepo?: AccountPreferenceRepository,
+        channelPrefRepo?: ChannelPreferenceRepository,
+        antigravityAccounts?: AntigravityAccountConfig[],
     ) => Promise<void>;
     handleTemplateUse?: (interaction: ButtonInteraction, templateId: number) => Promise<void>;
     joinHandler?: JoinCommandHandler;
     userPrefRepo?: UserPreferenceRepository;
+    accountPrefRepo?: AccountPreferenceRepository;
+    channelPrefRepo?: ChannelPreferenceRepository;
+    antigravityAccounts?: AntigravityAccountConfig[];
 }
 
 export function createInteractionCreateHandler(deps: InteractionCreateHandlerDeps) {
@@ -735,6 +746,85 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
             return;
         }
 
+        if (interaction.isStringSelectMenu() && interaction.customId === ACCOUNT_SELECT_ID) {
+            if (!deps.config.allowedUserIds.includes(interaction.user.id)) {
+                await interaction.reply({ content: t('You do not have permission.'), flags: MessageFlags.Ephemeral }).catch(logger.error);
+                return;
+            }
+
+            try {
+                await interaction.deferUpdate();
+            } catch (deferError: any) {
+                if (deferError?.code === 10062 || deferError?.code === 40060) {
+                    logger.warn('[Account] deferUpdate expired. Skipping.');
+                    return;
+                }
+                logger.error('[Account] deferUpdate failed:', deferError);
+                return;
+            }
+
+            try {
+                if (!deps.accountPrefRepo) {
+                    await interaction.followUp({
+                        content: 'Account preference service not available.',
+                        flags: MessageFlags.Ephemeral,
+                    }).catch(logger.error);
+                    return;
+                }
+
+                const selectedAccount = interaction.values[0];
+                const names = listAccountNames(deps.antigravityAccounts);
+
+                if (!selectedAccount || !names.includes(selectedAccount)) {
+                    await interaction.followUp({
+                        content: `⚠️ Unknown account: **${selectedAccount || 'N/A'}**`,
+                        flags: MessageFlags.Ephemeral,
+                    }).catch(logger.error);
+                    return;
+                }
+
+                deps.accountPrefRepo.setAccountName(interaction.user.id, selectedAccount);
+                deps.channelPrefRepo?.setAccountName(interaction.channelId, selectedAccount);
+                deps.bridge.selectedAccountByChannel?.set(interaction.channelId, selectedAccount);
+
+                const channelWorkspace = deps.wsHandler.getWorkspaceForChannel(interaction.channelId);
+                if (channelWorkspace) {
+                    deps.bridge.pool.setPreferredAccountForWorkspace?.(channelWorkspace, selectedAccount);
+                }
+
+                const selectedPort = deps.antigravityAccounts?.find((a) => a.name === selectedAccount)?.cdpPort;
+                logger.info(
+                    `[AccountSwitch] source=select channel=${interaction.channelId} user=${interaction.user.id} ` +
+                    `account=${selectedAccount} port=${selectedPort ?? 'unknown'} ` +
+                    `workspace=${channelWorkspace ?? 'unbound'}`,
+                );
+
+                await sendAccountUI(
+                    { editReply: async (data: any) => await interaction.editReply(data) },
+                    selectedAccount,
+                    names,
+                );
+
+                await interaction.followUp({
+                    content: `✅ Switched account to **${selectedAccount}**.`,
+                    flags: MessageFlags.Ephemeral,
+                }).catch(logger.error);
+            } catch (error: any) {
+                logger.error('Error during account dropdown handling:', error);
+                try {
+                    if (interaction.deferred || interaction.replied) {
+                        await interaction.followUp({
+                            content: 'An error occurred while switching account.',
+                            flags: MessageFlags.Ephemeral,
+                        }).catch(logger.error);
+                    }
+                } catch (e) {
+                    logger.error('Failed to send error message:', e);
+                }
+            }
+            return;
+        }
+
         if (interaction.isStringSelectMenu() && isSessionSelectId(interaction.customId)) {
             if (!deps.config.allowedUserIds.includes(interaction.user.id)) {
                 await interaction.reply({ content: t('You do not have permission.'), flags: MessageFlags.Ephemeral }).catch(logger.error);
@@ -819,6 +909,9 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                 deps.modelService,
                 deps.bridge.autoAccept,
                 deps.client,
+                deps.accountPrefRepo,
+                deps.channelPrefRepo,
+                deps.antigravityAccounts,
             );
         } catch (error) {
             logger.error('Error during slash command handling:', error);
