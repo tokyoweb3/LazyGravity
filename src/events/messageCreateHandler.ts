@@ -3,6 +3,8 @@ import { EmbedBuilder, Message, TextChannel } from 'discord.js';
 import { parseMessageContent } from '../commands/messageParser';
 import { SlashCommandHandler } from '../commands/slashCommandHandler';
 import { WorkspaceCommandHandler } from '../commands/workspaceCommandHandler';
+import { AccountPreferenceRepository } from '../database/accountPreferenceRepository';
+import { ChannelPreferenceRepository } from '../database/channelPreferenceRepository';
 import { ChatSessionRepository } from '../database/chatSessionRepository';
 import { UserPreferenceRepository } from '../database/userPreferenceRepository';
 import { formatAsPlainText } from '../utils/plainTextFormatter';
@@ -30,6 +32,7 @@ import {
     InboundImageAttachment,
     isImageAttachment as isImageAttachmentFn,
 } from '../utils/imageHandler';
+import { listAccountNames, resolveValidAccountName } from '../utils/accountUtils';
 import { logger } from '../utils/logger';
 
 export interface MessageCreateHandlerDeps {
@@ -73,6 +76,9 @@ export interface MessageCreateHandlerDeps {
     cleanupInboundImageAttachments?: (attachments: InboundImageAttachment[]) => Promise<void>;
     isImageAttachment?: (contentType: string | null | undefined, fileName: string | null | undefined) => boolean;
     userPrefRepo?: UserPreferenceRepository;
+    accountPrefRepo?: AccountPreferenceRepository;
+    channelPrefRepo?: ChannelPreferenceRepository;
+    antigravityAccounts?: { name: string; cdpPort: number }[];
 }
 
 export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
@@ -86,6 +92,11 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
     const downloadInboundImageAttachments = deps.downloadInboundImageAttachments ?? downloadInboundImageAttachmentsFn;
     const cleanupInboundImageAttachments = deps.cleanupInboundImageAttachments ?? cleanupInboundImageAttachmentsFn;
     const isImageAttachment = deps.isImageAttachment ?? isImageAttachmentFn;
+
+    const getAccountPort = (accountName: string): number | null => {
+        const match = (deps.antigravityAccounts ?? []).find((account) => account.name === accountName);
+        return match ? match.cdpPort : null;
+    };
 
     // Per-workspace prompt queue: serializes send→response cycles
     const workspaceQueues = new Map<string, Promise<void>>();
@@ -138,6 +149,17 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                     { name: 'CDP Connection', value: activeNames.length > 0 ? `🟢 ${activeNames.length} project(s) connected` : '⚪ Disconnected', inline: true },
                     { name: 'Mode', value: MODE_DISPLAY_NAMES[currentMode] || currentMode, inline: true },
                     { name: 'Auto Approve', value: deps.bridge.autoAccept.isEnabled() ? '🟢 ON' : '⚪ OFF', inline: true },
+                    {
+                        name: 'Account',
+                        value: resolveValidAccountName(
+                            deps.bridge.selectedAccountByChannel?.get(message.channelId)
+                                ?? deps.channelPrefRepo?.getAccountName(message.channelId)
+                                ?? deps.accountPrefRepo?.getAccountName(message.author.id)
+                                ?? 'default',
+                            deps.antigravityAccounts,
+                        ),
+                        inline: true,
+                    },
                 ];
 
                 let statusDescription = '';
@@ -177,7 +199,47 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                 return;
             }
 
-            const slashOnlyCommands = ['help', 'stop', 'model', 'mode', 'project', 'chat', 'new', 'cleanup', 'join', 'mirror', 'output'];
+            if (parsed.commandName === 'account') {
+                const accountNames = listAccountNames(deps.antigravityAccounts);
+                const requested = parsed.args?.[0];
+
+                if (!requested) {
+                    const current = resolveValidAccountName(
+                        deps.bridge.selectedAccountByChannel?.get(message.channelId)
+                            ?? deps.channelPrefRepo?.getAccountName(message.channelId)
+                            ?? deps.accountPrefRepo?.getAccountName(message.author.id)
+                            ?? 'default',
+                        deps.antigravityAccounts,
+                    );
+                    await message.reply(`Current account: **${current}**\nAvailable: ${accountNames.join(', ')}`).catch(() => {});
+                    return;
+                }
+
+                if (!accountNames.includes(requested)) {
+                    await message.reply(`⚠️ Unknown account: **${requested}**`).catch(() => {});
+                    return;
+                }
+
+                deps.accountPrefRepo?.setAccountName(message.author.id, requested);
+                deps.channelPrefRepo?.setAccountName(message.channelId, requested);
+                deps.bridge.selectedAccountByChannel?.set(message.channelId, requested);
+
+                const channelWorkspace = deps.wsHandler.getWorkspaceForChannel(message.channelId);
+                if (channelWorkspace) {
+                    deps.bridge.pool.setPreferredAccountForWorkspace?.(channelWorkspace, requested);
+                }
+
+                logger.info(
+                    `[AccountSwitch] source=text channel=${message.channelId} user=${message.author.id} ` +
+                    `account=${requested} port=${getAccountPort(requested) ?? 'unknown'} ` +
+                    `workspace=${channelWorkspace ?? 'unbound'}`,
+                );
+
+                await message.reply(`✅ Switched account to **${requested}**.`).catch(() => {});
+                return;
+            }
+
+            const slashOnlyCommands = ['help', 'stop', 'model', 'mode', 'project', 'chat', 'new', 'cleanup', 'join', 'mirror', 'output', 'open'];
             if (slashOnlyCommands.includes(parsed.commandName)) {
                 await message.reply({
                     content: `💡 Please use \`/${parsed.commandName}\` as a slash command.\nType \`/${parsed.commandName}\` in the Discord input field to see suggestions.`,
@@ -259,7 +321,24 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                         }
 
                         try {
-                            const cdp = await deps.bridge.pool.getOrConnect(workspacePath);
+                            const selectedAccount = resolveValidAccountName(
+                                deps.bridge.selectedAccountByChannel?.get(message.channelId)
+                                    ?? deps.channelPrefRepo?.getAccountName(message.channelId)
+                                    ?? deps.accountPrefRepo?.getAccountName(message.author.id)
+                                    ?? 'default',
+                                deps.antigravityAccounts,
+                            );
+                            const selectedPort = getAccountPort(selectedAccount);
+                            deps.bridge.selectedAccountByChannel?.set(message.channelId, selectedAccount);
+                            deps.bridge.pool.setPreferredAccountForWorkspace?.(workspacePath, selectedAccount);
+
+                            logger.info(
+                                `[Route] channel=${message.channelId} user=${message.author.id} ` +
+                                `project=${projectLabel} account=${selectedAccount} ` +
+                                `port=${selectedPort ?? 'unknown'} workspacePath=${workspacePath}`,
+                            );
+
+                            const cdp = await deps.bridge.pool.getOrConnect(workspacePath, { name: selectedAccount });
                             const projectName = deps.bridge.pool.extractProjectName(workspacePath);
 
                             deps.bridge.lastActiveWorkspace = projectName;

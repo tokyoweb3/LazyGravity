@@ -1,6 +1,7 @@
 import { ConfigLoader } from './configLoader';
 import type { LogLevel } from './logger';
 import type { PlatformType } from '../platform/types';
+import type { AntigravityAccountConfig } from './configLoader';
 
 export type ExtractionMode = 'legacy' | 'structured';
 
@@ -15,6 +16,8 @@ export interface AppConfig {
     autoApproveFileEdits: boolean;
     logLevel: LogLevel;
     extractionMode: ExtractionMode;
+    /** Named Antigravity instances mapped to CDP ports. */
+    antigravityAccounts: AntigravityAccountConfig[];
     /** Telegram Bot Token (optional — required when 'telegram' is in platforms). */
     telegramToken?: string;
     /** Allowed Telegram user IDs (numeric strings). */

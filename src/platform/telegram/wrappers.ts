@@ -42,6 +42,7 @@ export interface TelegramBotLike {
         sendPhoto?(chatId: number | string, photo: any, options?: any): Promise<any>;
         sendDocument?(chatId: number | string, document: any, options?: any): Promise<any>;
         getFile?(file_id: string): Promise<{ file_id: string; file_path?: string }>;
+        createForumTopic?(chat_id: number | string, name: string, options?: any): Promise<{ message_thread_id: number; name: string }>;
     };
     /**
      * Convert a Buffer to a platform-specific input file object.
@@ -69,6 +70,8 @@ export interface TelegramPhotoSize {
 
 export interface TelegramMessageLike {
     message_id: number;
+    message_thread_id?: number;
+    is_topic_message?: boolean;
     from?: TelegramFrom;
     chat: { id: number; title?: string; type: string };
     text?: string;
@@ -263,16 +266,23 @@ async function trySendFile(
 /** Wrap a Telegram chat as a PlatformChannel. */
 export function wrapTelegramChannel(
     api: TelegramBotLike['api'],
-    chatId: number | string,
+    chatIdString: number | string,
     toInputFile?: TelegramBotLike['toInputFile'],
 ): PlatformChannel {
-    const chatIdStr = String(chatId);
+    const idStr = String(chatIdString);
+    const parts = idStr.split('_');
+    const chatId = parts[0];
+    const threadId = parts.length > 1 ? Number(parts[1]) : undefined;
 
     return {
-        id: chatIdStr,
+        id: idStr,
         platform: 'telegram',
         name: undefined,
         async send(payload: MessagePayload): Promise<PlatformSentMessage> {
+            const extraOpts: any = {};
+            if (threadId !== undefined) {
+                extraOpts.message_thread_id = threadId;
+            }
             // Handle file attachments (e.g., screenshots)
             if (payload.files && payload.files.length > 0) {
                 const file = payload.files[0];
@@ -281,17 +291,17 @@ export function wrapTelegramChannel(
                     : null;
                 const caption = opts?.text;
 
-                const sent = await trySendFile(api, chatId, file, caption, undefined, toInputFile);
+                const sent = await trySendFile(api, chatId, file, caption, extraOpts, toInputFile);
                 if (sent) {
-                    return wrapTelegramSentMessage(sent, api, chatId);
+                    return wrapTelegramSentMessage(sent, api, idStr);
                 }
                 // Fallback to text-only if file sending not supported
             }
 
             const opts = toTelegramPayload(payload);
             const { text, ...rest } = opts;
-            const sent = await api.sendMessage(chatId, text, rest);
-            return wrapTelegramSentMessage(sent, api, chatId);
+            const sent = await api.sendMessage(chatId, text, { ...rest, ...extraOpts });
+            return wrapTelegramSentMessage(sent, api, idStr);
         },
     };
 }
@@ -341,7 +351,9 @@ export function wrapTelegramMessage(
               isBot: false,
           };
 
-    const channel = wrapTelegramChannel(api, msg.chat.id, toInputFile);
+    const threadId = msg.message_thread_id;
+    const channelIdStr = threadId ? `${msg.chat.id}_${threadId}` : String(msg.chat.id);
+    const channel = wrapTelegramChannel(api, channelIdStr, toInputFile);
 
     // Photo messages: use caption as content, build attachments from photo array
     const content = msg.text ?? msg.caption ?? '';
@@ -382,7 +394,7 @@ export function wrapTelegramMessage(
                     msg.chat.id,
                     file,
                     caption,
-                    { reply_to_message_id: msg.message_id },
+                    { reply_to_message_id: msg.message_id, ...(threadId ? { message_thread_id: threadId } : {}) },
                     toInputFile,
                 );
                 if (sent) {
@@ -422,7 +434,9 @@ export function wrapTelegramCallbackQuery(
 ): PlatformButtonInteraction {
     const user = wrapTelegramUser(query.from);
     const chatId = query.message?.chat.id ?? 0;
-    const channel = wrapTelegramChannel(api, chatId);
+    const threadId = query.message?.message_thread_id;
+    const channelIdStr = threadId ? `${chatId}_${threadId}` : String(chatId);
+    const channel = wrapTelegramChannel(api, channelIdStr);
     const messageId = query.message ? String(query.message.message_id) : '0';
     const callbackQueryId = query.id;
 
@@ -462,7 +476,7 @@ export function wrapTelegramCallbackQuery(
             const opts = toTelegramPayload(payload);
             const { text, ...rest } = opts;
             const sent = await api.sendMessage(chatId, text, rest);
-            return wrapTelegramSentMessage(sent, api, chatId);
+            return wrapTelegramSentMessage(sent, api, channelIdStr);
         },
     };
 }
@@ -475,8 +489,10 @@ export function wrapTelegramCallbackQuery(
 export function wrapTelegramSentMessage(
     msg: any,
     api: TelegramBotLike['api'],
-    chatId: number | string,
+    channelIdStr: number | string,
 ): PlatformSentMessage {
+    const parts = String(channelIdStr).split('_');
+    const chatId = parts[0];
     const msgId = String(msg.message_id ?? msg.id ?? '0');
 
     return {

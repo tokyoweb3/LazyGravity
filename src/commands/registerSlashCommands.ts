@@ -161,6 +161,16 @@ const outputCommand = new SlashCommandBuilder()
             .setRequired(false)
     );
 
+/** /account command definition */
+const accountCommand = new SlashCommandBuilder()
+    .setName('account')
+    .setDescription(t('Select the Antigravity account for this channel'));
+
+/** /open command definition */
+const openCommand = new SlashCommandBuilder()
+    .setName('open')
+    .setDescription(t('Open the bound project in the selected Antigravity account'));
+
 
 /** /logs command definition */
 const logsCommand = new SlashCommandBuilder()
@@ -208,6 +218,8 @@ export const slashCommands = [
     cleanupCommand,
     joinCommand,
     mirrorCommand,
+    accountCommand,
+    openCommand,
     outputCommand,
     pingCommand,
     logsCommand,
