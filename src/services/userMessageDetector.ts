@@ -1,3 +1,4 @@
+import { EventEmitter } from 'events';
 import { createHash } from 'node:crypto';
 import { logger } from '../utils/logger';
 import { CdpService } from './cdpService';
@@ -13,8 +14,6 @@ export interface UserMessageDetectorOptions {
     cdpService: CdpService;
     /** Poll interval in milliseconds (default: 2000ms) */
     pollIntervalMs?: number;
-    /** Callback when a new user message is detected */
-    onUserMessage: (info: UserMessageInfo) => void;
 }
 
 /**
@@ -91,10 +90,9 @@ function computeEchoHash(text: string): string {
  * Detects user messages posted directly in the Antigravity UI (e.g., from a PC).
  * Follows the ApprovalDetector polling pattern.
  */
-export class UserMessageDetector {
+export class UserMessageDetector extends EventEmitter {
     private readonly cdpService: CdpService;
     private readonly pollIntervalMs: number;
-    private readonly onUserMessage: (info: UserMessageInfo) => void;
 
     private pollTimer: NodeJS.Timeout | null = null;
     private isRunning: boolean = false;
@@ -109,9 +107,9 @@ export class UserMessageDetector {
     private isPriming: boolean = false;
 
     constructor(options: UserMessageDetectorOptions) {
+        super();
         this.cdpService = options.cdpService;
         this.pollIntervalMs = options.pollIntervalMs ?? 2000;
-        this.onUserMessage = options.onUserMessage;
     }
 
     /**
@@ -238,7 +236,7 @@ export class UserMessageDetector {
                 this.lastDetectedHash = hash;
                 this.addToSeenHashes(hash);
                 logger.debug(`[UserMessageDetector] New message detected: "${preview}..."`);
-                this.onUserMessage(info);
+                this.emit('message', info);
             }
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
