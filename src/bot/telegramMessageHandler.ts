@@ -32,6 +32,7 @@ import type { ChatSessionService } from '../services/chatSessionService';
 import type { AccountPreferenceRepository } from '../database/accountPreferenceRepository';
 import type { ChannelPreferenceRepository } from '../database/channelPreferenceRepository';
 import type { AntigravityAccountConfig } from '../utils/configLoader';
+import { resolveValidAccountName } from '../utils/accountUtils';
 
 export interface TelegramMessageHandlerDeps {
     readonly bridge: CdpBridge;
@@ -62,6 +63,16 @@ export interface TelegramMessageHandlerDeps {
 export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
     // Per-workspace prompt queue to serialize messages
     const workspaceQueues = new Map<string, Promise<void>>();
+
+    function resolveAccount(chatId: string, userId: string): string {
+        return resolveValidAccountName(
+            deps.bridge.selectedAccountByChannel?.get(chatId)
+                ?? deps.channelPrefRepo?.getAccountName(chatId)
+                ?? deps.accountPrefRepo?.getAccountName(userId)
+                ?? 'default',
+            deps.antigravityAccounts,
+        );
+    }
 
     function enqueueForWorkspace(
         workspacePath: string,
@@ -146,11 +157,15 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
             : binding.workspacePath;
 
         await enqueueForWorkspace(workspacePath, async () => {
+            const selectedAccount = resolveAccount(chatId, message.author.id);
+            deps.bridge.selectedAccountByChannel?.set(chatId, selectedAccount);
+            deps.bridge.pool.setPreferredAccountForWorkspace?.(workspacePath, selectedAccount);
+
             const cdpStartTime = Date.now();
             logger.debug(`[TelegramHandler] getOrConnect start (elapsed=${cdpStartTime - handlerEntryTime}ms)`);
             let cdp: CdpService;
             try {
-                cdp = await deps.bridge.pool.getOrConnect(workspacePath);
+                cdp = await deps.bridge.pool.getOrConnect(workspacePath, { name: selectedAccount });
             } catch (e: any) {
                 await message.reply({
                     text: `Failed to connect to workspace: ${e.message}`,
