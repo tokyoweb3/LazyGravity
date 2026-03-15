@@ -640,14 +640,17 @@ export function ensureUserMessageDetector(
     onUserMessage: (info: UserMessageInfo) => void,
 ): void {
     const existing = bridge.pool.getUserMessageDetector(projectName);
-    if (existing && existing.isActive()) return;
+    if (existing && existing.isActive()) {
+        existing.on('message', onUserMessage);
+        return;
+    }
 
     const detector = new UserMessageDetector({
         cdpService: cdp,
         pollIntervalMs: 2000,
-        onUserMessage,
     });
-
+    
+    detector.on('message', onUserMessage);
     detector.start();
     bridge.pool.registerUserMessageDetector(projectName, detector);
     logger.debug(`[UserMessageDetector:${projectName}] Started user message detection`);
