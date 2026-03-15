@@ -149,7 +149,6 @@ describe('interactionCreateHandler', () => {
         const followUp = jest.fn().mockResolvedValue(undefined);
         const accountPrefRepo = { setAccountName: jest.fn() };
         const channelPrefRepo = { setAccountName: jest.fn() };
-        const setPreferredAccountForWorkspace = jest.fn();
         const wsHandler = { getWorkspaceForChannel: jest.fn().mockReturnValue('/tmp/demo-project') };
 
         const interaction = {
@@ -169,9 +168,7 @@ describe('interactionCreateHandler', () => {
             config: { allowedUserIds: ['allowed'] },
             bridge: {
                 selectedAccountByChannel: new Map<string, string>(),
-                pool: {
-                    setPreferredAccountForWorkspace,
-                },
+                pool: {},
             } as any,
             cleanupHandler: {} as any,
             modeService: {} as any,
@@ -203,7 +200,6 @@ describe('interactionCreateHandler', () => {
         expect(deferUpdate).toHaveBeenCalled();
         expect(accountPrefRepo.setAccountName).toHaveBeenCalledWith('allowed', 'work1');
         expect(channelPrefRepo.setAccountName).toHaveBeenCalledWith('channel-a', 'work1');
-        expect(setPreferredAccountForWorkspace).toHaveBeenCalledWith('/tmp/demo-project', 'work1');
         expect(editReply).toHaveBeenCalled();
         expect(followUp).toHaveBeenCalledWith(
             expect.objectContaining({ content: '✅ Switched account to **work1**.', flags: 64 }),

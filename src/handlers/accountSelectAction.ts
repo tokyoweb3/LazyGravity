@@ -45,9 +45,6 @@ export function createAccountSelectAction(deps: AccountSelectActionDeps): Select
             deps.bridge.selectedAccountByChannel?.set(interaction.channel.id, selectedAccount);
 
             const channelWorkspace = deps.getWorkspacePathForChannel?.(interaction.channel.id) ?? null;
-            if (channelWorkspace) {
-                deps.bridge.pool.setPreferredAccountForWorkspace?.(channelWorkspace, selectedAccount);
-            }
 
             const selectedPort = deps.antigravityAccounts.find((a) => a.name === selectedAccount)?.cdpPort;
             logger.info(

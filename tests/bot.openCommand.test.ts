@@ -103,7 +103,6 @@ describe('/open command', () => {
 
         const instance = (CdpService as unknown as jest.Mock).mock.results[0].value;
         expect(instance.openWorkspace).toHaveBeenCalledWith('/tmp/demo-project');
-        expect(bridge.pool.setPreferredAccountForWorkspace).toHaveBeenCalledWith('/tmp/demo-project', 'work1');
         expect(interaction.editReply).toHaveBeenCalledWith({
             content: '✅ Opened **demo-project** in account **work1** (CDP 9333).',
         });

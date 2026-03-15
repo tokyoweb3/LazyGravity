@@ -185,8 +185,36 @@ describe('createTelegramMessageHandler', () => {
         const handler = createTelegramMessageHandler({ bridge, telegramBindingRepo });
         await handler(message as any);
 
-        expect(pool.getOrConnect).toHaveBeenCalledWith('/workspace/a');
+        expect(pool.getOrConnect).toHaveBeenCalledWith('/workspace/a', { name: 'default' });
         expect(mockCdp.injectMessage).toHaveBeenCalledWith('test prompt');
+    });
+
+    it('restores the saved account preference when reconnecting Telegram after restart', async () => {
+        const mockCdp = createMockCdp();
+        const pool = createMockPool(mockCdp);
+        const bridge = createBridge(pool);
+        bridge.selectedAccountByChannel = new Map();
+        const binding = { chatId: 'chat-123', workspacePath: '/workspace/a' };
+        const telegramBindingRepo = createTelegramBindingRepo(binding);
+        const channelPrefRepo = { getAccountName: jest.fn().mockReturnValue('work1') } as any;
+        const accountPrefRepo = { getAccountName: jest.fn().mockReturnValue('default') } as any;
+        const { message } = createMockMessage({ content: 'test prompt' });
+
+        const handler = createTelegramMessageHandler({
+            bridge,
+            telegramBindingRepo,
+            channelPrefRepo,
+            accountPrefRepo,
+            antigravityAccounts: [
+                { name: 'default', cdpPort: 9222 },
+                { name: 'work1', cdpPort: 9333 },
+            ],
+        });
+        await handler(message as any);
+
+        expect(channelPrefRepo.getAccountName).toHaveBeenCalledWith('chat-123');
+        expect(pool.getOrConnect).toHaveBeenCalledWith('/workspace/a', { name: 'work1' });
+        expect(bridge.selectedAccountByChannel.get('chat-123')).toBe('work1');
     });
 
     it('calls message.react() after successful CDP connection', async () => {
@@ -261,10 +289,10 @@ describe('createTelegramMessageHandler', () => {
             'test-project',
             message.channel,
         );
-        expect(ensureApprovalDetector).toHaveBeenCalledWith(bridge, mockCdp, 'test-project');
-        expect(ensureErrorPopupDetector).toHaveBeenCalledWith(bridge, mockCdp, 'test-project');
-        expect(ensurePlanningDetector).toHaveBeenCalledWith(bridge, mockCdp, 'test-project');
-        expect(ensureRunCommandDetector).toHaveBeenCalledWith(bridge, mockCdp, 'test-project');
+        expect(ensureApprovalDetector).toHaveBeenCalledWith(bridge, mockCdp, 'test-project', 'default');
+        expect(ensureErrorPopupDetector).toHaveBeenCalledWith(bridge, mockCdp, 'test-project', 'default');
+        expect(ensurePlanningDetector).toHaveBeenCalledWith(bridge, mockCdp, 'test-project', 'default');
+        expect(ensureRunCommandDetector).toHaveBeenCalledWith(bridge, mockCdp, 'test-project', 'default');
     });
 
     it('sets lastActiveWorkspace and lastActiveChannel on bridge', async () => {

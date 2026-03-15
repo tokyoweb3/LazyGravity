@@ -323,8 +323,9 @@ export function ensureApprovalDetector(
     bridge: CdpBridge,
     cdp: CdpService,
     projectName: string,
+    accountName: string = 'default',
 ): void {
-    const existing = bridge.pool.getApprovalDetector(projectName);
+    const existing = bridge.pool.getApprovalDetector(projectName, accountName);
     if (existing && existing.isActive()) return;
 
     // Track the most recent notification for auto-disable on resolve.
@@ -397,7 +398,7 @@ export function ensureApprovalDetector(
     });
 
     detector.start();
-    bridge.pool.registerApprovalDetector(projectName, detector);
+    bridge.pool.registerApprovalDetector(projectName, detector, accountName);
     logger.debug(`[ApprovalDetector:${projectName}] Started approval button detection`);
 }
 
@@ -409,8 +410,9 @@ export function ensurePlanningDetector(
     bridge: CdpBridge,
     cdp: CdpService,
     projectName: string,
+    accountName: string = 'default',
 ): void {
-    const existing = bridge.pool.getPlanningDetector(projectName);
+    const existing = bridge.pool.getPlanningDetector(projectName, accountName);
     if (existing && existing.isActive()) return;
 
     // Track the most recent planning notification for auto-disable on resolve.
@@ -471,7 +473,7 @@ export function ensurePlanningDetector(
     });
 
     detector.start();
-    bridge.pool.registerPlanningDetector(projectName, detector);
+    bridge.pool.registerPlanningDetector(projectName, detector, accountName);
     logger.debug(`[PlanningDetector:${projectName}] Started planning button detection`);
 }
 
@@ -483,8 +485,9 @@ export function ensureErrorPopupDetector(
     bridge: CdpBridge,
     cdp: CdpService,
     projectName: string,
+    accountName: string = 'default',
 ): void {
-    const existing = bridge.pool.getErrorPopupDetector(projectName);
+    const existing = bridge.pool.getErrorPopupDetector(projectName, accountName);
     if (existing && existing.isActive()) return;
 
     // Track the most recent error notification for auto-disable on resolve.
@@ -540,7 +543,7 @@ export function ensureErrorPopupDetector(
     });
 
     detector.start();
-    bridge.pool.registerErrorPopupDetector(projectName, detector);
+    bridge.pool.registerErrorPopupDetector(projectName, detector, accountName);
     logger.debug(`[ErrorPopupDetector:${projectName}] Started error popup detection`);
 }
 
@@ -553,8 +556,9 @@ export function ensureRunCommandDetector(
     bridge: CdpBridge,
     cdp: CdpService,
     projectName: string,
+    accountName: string = 'default',
 ): void {
-    const existing = bridge.pool.getRunCommandDetector(projectName);
+    const existing = bridge.pool.getRunCommandDetector(projectName, accountName);
     if (existing && existing.isActive()) return;
 
     let lastNotification: { sent: PlatformSentMessage; payload: MessagePayload } | null = null;
@@ -623,7 +627,7 @@ export function ensureRunCommandDetector(
     });
 
     detector.start();
-    bridge.pool.registerRunCommandDetector(projectName, detector);
+    bridge.pool.registerRunCommandDetector(projectName, detector, accountName);
     logger.debug(`[RunCommandDetector:${projectName}] Started run command detection`);
 }
 
@@ -638,8 +642,9 @@ export function ensureUserMessageDetector(
     cdp: CdpService,
     projectName: string,
     onUserMessage: (info: UserMessageInfo) => void,
+    accountName: string = 'default',
 ): void {
-    const existing = bridge.pool.getUserMessageDetector(projectName);
+    const existing = bridge.pool.getUserMessageDetector(projectName, accountName);
     if (existing && existing.isActive()) {
         existing.on('message', onUserMessage);
         return;
@@ -652,6 +657,6 @@ export function ensureUserMessageDetector(
     
     detector.on('message', onUserMessage);
     detector.start();
-    bridge.pool.registerUserMessageDetector(projectName, detector);
+    bridge.pool.registerUserMessageDetector(projectName, detector, accountName);
     logger.debug(`[UserMessageDetector:${projectName}] Started user message detection`);
 }

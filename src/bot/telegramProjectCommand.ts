@@ -146,6 +146,15 @@ export async function tryCreateTopicAndBind(
     pool: any
 ): Promise<string> {
     const baseChatId = originalChannelId.split('_')[0];
+    const isExistingTopic = originalChannelId.includes('_');
+
+    if (isExistingTopic) {
+        telegramBindingRepo.upsert({
+            chatId: originalChannelId,
+            workspacePath,
+        });
+        return originalChannelId;
+    }
 
     try {
         const chat = await botApi.getChat(baseChatId);

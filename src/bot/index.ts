@@ -18,6 +18,7 @@ import { wrapDiscordChannel } from '../platform/discord/wrappers';
 import type { PlatformType } from '../platform/types';
 import { loadConfig, resolveResponseDeliveryMode } from '../utils/config';
 import type { ExtractionMode } from '../utils/config';
+import type { AntigravityAccountConfig } from '../utils/configLoader';
 import { parseMessageContent } from '../commands/messageParser';
 import { SlashCommandHandler } from '../commands/slashCommandHandler';
 import { registerSlashCommands } from '../commands/registerSlashCommands';
@@ -114,6 +115,7 @@ import { createAutoAcceptButtonAction } from '../handlers/autoAcceptButtonAction
 import { createTemplateButtonAction } from '../handlers/templateButtonAction';
 import { createModeSelectAction } from '../handlers/modeSelectAction';
 import { createAccountSelectAction } from '../handlers/accountSelectAction';
+import { selectTelegramStartupChatId } from './telegramStartupTarget';
 
 // =============================================================================
 // Embed color palette (color-coded by phase)
@@ -943,7 +945,12 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
     const accountPorts = Object.fromEntries(
         (config.antigravityAccounts ?? []).map((account) => [account.name, account.cdpPort]),
     );
-    const bridge = initCdpBridge(config.autoApproveFileEdits, accountPorts);
+    const accountUserDataDirs = Object.fromEntries(
+        (config.antigravityAccounts ?? [])
+            .filter((account) => typeof account.userDataDir === 'string' && account.userDataDir.trim().length > 0)
+            .map((account) => [account.name, account.userDataDir!.trim()]),
+    );
+    const bridge = initCdpBridge(config.autoApproveFileEdits, accountPorts, accountUserDataDirs);
 
     // Initialize CDP-dependent services (constructor CDP dependency removed)
     const chatSessionService = new ChatSessionService();
@@ -1118,7 +1125,6 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                         config.antigravityAccounts,
                     );
                     bridge.selectedAccountByChannel?.set(channelId, selectedAccount);
-                    bridge.pool.setPreferredAccountForWorkspace?.(workspacePath, selectedAccount);
 
                     cdp = await bridge.pool.getOrConnect(workspacePath, { name: selectedAccount });
                     const projectName = bridge.pool.extractProjectName(workspacePath);
@@ -1130,10 +1136,10 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                     if (session?.displayName) {
                         registerApprovalSessionChannel(bridge, projectName, session.displayName, platformCh);
                     }
-                    ensureApprovalDetector(bridge, cdp, projectName);
-                    ensureErrorPopupDetector(bridge, cdp, projectName);
-                    ensurePlanningDetector(bridge, cdp, projectName);
-                    ensureRunCommandDetector(bridge, cdp, projectName);
+                    ensureApprovalDetector(bridge, cdp, projectName, selectedAccount);
+                    ensureErrorPopupDetector(bridge, cdp, projectName, selectedAccount);
+                    ensurePlanningDetector(bridge, cdp, projectName, selectedAccount);
+                    ensureRunCommandDetector(bridge, cdp, projectName, selectedAccount);
                 } catch (e: any) {
                     await interaction.followUp({
                         content: `Failed to connect to workspace: ${e.message}`,
@@ -1142,7 +1148,16 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                     return;
                 }
             } else {
-                cdp = getCurrentCdp(bridge);
+                const selectedAccount = resolveValidAccountName(
+                    bridge.selectedAccountByChannel?.get(channelId)
+                        ?? channelPrefRepo.getAccountName(channelId)
+                        ?? accountPrefRepo.getAccountName(interaction.user.id)
+                        ?? 'default',
+                    config.antigravityAccounts,
+                );
+                cdp = bridge.lastActiveWorkspace
+                    ? bridge.pool.getConnected(bridge.lastActiveWorkspace, selectedAccount)
+                    : null;
             }
 
             if (!cdp) {
@@ -1347,7 +1362,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                 { command: 'screenshot', description: 'Capture Antigravity screenshot' },
                 { command: 'autoaccept', description: 'Toggle auto-accept mode' },
                 { command: 'account', description: 'Switch Antigravity account' },
-                { command: 'open', description: 'Open bound project in account' },
+                { command: 'project_reopen', description: 'Reopen bound project in account' },
                 { command: 'template', description: 'List prompt templates' },
                 { command: 'template_add', description: 'Add a prompt template' },
                 { command: 'template_delete', description: 'Delete a prompt template' },
@@ -1368,7 +1383,8 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
 
             logger.info(`Telegram bot started: @${botInfo.username} (${config.telegramAllowedUserIds?.length ?? 0} allowed users)`);
 
-            // Send startup message to all bound Telegram chats
+            // Send startup message to one Telegram target:
+            // prefer a group named "general", otherwise the first private chat.
             const bindings = telegramBindingRepo.findAll();
             if (bindings.length > 0) {
                 const os = await import('os');
@@ -1411,14 +1427,14 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                     }
                 };
 
-                const results = await Promise.allSettled(
-                    bindings.map((binding) => sendWithRetry(binding.chatId, startupText)),
-                );
-                const failed = results.filter((r) => r.status === 'rejected');
-                if (failed.length > 0) {
-                    logger.warn(`[Telegram] Startup message failed for ${failed.length}/${bindings.length} chat(s) after retries: ${(failed[0] as PromiseRejectedResult).reason?.message ?? 'unknown error'}`);
-                } else {
-                    logger.info(`Telegram startup message sent to ${bindings.length} bound chat(s).`);
+                const targetChatId = await selectTelegramStartupChatId(telegramBot.api, bindings);
+                if (targetChatId) {
+                    try {
+                        await sendWithRetry(targetChatId, startupText);
+                        logger.info(`Telegram startup message sent to chat ${targetChatId}.`);
+                    } catch (error: any) {
+                        logger.warn(`[Telegram] Startup message failed for chat ${targetChatId} after retries: ${error?.message ?? 'unknown error'}`);
+                    }
                 }
             }
         } catch (e: unknown) {
@@ -1474,13 +1490,25 @@ export async function handleSlashInteraction(
     userPrefRepo?: UserPreferenceRepository,
     accountPrefRepo?: AccountPreferenceRepository,
     channelPrefRepo?: ChannelPreferenceRepository,
-    antigravityAccounts: { name: string; cdpPort: number }[] = [{ name: 'default', cdpPort: 9222 }],
+    antigravityAccounts: AntigravityAccountConfig[] = [{ name: 'default', cdpPort: 9222 }],
 ): Promise<void> {
     const commandName = interaction.commandName;
     const getAccountPort = (accountName: string): number | null => {
         const match = antigravityAccounts.find((account) => account.name === accountName);
         return match ? match.cdpPort : null;
     };
+    const resolveSelectedAccount = (): string =>
+        resolveValidAccountName(
+            bridge.selectedAccountByChannel?.get(interaction.channelId)
+                ?? channelPrefRepo?.getAccountName(interaction.channelId)
+                ?? accountPrefRepo?.getAccountName(interaction.user.id)
+                ?? 'default',
+            antigravityAccounts,
+        );
+    const getChannelCdp = (): CdpService | null =>
+        bridge.lastActiveWorkspace
+            ? bridge.pool.getConnected(bridge.lastActiveWorkspace, resolveSelectedAccount())
+            : null;
 
     switch (commandName) {
         case 'help': {
@@ -1500,7 +1528,7 @@ export async function handleSlashInteraction(
                 {
                     name: '⏹️ Control', value: [
                         '`/stop` — Interrupt active LLM generation',
-                        '`/open` — Open the bound project in the selected account',
+                        '`/project reopen` — Reopen the bound project in the selected account',
                         '`/screenshot` — Capture Antigravity screen',
                     ].join('\n')
                 },
@@ -1515,6 +1543,7 @@ export async function handleSlashInteraction(
                     name: '📁 Projects', value: [
                         '`/project` — Display project list',
                         '`/project create <name>` — Create a new project',
+                        '`/project reopen` — Reopen the bound project in the selected account',
                     ].join('\n')
                 },
                 {
@@ -1560,7 +1589,7 @@ export async function handleSlashInteraction(
         }
 
         case 'mode': {
-            await sendModeUI(interaction, modeService, { getCurrentCdp: () => getCurrentCdp(bridge) });
+            await sendModeUI(interaction, modeService, { getCurrentCdp: () => getChannelCdp() });
             break;
         }
 
@@ -1568,11 +1597,11 @@ export async function handleSlashInteraction(
             const modelName = interaction.options.getString('name');
             if (!modelName) {
                 await sendModelsUI(interaction, {
-                    getCurrentCdp: () => getCurrentCdp(bridge),
+                    getCurrentCdp: () => getChannelCdp(),
                     fetchQuota: async () => bridge.quota.fetchQuota(),
                 });
             } else {
-                const cdp = getCurrentCdp(bridge);
+                const cdp = getChannelCdp();
                 if (!cdp) {
                     await interaction.editReply({ content: 'Not connected to CDP.' });
                     break;
@@ -1621,7 +1650,7 @@ export async function handleSlashInteraction(
         case 'status': {
             const activeNames = bridge.pool.getActiveWorkspaceNames();
             const currentModel = (() => {
-                const cdp = getCurrentCdp(bridge);
+                const cdp = getChannelCdp();
                 return cdp ? 'CDP Connected' : 'Disconnected';
             })();
             const currentMode = modeService.getCurrentMode();
@@ -1726,9 +1755,6 @@ export async function handleSlashInteraction(
             bridge.selectedAccountByChannel?.set(interaction.channelId, requested);
 
             const channelWorkspace = wsHandler.getWorkspaceForChannel(interaction.channelId);
-            if (channelWorkspace) {
-                bridge.pool.setPreferredAccountForWorkspace?.(channelWorkspace, requested);
-            }
 
             logger.info(
                 `[AccountSwitch] source=slash channel=${interaction.channelId} user=${interaction.user.id} ` +
@@ -1737,71 +1763,6 @@ export async function handleSlashInteraction(
             );
 
             await interaction.editReply({ content: `✅ Switched account to **${requested}**.` });
-            break;
-        }
-
-        case 'open': {
-            const workspacePath = wsHandler.getWorkspaceForChannel(interaction.channelId);
-            if (!workspacePath) {
-                await interaction.editReply({
-                    content: '⚠️ No project is bound to this channel. Use `/project` first.',
-                });
-                break;
-            }
-
-            if (!fs.existsSync(workspacePath) || !fs.statSync(workspacePath).isDirectory()) {
-                await interaction.editReply({
-                    content: `❌ Project folder does not exist: \`${workspacePath}\``,
-                });
-                break;
-            }
-
-            const selectedAccount = resolveValidAccountName(
-                bridge.selectedAccountByChannel?.get(interaction.channelId)
-                    ?? channelPrefRepo?.getAccountName(interaction.channelId)
-                    ?? accountPrefRepo?.getAccountName(interaction.user.id)
-                    ?? 'default',
-                antigravityAccounts,
-            );
-            const port = getAccountPort(selectedAccount);
-            const accountPorts = Object.fromEntries(
-                antigravityAccounts.map((account) => [account.name, account.cdpPort]),
-            );
-            const projectName = bridge.pool.extractProjectName(workspacePath);
-
-            logger.info(
-                `[OpenCommand] channel=${interaction.channelId} user=${interaction.user.id} ` +
-                `project=${projectName} account=${selectedAccount} ` +
-                `port=${port ?? 'unknown'} workspacePath=${workspacePath}`,
-            );
-
-            try {
-                const cdp = new CdpService({
-                    accountName: selectedAccount,
-                    accountPorts,
-                    cdpCallTimeout: 15000,
-                    maxReconnectAttempts: 0,
-                });
-
-                try {
-                    await cdp.openWorkspace(workspacePath);
-                } finally {
-                    await cdp.disconnect().catch(() => {});
-                }
-
-                bridge.selectedAccountByChannel?.set(interaction.channelId, selectedAccount);
-                bridge.pool.setPreferredAccountForWorkspace?.(workspacePath, selectedAccount);
-
-                await interaction.editReply({
-                    content: `✅ Opened **${projectName}** in account **${selectedAccount}**${port ? ` (CDP ${port})` : ''}.`,
-                });
-            } catch (error: any) {
-                logger.error('[OpenCommand] Failed to open workspace:', error);
-                await interaction.editReply({
-                    content: `❌ Failed to open project in account **${selectedAccount}**: ${error?.message || String(error)}`,
-                });
-            }
-
             break;
         }
 
@@ -1826,12 +1787,12 @@ export async function handleSlashInteraction(
         }
 
         case 'screenshot': {
-            await handleScreenshot(interaction, getCurrentCdp(bridge));
+            await handleScreenshot(interaction, getChannelCdp());
             break;
         }
 
         case 'stop': {
-            const cdp = getCurrentCdp(bridge);
+            const cdp = getChannelCdp();
             if (!cdp) {
                 await interaction.editReply({ content: '⚠️ Not connected to CDP. Please connect to a project first.' });
                 break;
@@ -1881,6 +1842,72 @@ export async function handleSlashInteraction(
                     break;
                 }
                 await wsHandler.handleCreate(interaction, interaction.guild);
+            } else if (wsSub === 'reopen') {
+                const workspacePath = wsHandler.getWorkspaceForChannel(interaction.channelId);
+                if (!workspacePath) {
+                    await interaction.editReply({
+                        content: '⚠️ No project is bound to this channel. Use `/project` first.',
+                    });
+                    break;
+                }
+
+                if (!fs.existsSync(workspacePath) || !fs.statSync(workspacePath).isDirectory()) {
+                    await interaction.editReply({
+                        content: `❌ Project folder does not exist: \`${workspacePath}\``,
+                    });
+                    break;
+                }
+
+                const selectedAccount = resolveValidAccountName(
+                    bridge.selectedAccountByChannel?.get(interaction.channelId)
+                        ?? channelPrefRepo?.getAccountName(interaction.channelId)
+                        ?? accountPrefRepo?.getAccountName(interaction.user.id)
+                        ?? 'default',
+                    antigravityAccounts,
+                );
+                const port = getAccountPort(selectedAccount);
+                const accountPorts = Object.fromEntries(
+                    antigravityAccounts.map((account) => [account.name, account.cdpPort]),
+                );
+                const accountUserDataDirs = Object.fromEntries(
+                    antigravityAccounts
+                        .filter((account) => typeof account.userDataDir === 'string' && account.userDataDir.trim().length > 0)
+                        .map((account) => [account.name, account.userDataDir!.trim()]),
+                );
+                const projectName = bridge.pool.extractProjectName(workspacePath);
+
+                logger.info(
+                    `[ProjectReopenCommand] channel=${interaction.channelId} user=${interaction.user.id} ` +
+                    `project=${projectName} account=${selectedAccount} ` +
+                    `port=${port ?? 'unknown'} workspacePath=${workspacePath}`,
+                );
+
+                try {
+                    const cdp = new CdpService({
+                        accountName: selectedAccount,
+                        accountPorts,
+                        accountUserDataDirs,
+                        cdpCallTimeout: 15000,
+                        maxReconnectAttempts: 0,
+                    });
+
+                    try {
+                        await cdp.openWorkspace(workspacePath);
+                    } finally {
+                        await cdp.disconnect().catch(() => {});
+                    }
+
+                    bridge.selectedAccountByChannel?.set(interaction.channelId, selectedAccount);
+
+                    await interaction.editReply({
+                        content: `✅ Reopened **${projectName}** in account **${selectedAccount}**${port ? ` (CDP ${port})` : ''}.`,
+                    });
+                } catch (error: any) {
+                    logger.error('[ProjectReopenCommand] Failed to reopen workspace:', error);
+                    await interaction.editReply({
+                        content: `❌ Failed to reopen project in account **${selectedAccount}**: ${error?.message || String(error)}`,
+                    });
+                }
             } else {
                 // /project list or /project (default)
                 await wsHandler.handleShow(interaction);
