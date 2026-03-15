@@ -48,7 +48,7 @@ import type { AntigravityAccountConfig } from '../utils/configLoader';
 // Known commands (used by both parser and /help output)
 // ---------------------------------------------------------------------------
 
-const KNOWN_COMMANDS = ['start', 'help', 'status', 'stop', 'ping', 'mode', 'model', 'screenshot', 'autoaccept', 'account', 'open', 'template', 'template_add', 'template_delete', 'project_create', 'logs', 'new', 'join', 'mirror'] as const;
+const KNOWN_COMMANDS = ['start', 'help', 'status', 'stop', 'ping', 'mode', 'model', 'screenshot', 'autoaccept', 'account', 'project_reopen', 'template', 'template_add', 'template_delete', 'project_create', 'logs', 'new', 'join', 'mirror'] as const;
 type KnownCommand = typeof KNOWN_COMMANDS[number];
 
 // ---------------------------------------------------------------------------
@@ -155,8 +155,8 @@ export async function handleTelegramCommand(
         case 'account':
             await handleAccount(deps, message, parsed.args);
             break;
-        case 'open':
-            await handleOpen(deps, message);
+        case 'project_reopen':
+            await handleProjectReopen(deps, message);
             break;
         case 'template':
             await handleTemplate(deps, message);
@@ -219,7 +219,7 @@ async function handleHelp(message: PlatformMessage): Promise<void> {
         '/screenshot — Capture Antigravity screenshot',
         '/autoaccept — Toggle auto-accept mode',
         '/account — Show and switch Antigravity account',
-        '/open — Open the bound project in the selected Antigravity account',
+        '/project_reopen — Reopen the bound project in the selected Antigravity account',
         '/template — List prompt templates',
         '/template_add — Add a prompt template',
         '/template_delete — Delete a prompt template',
@@ -631,7 +631,7 @@ async function sendFilePayload(message: PlatformMessage, payload: MessagePayload
 }
 
 
-async function handleOpen(deps: TelegramCommandDeps, message: PlatformMessage): Promise<void> {
+async function handleProjectReopen(deps: TelegramCommandDeps, message: PlatformMessage): Promise<void> {
     const chatId = message.channel.id;
     const channelBinding = deps.telegramBindingRepo?.findByChatId(chatId);
     
@@ -665,7 +665,7 @@ async function handleOpen(deps: TelegramCommandDeps, message: PlatformMessage): 
     const projectName = deps.bridge.pool.extractProjectName(workspacePath);
 
     logger.info(
-        `[OpenCommand] channel=${chatId} user=${message.author.id} ` +
+        `[ProjectReopenCommand] channel=${chatId} user=${message.author.id} ` +
         `project=${projectName} account=${selectedAccount} ` +
         `port=${port ?? 'unknown'} workspacePath=${workspacePath}`,
     );
@@ -689,12 +689,12 @@ async function handleOpen(deps: TelegramCommandDeps, message: PlatformMessage): 
         deps.bridge.pool.setPreferredAccountForWorkspace?.(workspacePath, selectedAccount);
 
         await message.reply({
-            text: `✅ Opened <b>${escapeHtml(projectName)}</b> in account <b>${escapeHtml(selectedAccount)}</b>${port ? ` (CDP ${port})` : ''}.`,
+            text: `✅ Reopened <b>${escapeHtml(projectName)}</b> in account <b>${escapeHtml(selectedAccount)}</b>${port ? ` (CDP ${port})` : ''}.`,
         }).catch(logger.error);
     } catch (error: any) {
-        logger.error('[OpenCommand] Failed to open workspace:', error);
+        logger.error('[ProjectReopenCommand] Failed to reopen workspace:', error);
         await message.reply({
-            text: `❌ Failed to open project in account <b>${escapeHtml(selectedAccount)}</b>: ${escapeHtml(error?.message || String(error))}`,
+            text: `❌ Failed to reopen project in account <b>${escapeHtml(selectedAccount)}</b>: ${escapeHtml(error?.message || String(error))}`,
         }).catch(logger.error);
     }
 }

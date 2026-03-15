@@ -1344,7 +1344,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                 { command: 'screenshot', description: 'Capture Antigravity screenshot' },
                 { command: 'autoaccept', description: 'Toggle auto-accept mode' },
                 { command: 'account', description: 'Switch Antigravity account' },
-                { command: 'open', description: 'Open bound project in account' },
+                { command: 'project_reopen', description: 'Reopen bound project in account' },
                 { command: 'template', description: 'List prompt templates' },
                 { command: 'template_add', description: 'Add a prompt template' },
                 { command: 'template_delete', description: 'Delete a prompt template' },
@@ -1497,7 +1497,7 @@ export async function handleSlashInteraction(
                 {
                     name: '⏹️ Control', value: [
                         '`/stop` — Interrupt active LLM generation',
-                        '`/open` — Open the bound project in the selected account',
+                        '`/project reopen` — Reopen the bound project in the selected account',
                         '`/screenshot` — Capture Antigravity screen',
                     ].join('\n')
                 },
@@ -1512,6 +1512,7 @@ export async function handleSlashInteraction(
                     name: '📁 Projects', value: [
                         '`/project` — Display project list',
                         '`/project create <name>` — Create a new project',
+                        '`/project reopen` — Reopen the bound project in the selected account',
                     ].join('\n')
                 },
                 {
@@ -1737,71 +1738,6 @@ export async function handleSlashInteraction(
             break;
         }
 
-        case 'open': {
-            const workspacePath = wsHandler.getWorkspaceForChannel(interaction.channelId);
-            if (!workspacePath) {
-                await interaction.editReply({
-                    content: '⚠️ No project is bound to this channel. Use `/project` first.',
-                });
-                break;
-            }
-
-            if (!fs.existsSync(workspacePath) || !fs.statSync(workspacePath).isDirectory()) {
-                await interaction.editReply({
-                    content: `❌ Project folder does not exist: \`${workspacePath}\``,
-                });
-                break;
-            }
-
-            const selectedAccount = resolveValidAccountName(
-                bridge.selectedAccountByChannel?.get(interaction.channelId)
-                    ?? channelPrefRepo?.getAccountName(interaction.channelId)
-                    ?? accountPrefRepo?.getAccountName(interaction.user.id)
-                    ?? 'default',
-                antigravityAccounts,
-            );
-            const port = getAccountPort(selectedAccount);
-            const accountPorts = Object.fromEntries(
-                antigravityAccounts.map((account) => [account.name, account.cdpPort]),
-            );
-            const projectName = bridge.pool.extractProjectName(workspacePath);
-
-            logger.info(
-                `[OpenCommand] channel=${interaction.channelId} user=${interaction.user.id} ` +
-                `project=${projectName} account=${selectedAccount} ` +
-                `port=${port ?? 'unknown'} workspacePath=${workspacePath}`,
-            );
-
-            try {
-                const cdp = new CdpService({
-                    accountName: selectedAccount,
-                    accountPorts,
-                    cdpCallTimeout: 15000,
-                    maxReconnectAttempts: 0,
-                });
-
-                try {
-                    await cdp.openWorkspace(workspacePath);
-                } finally {
-                    await cdp.disconnect().catch(() => {});
-                }
-
-                bridge.selectedAccountByChannel?.set(interaction.channelId, selectedAccount);
-                bridge.pool.setPreferredAccountForWorkspace?.(workspacePath, selectedAccount);
-
-                await interaction.editReply({
-                    content: `✅ Opened **${projectName}** in account **${selectedAccount}**${port ? ` (CDP ${port})` : ''}.`,
-                });
-            } catch (error: any) {
-                logger.error('[OpenCommand] Failed to open workspace:', error);
-                await interaction.editReply({
-                    content: `❌ Failed to open project in account **${selectedAccount}**: ${error?.message || String(error)}`,
-                });
-            }
-
-            break;
-        }
-
         case 'output': {
             if (!userPrefRepo) {
                 await interaction.editReply({ content: 'Output preference service not available.' });
@@ -1878,6 +1814,67 @@ export async function handleSlashInteraction(
                     break;
                 }
                 await wsHandler.handleCreate(interaction, interaction.guild);
+            } else if (wsSub === 'reopen') {
+                const workspacePath = wsHandler.getWorkspaceForChannel(interaction.channelId);
+                if (!workspacePath) {
+                    await interaction.editReply({
+                        content: '⚠️ No project is bound to this channel. Use `/project` first.',
+                    });
+                    break;
+                }
+
+                if (!fs.existsSync(workspacePath) || !fs.statSync(workspacePath).isDirectory()) {
+                    await interaction.editReply({
+                        content: `❌ Project folder does not exist: \`${workspacePath}\``,
+                    });
+                    break;
+                }
+
+                const selectedAccount = resolveValidAccountName(
+                    bridge.selectedAccountByChannel?.get(interaction.channelId)
+                        ?? channelPrefRepo?.getAccountName(interaction.channelId)
+                        ?? accountPrefRepo?.getAccountName(interaction.user.id)
+                        ?? 'default',
+                    antigravityAccounts,
+                );
+                const port = getAccountPort(selectedAccount);
+                const accountPorts = Object.fromEntries(
+                    antigravityAccounts.map((account) => [account.name, account.cdpPort]),
+                );
+                const projectName = bridge.pool.extractProjectName(workspacePath);
+
+                logger.info(
+                    `[ProjectReopenCommand] channel=${interaction.channelId} user=${interaction.user.id} ` +
+                    `project=${projectName} account=${selectedAccount} ` +
+                    `port=${port ?? 'unknown'} workspacePath=${workspacePath}`,
+                );
+
+                try {
+                    const cdp = new CdpService({
+                        accountName: selectedAccount,
+                        accountPorts,
+                        cdpCallTimeout: 15000,
+                        maxReconnectAttempts: 0,
+                    });
+
+                    try {
+                        await cdp.openWorkspace(workspacePath);
+                    } finally {
+                        await cdp.disconnect().catch(() => {});
+                    }
+
+                    bridge.selectedAccountByChannel?.set(interaction.channelId, selectedAccount);
+                    bridge.pool.setPreferredAccountForWorkspace?.(workspacePath, selectedAccount);
+
+                    await interaction.editReply({
+                        content: `✅ Reopened **${projectName}** in account **${selectedAccount}**${port ? ` (CDP ${port})` : ''}.`,
+                    });
+                } catch (error: any) {
+                    logger.error('[ProjectReopenCommand] Failed to reopen workspace:', error);
+                    await interaction.editReply({
+                        content: `❌ Failed to reopen project in account **${selectedAccount}**: ${error?.message || String(error)}`,
+                    });
+                }
             } else {
                 // /project list or /project (default)
                 await wsHandler.handleShow(interaction);

@@ -627,7 +627,8 @@ export class CdpService extends EventEmitter {
             );
             throw new Error(
                 `Workspace "${projectName}" is not open in account "${this.accountName}" ` +
-                `(CDP port ${targetPort}). Open it manually in that Antigravity instance and try again.`,
+                `(CDP port ${targetPort}). Open it with Antigravity Cockpit or use "/project reopen" ` +
+                `command (Telegram: /project_reopen).`,
             );
         }
 
