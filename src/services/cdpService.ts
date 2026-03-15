@@ -59,6 +59,13 @@ const SELECTORS = {
     CONTEXT_URL_KEYWORD: 'cascade-panel',
 };
 
+const CHAT_READY_TIMEOUT_MS = 6000;
+const CHAT_READY_POLL_MS = 250;
+const INJECT_RETRY_READY_TIMEOUT_MS = 2500;
+const INJECT_RETRY_BACKOFF_MS = 500;
+const MODE_READY_TIMEOUT_MS = 4000;
+const MODE_RETRY_READY_TIMEOUT_MS = 2000;
+
 export class CdpService extends EventEmitter {
     private ports: number[];
     private isConnectedFlag: boolean = false;
@@ -1149,6 +1156,130 @@ export class CdpService extends EventEmitter {
         return { ok: false, error: 'Chat input field not found' };
     }
 
+    private async waitForChatInputReady(timeoutMs = CHAT_READY_TIMEOUT_MS): Promise<{ ok: boolean; contextId?: number; error?: string }> {
+        const deadline = Date.now() + timeoutMs;
+        let lastError = 'Chat input field not found';
+
+        while (Date.now() < deadline) {
+            const focusResult = await this.focusChatInput();
+            if (focusResult.ok) {
+                return focusResult;
+            }
+            lastError = focusResult.error || lastError;
+            await new Promise((r) => setTimeout(r, CHAT_READY_POLL_MS));
+        }
+
+        return { ok: false, error: lastError };
+    }
+
+    private isTransientInjectError(error?: string): boolean {
+        const message = String(error || '');
+        return [
+            'No editor found',
+            'Chat input field not found',
+            'WebSocket is not connected',
+            'WebSocket disconnected',
+        ].some((fragment) => message.includes(fragment));
+    }
+
+    private async isModeToggleReady(): Promise<boolean> {
+        const expression = '(() => {'
+            + ' const uiNameMap = { fast: "Fast", plan: "Planning" };'
+            + ' const knownModes = Object.values(uiNameMap).map(n => n.toLowerCase());'
+            + ' const allBtns = Array.from(document.querySelectorAll("button"));'
+            + ' const visibleBtns = allBtns.filter(b => b.offsetParent !== null);'
+            + ' const modeToggleBtn = visibleBtns.find(b => {'
+            + '   const text = (b.textContent || "").trim().toLowerCase();'
+            + '   const hasChevron = b.querySelector("svg[class*=\\"chevron\\"]");'
+            + '   return knownModes.some(m => text === m) && hasChevron;'
+            + ' });'
+            + ' return !!modeToggleBtn;'
+            + '})()';
+        try {
+            const contextId = this.getPrimaryContextId();
+            const callParams: any = {
+                expression,
+                returnByValue: true,
+                awaitPromise: false,
+            };
+            if (contextId !== null) callParams.contextId = contextId;
+            const res = await this.call('Runtime.evaluate', callParams);
+            return Boolean(res?.result?.value);
+        } catch {
+            return false;
+        }
+    }
+
+    private async waitForModeToggleReady(timeoutMs = MODE_READY_TIMEOUT_MS): Promise<boolean> {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+            if (await this.isModeToggleReady()) {
+                return true;
+            }
+            await new Promise((r) => setTimeout(r, CHAT_READY_POLL_MS));
+        }
+        return false;
+    }
+
+    private isTransientModeError(error?: string): boolean {
+        const message = String(error || '');
+        return [
+            'Mode toggle button not found',
+            'WebSocket is not connected',
+            'WebSocket disconnected',
+        ].some((fragment) => message.includes(fragment));
+    }
+
+    private async injectMessageCore(text: string, imageFilePaths?: string[]): Promise<InjectResult> {
+        const focusResult = await this.waitForChatInputReady();
+        if (!focusResult.ok) {
+            return { ok: false, error: focusResult.error || 'Chat input field not found' };
+        }
+
+        // Clear any existing text in the input field before injecting.
+        await this.clearInputField();
+
+        if (imageFilePaths && imageFilePaths.length > 0) {
+            const attachResult = await this.attachImageFiles(imageFilePaths, focusResult.contextId);
+            if (!attachResult.ok) {
+                return { ok: false, error: attachResult.error || 'Failed to attach images' };
+            }
+        }
+
+        await this.call('Input.insertText', { text });
+        await new Promise(r => setTimeout(r, 200));
+        await this.pressEnterToSend();
+
+        return {
+            ok: true,
+            method: 'enter',
+            contextId: focusResult.contextId,
+        };
+    }
+
+    private async retryInjectOnce(
+        text: string,
+        firstError: string,
+        imageFilePaths?: string[],
+    ): Promise<InjectResult> {
+        logger.warn(`[CdpService] Initial message injection failed: ${firstError}. Retrying once after readiness check...`);
+
+        try {
+            await this.reconnectOnDemand(INJECT_RETRY_READY_TIMEOUT_MS);
+        } catch {
+            // Ignore reconnect failures here; readiness check below will produce the final error.
+        }
+
+        await new Promise((r) => setTimeout(r, INJECT_RETRY_BACKOFF_MS));
+
+        const ready = await this.waitForChatInputReady(INJECT_RETRY_READY_TIMEOUT_MS);
+        if (!ready.ok) {
+            return { ok: false, error: ready.error || firstError };
+        }
+
+        return this.injectMessageCore(text, imageFilePaths);
+    }
+
     /**
      * Select all text in the focused input and delete it to ensure a clean state.
      * Uses Meta+A (select all) then Backspace (delete) via CDP key events.
@@ -1346,22 +1477,12 @@ export class CdpService extends EventEmitter {
             throw new Error('Not connected to CDP. Call connect() first.');
         }
 
-        const focusResult = await this.focusChatInput();
-        if (!focusResult.ok) {
-            return { ok: false, error: focusResult.error || 'Chat input field not found' };
+        const result = await this.injectMessageCore(text);
+        if (result.ok || !this.isTransientInjectError(result.error)) {
+            return result;
         }
 
-        // Clear any existing text in the input field before injecting
-        await this.clearInputField();
-
-        // 1. Input text via CDP Input.insertText
-        await this.call('Input.insertText', { text });
-        await new Promise(r => setTimeout(r, 200));
-
-        // 2. Send via Enter key
-        await this.pressEnterToSend();
-
-        return { ok: true, method: 'enter', contextId: focusResult.contextId };
+        return this.retryInjectOnce(text, result.error || 'Message injection failed');
     }
 
     /**
@@ -1372,24 +1493,12 @@ export class CdpService extends EventEmitter {
             throw new Error('Not connected to CDP. Call connect() first.');
         }
 
-        const focusResult = await this.focusChatInput();
-        if (!focusResult.ok) {
-            return { ok: false, error: focusResult.error || 'Chat input field not found' };
+        const result = await this.injectMessageCore(text, imageFilePaths);
+        if (result.ok || !this.isTransientInjectError(result.error)) {
+            return result;
         }
 
-        // Clear any existing text in the input field before injecting
-        await this.clearInputField();
-
-        const attachResult = await this.attachImageFiles(imageFilePaths, focusResult.contextId);
-        if (!attachResult.ok) {
-            return { ok: false, error: attachResult.error || 'Failed to attach images' };
-        }
-
-        await this.call('Input.insertText', { text });
-        await new Promise(r => setTimeout(r, 200));
-        await this.pressEnterToSend();
-
-        return { ok: true, method: 'enter', contextId: focusResult.contextId };
+        return this.retryInjectOnce(text, result.error || 'Image message injection failed', imageFilePaths);
     }
 
     /**
@@ -1632,6 +1741,8 @@ export class CdpService extends EventEmitter {
             await this.reconnectOnDemand();
         }
 
+        await this.waitForModeToggleReady();
+
         const safeMode = JSON.stringify(modeName);
 
         // Internal mode name -> Antigravity UI display name mapping
@@ -1727,7 +1838,25 @@ export class CdpService extends EventEmitter {
             if (value?.ok) {
                 return { ok: true, mode: value.mode };
             }
-            return { ok: false, error: value?.error || 'UI operation failed (setUiMode)' };
+            const errorMessage = value?.error || 'UI operation failed (setUiMode)';
+            if (!this.isTransientModeError(errorMessage)) {
+                return { ok: false, error: errorMessage };
+            }
+
+            logger.warn(`[CdpService] setUiMode initial attempt failed: ${errorMessage}. Retrying once after readiness check...`);
+            try {
+                await this.reconnectOnDemand(MODE_RETRY_READY_TIMEOUT_MS);
+            } catch {
+                // Fall through to the readiness wait and retry below.
+            }
+            await this.waitForModeToggleReady(MODE_RETRY_READY_TIMEOUT_MS);
+
+            const retryRes = await this.call('Runtime.evaluate', callParams);
+            const retryValue = retryRes?.result?.value;
+            if (retryValue?.ok) {
+                return { ok: true, mode: retryValue.mode };
+            }
+            return { ok: false, error: retryValue?.error || errorMessage };
         } catch (error: any) {
             return { ok: false, error: error?.message || String(error) };
         }

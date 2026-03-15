@@ -114,6 +114,7 @@ import { createAutoAcceptButtonAction } from '../handlers/autoAcceptButtonAction
 import { createTemplateButtonAction } from '../handlers/templateButtonAction';
 import { createModeSelectAction } from '../handlers/modeSelectAction';
 import { createAccountSelectAction } from '../handlers/accountSelectAction';
+import { selectTelegramStartupChatId } from './telegramStartupTarget';
 
 // =============================================================================
 // Embed color palette (color-coded by phase)
@@ -1365,7 +1366,8 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
 
             logger.info(`Telegram bot started: @${botInfo.username} (${config.telegramAllowedUserIds?.length ?? 0} allowed users)`);
 
-            // Send startup message to all bound Telegram chats
+            // Send startup message to one Telegram target:
+            // prefer a group named "general", otherwise the first private chat.
             const bindings = telegramBindingRepo.findAll();
             if (bindings.length > 0) {
                 const os = await import('os');
@@ -1408,14 +1410,14 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                     }
                 };
 
-                const results = await Promise.allSettled(
-                    bindings.map((binding) => sendWithRetry(binding.chatId, startupText)),
-                );
-                const failed = results.filter((r) => r.status === 'rejected');
-                if (failed.length > 0) {
-                    logger.warn(`[Telegram] Startup message failed for ${failed.length}/${bindings.length} chat(s) after retries: ${(failed[0] as PromiseRejectedResult).reason?.message ?? 'unknown error'}`);
-                } else {
-                    logger.info(`Telegram startup message sent to ${bindings.length} bound chat(s).`);
+                const targetChatId = await selectTelegramStartupChatId(telegramBot.api, bindings);
+                if (targetChatId) {
+                    try {
+                        await sendWithRetry(targetChatId, startupText);
+                        logger.info(`Telegram startup message sent to chat ${targetChatId}.`);
+                    } catch (error: any) {
+                        logger.warn(`[Telegram] Startup message failed for chat ${targetChatId} after retries: ${error?.message ?? 'unknown error'}`);
+                    }
                 }
             }
         } catch (e: unknown) {
