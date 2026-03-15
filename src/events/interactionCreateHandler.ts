@@ -44,7 +44,7 @@ import { AutoAcceptService } from '../services/autoAcceptService';
 import { JoinCommandHandler } from '../commands/joinCommandHandler';
 import { isSessionSelectId } from '../ui/sessionPickerUi';
 import type { AntigravityAccountConfig } from '../utils/configLoader';
-import { listAccountNames } from '../utils/accountUtils';
+import { listAccountNames, resolveValidAccountName } from '../utils/accountUtils';
 import { ACCOUNT_SELECT_ID, sendAccountUI } from '../ui/accountUi';
 
 export interface InteractionCreateHandlerDeps {
@@ -96,6 +96,22 @@ export interface InteractionCreateHandlerDeps {
 }
 
 export function createInteractionCreateHandler(deps: InteractionCreateHandlerDeps) {
+    const resolveSelectedAccount = (channelId: string, userId: string): string =>
+        resolveValidAccountName(
+            deps.bridge.selectedAccountByChannel?.get(channelId)
+                ?? deps.channelPrefRepo?.getAccountName(channelId)
+                ?? deps.accountPrefRepo?.getAccountName(userId)
+                ?? 'default',
+            deps.antigravityAccounts,
+        );
+    const getChannelCdp = (channelId: string, userId: string): CdpService | null =>
+        deps.bridge.lastActiveWorkspace
+            ? deps.bridge.pool.getConnected(
+                deps.bridge.lastActiveWorkspace,
+                resolveSelectedAccount(channelId, userId),
+            )
+            : null;
+
     return async (interaction: Interaction): Promise<void> => {
         if (interaction.isButton()) {
             if (!deps.config.allowedUserIds.includes(interaction.user.id)) {
@@ -116,7 +132,10 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
 
                     const projectName = approvalAction.projectName ?? deps.bridge.lastActiveWorkspace;
                     const detector = projectName
-                        ? deps.bridge.pool.getApprovalDetector(projectName)
+                        ? deps.bridge.pool.getApprovalDetector(
+                            projectName,
+                            resolveSelectedAccount(interaction.channelId, interaction.user.id),
+                        )
                         : undefined;
 
                     if (!detector) {
@@ -186,7 +205,10 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
 
                     const planWorkspaceDirName = planningAction.projectName ?? deps.bridge.lastActiveWorkspace;
                     const planDetector = planWorkspaceDirName
-                        ? deps.bridge.pool.getPlanningDetector(planWorkspaceDirName)
+                        ? deps.bridge.pool.getPlanningDetector(
+                            planWorkspaceDirName,
+                            resolveSelectedAccount(interaction.channelId, interaction.user.id),
+                        )
                         : undefined;
 
                     if (!planDetector) {
@@ -316,7 +338,10 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
 
                     const errorWorkspaceDirName = errorPopupAction.projectName ?? deps.bridge.lastActiveWorkspace;
                     const errorDetector = errorWorkspaceDirName
-                        ? deps.bridge.pool.getErrorPopupDetector(errorWorkspaceDirName)
+                        ? deps.bridge.pool.getErrorPopupDetector(
+                            errorWorkspaceDirName,
+                            resolveSelectedAccount(interaction.channelId, interaction.user.id),
+                        )
                         : undefined;
 
                     if (!errorDetector) {
@@ -470,7 +495,10 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
 
                     const runCmdWorkspace = runCommandAction.projectName ?? deps.bridge.lastActiveWorkspace;
                     const runCmdDetector = runCmdWorkspace
-                        ? deps.bridge.pool.getRunCommandDetector(runCmdWorkspace)
+                        ? deps.bridge.pool.getRunCommandDetector(
+                            runCmdWorkspace,
+                            resolveSelectedAccount(interaction.channelId, interaction.user.id),
+                        )
                         : undefined;
 
                     if (!runCmdDetector) {
@@ -540,7 +568,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
 
                 if (interaction.customId === 'model_set_default_btn') {
                     await interaction.deferUpdate();
-                    const cdp = deps.getCurrentCdp(deps.bridge);
+                    const cdp = getChannelCdp(interaction.channelId, interaction.user.id);
                     if (!cdp) {
                         await interaction.followUp({ content: 'Not connected to CDP.', flags: MessageFlags.Ephemeral });
                         return;
@@ -557,7 +585,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                     await deps.sendModelsUI(
                         { editReply: async (data: any) => await interaction.editReply(data) },
                         {
-                            getCurrentCdp: () => deps.getCurrentCdp(deps.bridge),
+                            getCurrentCdp: () => getChannelCdp(interaction.channelId, interaction.user.id),
                             fetchQuota: async () => deps.bridge.quota.fetchQuota(),
                         },
                     );
@@ -574,7 +602,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                     await deps.sendModelsUI(
                         { editReply: async (data: any) => await interaction.editReply(data) },
                         {
-                            getCurrentCdp: () => deps.getCurrentCdp(deps.bridge),
+                            getCurrentCdp: () => getChannelCdp(interaction.channelId, interaction.user.id),
                             fetchQuota: async () => deps.bridge.quota.fetchQuota(),
                         },
                     );
@@ -587,7 +615,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                     await deps.sendModelsUI(
                         { editReply: async (data: any) => await interaction.editReply(data) },
                         {
-                            getCurrentCdp: () => deps.getCurrentCdp(deps.bridge),
+                            getCurrentCdp: () => getChannelCdp(interaction.channelId, interaction.user.id),
                             fetchQuota: async () => deps.bridge.quota.fetchQuota(),
                         },
                     );
@@ -598,7 +626,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                     await interaction.deferUpdate();
 
                     const modelName = interaction.customId.replace('model_btn_', '');
-                    const cdp = deps.getCurrentCdp(deps.bridge);
+                    const cdp = getChannelCdp(interaction.channelId, interaction.user.id);
 
                     if (!cdp) {
                         await interaction.followUp({ content: 'Not connected to CDP.', flags: MessageFlags.Ephemeral });
@@ -613,7 +641,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                         await deps.sendModelsUI(
                             { editReply: async (data: any) => await interaction.editReply(data) },
                             {
-                                getCurrentCdp: () => deps.getCurrentCdp(deps.bridge),
+                                getCurrentCdp: () => getChannelCdp(interaction.channelId, interaction.user.id),
                                 fetchQuota: async () => deps.bridge.quota.fetchQuota(),
                             },
                         );
@@ -723,7 +751,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
 
                 deps.modeService.setMode(selectedMode);
 
-                const cdp = deps.getCurrentCdp(deps.bridge);
+                const cdp = getChannelCdp(interaction.channelId, interaction.user.id);
                 if (cdp) {
                     const res = await cdp.setUiMode(selectedMode);
                     if (!res.ok) {
@@ -788,9 +816,6 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                 deps.bridge.selectedAccountByChannel?.set(interaction.channelId, selectedAccount);
 
                 const channelWorkspace = deps.wsHandler.getWorkspaceForChannel(interaction.channelId);
-                if (channelWorkspace) {
-                    deps.bridge.pool.setPreferredAccountForWorkspace?.(channelWorkspace, selectedAccount);
-                }
 
                 const selectedPort = deps.antigravityAccounts?.find((a) => a.name === selectedAccount)?.cdpPort;
                 logger.info(

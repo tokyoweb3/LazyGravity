@@ -136,7 +136,8 @@ export async function handleMirror(deps: TelegramJoinCommandDeps, message: Platf
         : binding.workspacePath;
 
     const projectName = deps.bridge.pool.extractProjectName(resolvedWorkspacePath);
-    const detector = deps.bridge.pool.getUserMessageDetector(resolvedWorkspacePath);
+    const account = resolveAccount(deps, message.channel.id, message.author.id);
+    const detector = deps.bridge.pool.getUserMessageDetector(projectName, account);
 
     if (detector?.isActive()) {
         detector.stop();
@@ -148,8 +149,6 @@ export async function handleMirror(deps: TelegramJoinCommandDeps, message: Platf
 
         await message.reply({ text: '📡 Mirroring OFF\nPC-to-Telegram message mirroring has been stopped.' }).catch(logger.error);
     } else {
-        const account = resolveAccount(deps, message.channel.id, message.author.id);
-
         let cdp: CdpService;
         try {
             cdp = await deps.bridge.pool.getOrConnect(resolvedWorkspacePath, { name: account });
@@ -158,16 +157,16 @@ export async function handleMirror(deps: TelegramJoinCommandDeps, message: Platf
             return;
         }
 
-        const existing = deps.bridge.pool.getUserMessageDetector(resolvedWorkspacePath);
+        const existing = deps.bridge.pool.getUserMessageDetector(projectName, account);
         if (existing?.isActive()) {
             existing.stop();
         }
 
-        ensureUserMessageDetector(deps.bridge, cdp, resolvedWorkspacePath, (info) => {
+        ensureUserMessageDetector(deps.bridge, cdp, projectName, (info) => {
             routeMirroredMessage(deps, cdp, resolvedWorkspacePath, info, message.channel).catch((err) => {
                 logger.error('[TelegramMirror] Error routing mirrored message:', err);
             });
-        });
+        }, account);
 
         await message.reply({ text: '📡 Mirroring ON\nMessages typed in Antigravity on your PC will now appear here.' }).catch(logger.error);
     }

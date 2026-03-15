@@ -159,7 +159,6 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
         await enqueueForWorkspace(workspacePath, async () => {
             const selectedAccount = resolveAccount(chatId, message.author.id);
             deps.bridge.selectedAccountByChannel?.set(chatId, selectedAccount);
-            deps.bridge.pool.setPreferredAccountForWorkspace?.(workspacePath, selectedAccount);
 
             const cdpStartTime = Date.now();
             logger.debug(`[TelegramHandler] getOrConnect start (elapsed=${cdpStartTime - handlerEntryTime}ms)`);
@@ -203,10 +202,10 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
             }
 
             // Start detectors (platform-agnostic now)
-            ensureApprovalDetector(deps.bridge, cdp, projectName);
-            ensureErrorPopupDetector(deps.bridge, cdp, projectName);
-            ensurePlanningDetector(deps.bridge, cdp, projectName);
-            ensureRunCommandDetector(deps.bridge, cdp, projectName);
+            ensureApprovalDetector(deps.bridge, cdp, projectName, selectedAccount);
+            ensureErrorPopupDetector(deps.bridge, cdp, projectName, selectedAccount);
+            ensurePlanningDetector(deps.bridge, cdp, projectName, selectedAccount);
+            ensureRunCommandDetector(deps.bridge, cdp, projectName, selectedAccount);
 
             // Acknowledge receipt
             await message.react('\u{1F440}').catch(() => {});

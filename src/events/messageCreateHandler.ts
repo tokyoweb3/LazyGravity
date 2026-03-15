@@ -225,9 +225,6 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                 deps.bridge.selectedAccountByChannel?.set(message.channelId, requested);
 
                 const channelWorkspace = deps.wsHandler.getWorkspaceForChannel(message.channelId);
-                if (channelWorkspace) {
-                    deps.bridge.pool.setPreferredAccountForWorkspace?.(channelWorkspace, requested);
-                }
 
                 logger.info(
                     `[AccountSwitch] source=text channel=${message.channelId} user=${message.author.id} ` +
@@ -329,7 +326,6 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                             );
                             const selectedPort = getAccountPort(selectedAccount);
                             deps.bridge.selectedAccountByChannel?.set(message.channelId, selectedAccount);
-                            deps.bridge.pool.setPreferredAccountForWorkspace?.(workspacePath, selectedAccount);
 
                             logger.info(
                                 `[Route] channel=${message.channelId} user=${message.author.id} ` +
@@ -345,10 +341,10 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                             deps.bridge.lastActiveChannel = platformChannel;
                             registerApprovalWorkspaceChannel(deps.bridge, projectName, platformChannel);
 
-                            ensureApprovalDetector(deps.bridge, cdp, projectName);
-                            ensureErrorPopupDetector(deps.bridge, cdp, projectName);
-                            ensurePlanningDetector(deps.bridge, cdp, projectName);
-                            ensureRunCommandDetector(deps.bridge, cdp, projectName);
+                            ensureApprovalDetector(deps.bridge, cdp, projectName, selectedAccount);
+                            ensureErrorPopupDetector(deps.bridge, cdp, projectName, selectedAccount);
+                            ensurePlanningDetector(deps.bridge, cdp, projectName, selectedAccount);
+                            ensureRunCommandDetector(deps.bridge, cdp, projectName, selectedAccount);
 
                             const session = deps.chatSessionRepo.findByChannelId(message.channelId);
                             if (session?.displayName) {

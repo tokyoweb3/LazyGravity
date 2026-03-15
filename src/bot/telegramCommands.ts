@@ -400,10 +400,6 @@ async function handleAccount(deps: TelegramCommandDeps, message: PlatformMessage
                 : channelBinding.workspacePath)
             : null;
 
-        if (workspacePath) {
-            deps.bridge.pool.setPreferredAccountForWorkspace?.(workspacePath, selectedAccount);
-        }
-
         const selectedPort = deps.antigravityAccounts?.find((a) => a.name === selectedAccount)?.cdpPort;
         logger.info(
             `[AccountSwitch] source=telegram_command channel=${chatId} user=${userId} ` +
@@ -692,7 +688,6 @@ async function handleProjectReopen(deps: TelegramCommandDeps, message: PlatformM
         }
 
         deps.bridge.selectedAccountByChannel?.set(chatId, selectedAccount);
-        deps.bridge.pool.setPreferredAccountForWorkspace?.(workspacePath, selectedAccount);
 
         await message.reply({
             text: `✅ Reopened <b>${escapeHtml(projectName)}</b> in account <b>${escapeHtml(selectedAccount)}</b>${port ? ` (CDP ${port})` : ''}.`,

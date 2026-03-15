@@ -194,7 +194,6 @@ describe('createTelegramMessageHandler', () => {
         const pool = createMockPool(mockCdp);
         const bridge = createBridge(pool);
         bridge.selectedAccountByChannel = new Map();
-        bridge.pool.setPreferredAccountForWorkspace = jest.fn();
         const binding = { chatId: 'chat-123', workspacePath: '/workspace/a' };
         const telegramBindingRepo = createTelegramBindingRepo(binding);
         const channelPrefRepo = { getAccountName: jest.fn().mockReturnValue('work1') } as any;
@@ -215,7 +214,6 @@ describe('createTelegramMessageHandler', () => {
 
         expect(channelPrefRepo.getAccountName).toHaveBeenCalledWith('chat-123');
         expect(pool.getOrConnect).toHaveBeenCalledWith('/workspace/a', { name: 'work1' });
-        expect(bridge.pool.setPreferredAccountForWorkspace).toHaveBeenCalledWith('/workspace/a', 'work1');
         expect(bridge.selectedAccountByChannel.get('chat-123')).toBe('work1');
     });
 
@@ -291,10 +289,10 @@ describe('createTelegramMessageHandler', () => {
             'test-project',
             message.channel,
         );
-        expect(ensureApprovalDetector).toHaveBeenCalledWith(bridge, mockCdp, 'test-project');
-        expect(ensureErrorPopupDetector).toHaveBeenCalledWith(bridge, mockCdp, 'test-project');
-        expect(ensurePlanningDetector).toHaveBeenCalledWith(bridge, mockCdp, 'test-project');
-        expect(ensureRunCommandDetector).toHaveBeenCalledWith(bridge, mockCdp, 'test-project');
+        expect(ensureApprovalDetector).toHaveBeenCalledWith(bridge, mockCdp, 'test-project', 'default');
+        expect(ensureErrorPopupDetector).toHaveBeenCalledWith(bridge, mockCdp, 'test-project', 'default');
+        expect(ensurePlanningDetector).toHaveBeenCalledWith(bridge, mockCdp, 'test-project', 'default');
+        expect(ensureRunCommandDetector).toHaveBeenCalledWith(bridge, mockCdp, 'test-project', 'default');
     });
 
     it('sets lastActiveWorkspace and lastActiveChannel on bridge', async () => {

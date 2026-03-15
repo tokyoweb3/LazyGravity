@@ -1123,7 +1123,6 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                         config.antigravityAccounts,
                     );
                     bridge.selectedAccountByChannel?.set(channelId, selectedAccount);
-                    bridge.pool.setPreferredAccountForWorkspace?.(workspacePath, selectedAccount);
 
                     cdp = await bridge.pool.getOrConnect(workspacePath, { name: selectedAccount });
                     const projectName = bridge.pool.extractProjectName(workspacePath);
@@ -1135,10 +1134,10 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                     if (session?.displayName) {
                         registerApprovalSessionChannel(bridge, projectName, session.displayName, platformCh);
                     }
-                    ensureApprovalDetector(bridge, cdp, projectName);
-                    ensureErrorPopupDetector(bridge, cdp, projectName);
-                    ensurePlanningDetector(bridge, cdp, projectName);
-                    ensureRunCommandDetector(bridge, cdp, projectName);
+                    ensureApprovalDetector(bridge, cdp, projectName, selectedAccount);
+                    ensureErrorPopupDetector(bridge, cdp, projectName, selectedAccount);
+                    ensurePlanningDetector(bridge, cdp, projectName, selectedAccount);
+                    ensureRunCommandDetector(bridge, cdp, projectName, selectedAccount);
                 } catch (e: any) {
                     await interaction.followUp({
                         content: `Failed to connect to workspace: ${e.message}`,
@@ -1147,7 +1146,16 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                     return;
                 }
             } else {
-                cdp = getCurrentCdp(bridge);
+                const selectedAccount = resolveValidAccountName(
+                    bridge.selectedAccountByChannel?.get(channelId)
+                        ?? channelPrefRepo.getAccountName(channelId)
+                        ?? accountPrefRepo.getAccountName(interaction.user.id)
+                        ?? 'default',
+                    config.antigravityAccounts,
+                );
+                cdp = bridge.lastActiveWorkspace
+                    ? bridge.pool.getConnected(bridge.lastActiveWorkspace, selectedAccount)
+                    : null;
             }
 
             if (!cdp) {
@@ -1486,6 +1494,18 @@ export async function handleSlashInteraction(
         const match = antigravityAccounts.find((account) => account.name === accountName);
         return match ? match.cdpPort : null;
     };
+    const resolveSelectedAccount = (): string =>
+        resolveValidAccountName(
+            bridge.selectedAccountByChannel?.get(interaction.channelId)
+                ?? channelPrefRepo?.getAccountName(interaction.channelId)
+                ?? accountPrefRepo?.getAccountName(interaction.user.id)
+                ?? 'default',
+            antigravityAccounts,
+        );
+    const getChannelCdp = (): CdpService | null =>
+        bridge.lastActiveWorkspace
+            ? bridge.pool.getConnected(bridge.lastActiveWorkspace, resolveSelectedAccount())
+            : null;
 
     switch (commandName) {
         case 'help': {
@@ -1566,7 +1586,7 @@ export async function handleSlashInteraction(
         }
 
         case 'mode': {
-            await sendModeUI(interaction, modeService, { getCurrentCdp: () => getCurrentCdp(bridge) });
+            await sendModeUI(interaction, modeService, { getCurrentCdp: () => getChannelCdp() });
             break;
         }
 
@@ -1574,11 +1594,11 @@ export async function handleSlashInteraction(
             const modelName = interaction.options.getString('name');
             if (!modelName) {
                 await sendModelsUI(interaction, {
-                    getCurrentCdp: () => getCurrentCdp(bridge),
+                    getCurrentCdp: () => getChannelCdp(),
                     fetchQuota: async () => bridge.quota.fetchQuota(),
                 });
             } else {
-                const cdp = getCurrentCdp(bridge);
+                const cdp = getChannelCdp();
                 if (!cdp) {
                     await interaction.editReply({ content: 'Not connected to CDP.' });
                     break;
@@ -1627,7 +1647,7 @@ export async function handleSlashInteraction(
         case 'status': {
             const activeNames = bridge.pool.getActiveWorkspaceNames();
             const currentModel = (() => {
-                const cdp = getCurrentCdp(bridge);
+                const cdp = getChannelCdp();
                 return cdp ? 'CDP Connected' : 'Disconnected';
             })();
             const currentMode = modeService.getCurrentMode();
@@ -1732,9 +1752,6 @@ export async function handleSlashInteraction(
             bridge.selectedAccountByChannel?.set(interaction.channelId, requested);
 
             const channelWorkspace = wsHandler.getWorkspaceForChannel(interaction.channelId);
-            if (channelWorkspace) {
-                bridge.pool.setPreferredAccountForWorkspace?.(channelWorkspace, requested);
-            }
 
             logger.info(
                 `[AccountSwitch] source=slash channel=${interaction.channelId} user=${interaction.user.id} ` +
@@ -1767,12 +1784,12 @@ export async function handleSlashInteraction(
         }
 
         case 'screenshot': {
-            await handleScreenshot(interaction, getCurrentCdp(bridge));
+            await handleScreenshot(interaction, getChannelCdp());
             break;
         }
 
         case 'stop': {
-            const cdp = getCurrentCdp(bridge);
+            const cdp = getChannelCdp();
             if (!cdp) {
                 await interaction.editReply({ content: '⚠️ Not connected to CDP. Please connect to a project first.' });
                 break;
@@ -1878,7 +1895,6 @@ export async function handleSlashInteraction(
                     }
 
                     bridge.selectedAccountByChannel?.set(interaction.channelId, selectedAccount);
-                    bridge.pool.setPreferredAccountForWorkspace?.(workspacePath, selectedAccount);
 
                     await interaction.editReply({
                         content: `✅ Reopened **${projectName}** in account **${selectedAccount}**${port ? ` (CDP ${port})` : ''}.`,
