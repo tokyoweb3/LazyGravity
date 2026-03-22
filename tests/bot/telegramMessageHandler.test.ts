@@ -27,6 +27,10 @@ jest.mock('../../src/services/cdpBridgeManager', () => ({
 }));
 
 jest.mock('../../src/services/responseMonitor', () => ({
+    captureResponseMonitorBaseline: jest.fn().mockResolvedValue({
+        text: null,
+        processLogKeys: [],
+    }),
     ResponseMonitor: jest.fn().mockImplementation((opts) => ({
         start: jest.fn().mockImplementation(async () => {
             if (opts.onComplete) await opts.onComplete('Response text');
