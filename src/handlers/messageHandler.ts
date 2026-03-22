@@ -79,7 +79,7 @@ export function createPlatformMessageHandler(deps: MessageHandlerDeps) {
         const workspacePath = deps.getWorkspaceForChannel(message.channel.id);
         if (!workspacePath) {
             await message.reply({
-                text: 'No project is configured for this channel. Please create or select one with `/project`.',
+                text: 'No project is configured for this channel. Use `/project` to bind one, or `/project reopen` if this is a previously used session.',
             });
             return;
         }

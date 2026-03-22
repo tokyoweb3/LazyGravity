@@ -2,7 +2,7 @@ import { logger } from '../utils/logger';
 import { CDP_PORTS } from '../utils/cdpPorts';
 import { EventEmitter } from 'events';
 import * as http from 'http';
-import { spawn } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import { getAntigravityCliPath, extractProjectNameFromPath } from '../utils/pathUtils';
 import WebSocket from 'ws';
 
@@ -13,6 +13,9 @@ export interface CdpServiceOptions {
     maxReconnectAttempts?: number;
     /** Delay between reconnect attempts (ms). Default: 2000 */
     reconnectDelayMs?: number;
+    accountName?: string;
+    accountPorts?: Record<string, number>;
+    accountUserDataDirs?: Record<string, string>;
 }
 
 export interface CdpContext {
@@ -33,6 +36,13 @@ export interface ExtractedResponseImage {
     mimeType: string;
     base64Data?: string;
     url?: string;
+}
+
+export interface WorkspaceRuntimeState {
+    isGenerating: boolean;
+    sessionTitle: string;
+    hasActiveChat: boolean;
+    contextId: number | null;
 }
 
 /** UI sync operation result type (Step 9) */
@@ -57,6 +67,70 @@ const SELECTORS = {
     CONTEXT_URL_KEYWORD: 'cascade-panel',
 };
 
+const WORKSPACE_STATE_SCRIPT = `(() => {
+    const panel = document.querySelector('.antigravity-agent-side-panel');
+    const scopes = [panel, document].filter(Boolean);
+
+    let isGenerating = false;
+    for (const scope of scopes) {
+        const stopEl = scope.querySelector('[data-tooltip-id="input-send-button-cancel-tooltip"]');
+        if (stopEl) {
+            isGenerating = true;
+            break;
+        }
+    }
+
+    if (!isGenerating) {
+        const normalize = (value) => (value || '').toLowerCase().replace(/\\s+/g, ' ').trim();
+        const stopPatterns = [
+            /^stop$/,
+            /^stop generating$/,
+            /^stop response$/,
+            /^停止$/,
+            /^生成を停止$/,
+            /^応答を停止$/,
+        ];
+        for (const scope of scopes) {
+            const buttons = scope.querySelectorAll('button, [role="button"]');
+            for (let i = 0; i < buttons.length; i++) {
+                const btn = buttons[i];
+                const labels = [
+                    btn.textContent || '',
+                    btn.getAttribute('aria-label') || '',
+                    btn.getAttribute('title') || '',
+                ];
+                if (labels.some((label) => stopPatterns.some((re) => re.test(normalize(label))))) {
+                    isGenerating = true;
+                    break;
+                }
+            }
+            if (isGenerating) break;
+        }
+    }
+
+    if (!panel) {
+        return { isGenerating, sessionTitle: '', hasActiveChat: false };
+    }
+
+    const header = panel.querySelector('div[class*="border-b"]');
+    const titleEl = header?.querySelector('div[class*="text-ellipsis"]');
+    const rawTitle = titleEl ? (titleEl.textContent || '').trim() : '';
+    const hasActiveChat = rawTitle.length > 0 && rawTitle !== 'Agent';
+
+    return {
+        isGenerating,
+        sessionTitle: rawTitle || '(Untitled)',
+        hasActiveChat,
+    };
+})()`;
+
+const CHAT_READY_TIMEOUT_MS = 6000;
+const CHAT_READY_POLL_MS = 250;
+const INJECT_RETRY_READY_TIMEOUT_MS = 2500;
+const INJECT_RETRY_BACKOFF_MS = 500;
+const MODE_READY_TIMEOUT_MS = 4000;
+const MODE_RETRY_READY_TIMEOUT_MS = 2000;
+
 export class CdpService extends EventEmitter {
     private ports: number[];
     private isConnectedFlag: boolean = false;
@@ -66,6 +140,7 @@ export class CdpService extends EventEmitter {
     private idCounter = 1;
     private cdpCallTimeout = 30000;
     private targetUrl: string | null = null;
+    private targetId: string | null = null;
     /** Number of auto-reconnect attempts on disconnect */
     private maxReconnectAttempts: number;
     /** Delay between reconnect attempts (ms) */
@@ -80,13 +155,35 @@ export class CdpService extends EventEmitter {
     private currentWorkspacePath: string | null = null;
     /** Workspace switching flag (suppresses disconnected event) */
     private isSwitchingWorkspace: boolean = false;
+    private accountName: string;
+    private accountPorts: Record<string, number>;
+    private accountUserDataDirs: Record<string, string>;
 
     constructor(options: CdpServiceOptions = {}) {
         super();
-        this.ports = options.portsToScan || [...CDP_PORTS];
+        this.accountName = options.accountName || 'default';
+        this.accountPorts = options.accountPorts || {};
+        this.accountUserDataDirs = options.accountUserDataDirs || {};
+        this.ports = options.portsToScan || this.resolveAccountPorts(this.accountName);
         if (options.cdpCallTimeout) this.cdpCallTimeout = options.cdpCallTimeout;
         this.maxReconnectAttempts = options.maxReconnectAttempts ?? 3;
         this.reconnectDelayMs = options.reconnectDelayMs ?? 2000;
+    }
+
+    private resolveAccountPorts(accountName: string): number[] {
+        const explicitPort = this.accountPorts[accountName];
+        if (Number.isInteger(explicitPort) && explicitPort > 0) {
+            return [explicitPort];
+        }
+        return [...CDP_PORTS];
+    }
+
+    private resolveConfiguredUserDataDir(accountName: string): string | null {
+        const configured = this.accountUserDataDirs[accountName];
+        if (typeof configured === 'string' && configured.trim().length > 0) {
+            return configured.trim();
+        }
+        return null;
     }
 
     private async getJson(url: string): Promise<any[]> {
@@ -151,6 +248,7 @@ export class CdpService extends EventEmitter {
 
         if (target && target.webSocketDebuggerUrl) {
             this.targetUrl = target.webSocketDebuggerUrl;
+            this.targetId = typeof target.id === 'string' ? target.id : null;
             // Extract workspace name from title (e.g., "ProjectName — Antigravity")
             if (target.title && !this.currentWorkspaceName) {
                 const titleParts = target.title.split(/\\s[—–-]\\s/);
@@ -283,9 +381,54 @@ export class CdpService extends EventEmitter {
         }
         this.isConnectedFlag = false;
         this.contexts = [];
+        this.targetId = null;
         this.currentWorkspacePath = null;
         this.currentWorkspaceName = null;
         this.clearPendingCalls(new Error('disconnect() was called'));
+    }
+
+    private async evaluateAcrossContexts<T = unknown>(
+        expression: string,
+        accept: (value: T) => boolean,
+        options?: { awaitPromise?: boolean },
+    ): Promise<{ value: T | null; contextId: number | null }> {
+        const awaitPromise = options?.awaitPromise ?? true;
+        const contexts = this.getContexts();
+        let firstValue: { value: T | null; contextId: number | null } | null = null;
+
+        if (contexts.length === 0) {
+            const result = await this.call('Runtime.evaluate', {
+                expression,
+                returnByValue: true,
+                awaitPromise,
+            });
+            return {
+                value: (result?.result?.value ?? null) as T,
+                contextId: null,
+            };
+        }
+
+        for (const ctx of contexts) {
+            try {
+                const result = await this.call('Runtime.evaluate', {
+                    expression,
+                    returnByValue: true,
+                    awaitPromise,
+                    contextId: ctx.id,
+                });
+                const value = (result?.result?.value ?? null) as T;
+                if (!firstValue) {
+                    firstValue = { value, contextId: ctx.id };
+                }
+                if (accept(value)) {
+                    return { value, contextId: ctx.id };
+                }
+            } catch {
+                // Try the next context.
+            }
+        }
+
+        return firstValue ?? { value: null, contextId: null };
     }
 
     /**
@@ -322,6 +465,22 @@ export class CdpService extends EventEmitter {
             return await this._discoverAndConnectForWorkspaceImpl(workspacePath, projectName);
         } finally {
             this.isSwitchingWorkspace = false;
+        }
+    }
+
+    async openWorkspace(workspacePath: string): Promise<boolean> {
+        const projectName = extractProjectNameFromPath(workspacePath);
+        this.currentWorkspacePath = workspacePath;
+
+        try {
+            return await this.discoverAndConnectForWorkspace(workspacePath);
+        } catch (error: any) {
+            logger.info(
+                `[CdpService] Explicit open requested for workspace "${projectName}" ` +
+                `on account "${this.accountName}" — retrying with launch ` +
+                `(reason: ${error?.message || String(error)})`,
+            );
+            return this.launchAndConnectWorkspace(workspacePath, projectName, true);
         }
     }
 
@@ -426,6 +585,7 @@ export class CdpService extends EventEmitter {
 
         this.disconnectQuietly();
         this.targetUrl = page.webSocketDebuggerUrl;
+        this.targetId = typeof page.id === 'string' ? page.id : null;
         await this.connect();
         this.currentWorkspaceName = projectName;
         logger.debug(`[CdpService] Connected to workspace "${projectName}"`);
@@ -453,6 +613,7 @@ export class CdpService extends EventEmitter {
                 // Temporarily connect to retrieve document.title
                 this.disconnectQuietly();
                 this.targetUrl = page.webSocketDebuggerUrl;
+                this.targetId = typeof page.id === 'string' ? page.id : null;
                 await this.connect();
 
                 const result = await this.call('Runtime.evaluate', {
@@ -576,20 +737,66 @@ export class CdpService extends EventEmitter {
     private async launchAndConnectWorkspace(
         workspacePath: string,
         projectName: string,
+        explicitOpen: boolean = false,
     ): Promise<boolean> {
+        const targetPort = this.ports[0] ?? null;
+        const configuredUserDataDir = this.resolveConfiguredUserDataDir(this.accountName);
+        const resolvedUserDataDir = explicitOpen && targetPort !== null
+            ? (configuredUserDataDir ?? await this.resolveRunningUserDataDirForPort(targetPort))
+            : null;
+
+        if (explicitOpen && this.accountName !== 'default' && targetPort !== null && !resolvedUserDataDir) {
+            throw new Error(
+                `Could not determine user-data-dir for running account "${this.accountName}" ` +
+                `(CDP port ${targetPort}). Make sure that Antigravity instance is already running with that port.`,
+            );
+        }
+
+        if (!explicitOpen && this.accountName !== 'default' && targetPort !== null) {
+            logger.warn(
+                `[CdpService] Workspace "${projectName}" not found on account "${this.accountName}" ` +
+                `(port=${targetPort}). Skipping auto-launch to avoid opening the wrong Antigravity instance.`,
+            );
+            throw new Error(
+                `Workspace "${projectName}" is not open in account "${this.accountName}" ` +
+                `(CDP port ${targetPort}). Open it with Antigravity Cockpit or use "/project reopen" ` +
+                `command (Telegram: /project_reopen).`,
+            );
+        }
+
         // Open as folder using Antigravity CLI (not as workspace mode).
         // `open -a Antigravity` may open as workspace, resulting in title "Untitled (Workspace)".
         // CLI --new-window opens as folder, immediately reflecting directory name in title.
         const antigravityCli = getAntigravityCliPath();
 
-        logger.debug(`[CdpService] Launching Antigravity: ${antigravityCli} --new-window ${workspacePath}`);
+        const launchArgs = [
+            ...(resolvedUserDataDir ? ['--user-data-dir', resolvedUserDataDir] : []),
+            ...(targetPort !== null ? [`--remote-debugging-port=${targetPort}`] : []),
+            '--new-window',
+            workspacePath,
+        ];
+
+        logger.debug(
+            `[CdpService] Launching Antigravity for account "${this.accountName}" ` +
+            `(port=${targetPort ?? 'unknown'}, userDataDir=${resolvedUserDataDir ?? 'default'}) ` +
+            `${antigravityCli} ${launchArgs.join(' ')}`,
+        );
         try {
-            await this.runCommand(antigravityCli, ['--new-window', workspacePath]);
+            await this.runCommand(antigravityCli, launchArgs);
         } catch (error: any) {
             // Fall back to open -a if CLI not found (macOS only)
             logger.warn(`[CdpService] CLI launch failed, falling back to open -a (if macOS): ${error?.message || String(error)}`);
             if (process.platform === 'darwin') {
-                await this.runCommand('open', ['-a', 'Antigravity', workspacePath]);
+                const openArgs = [
+                    '-n',
+                    '-a',
+                    'Antigravity',
+                    '--args',
+                    ...(resolvedUserDataDir ? ['--user-data-dir', resolvedUserDataDir] : []),
+                    ...(targetPort !== null ? [`--remote-debugging-port=${targetPort}`] : []),
+                    workspacePath,
+                ];
+                await this.runCommand('open', openArgs);
             } else {
                 throw error;
             }
@@ -784,6 +991,70 @@ export class CdpService extends EventEmitter {
         });
     }
 
+    private async resolveRunningUserDataDirForPort(port: number): Promise<string | null> {
+        const commandLines = await this.getProcessCommandLines();
+        if (commandLines.length === 0) return null;
+
+        const portPattern = new RegExp(`--remote-debugging-port(?:=|\\s+)${port}(?:\\s|$)`);
+
+        for (const line of commandLines) {
+            const lowerLine = line.toLowerCase();
+            if (!lowerLine.includes('antigravity') || !portPattern.test(line) || !line.includes('--user-data-dir')) {
+                continue;
+            }
+
+            const match = line.match(/--user-data-dir(?:=|\s+)("([^"]+)"|'([^']+)'|([^\s]+))/);
+            const userDataDir = match?.[2] || match?.[3] || match?.[4];
+            if (userDataDir) {
+                logger.info(`[CdpService] Resolved user-data-dir for CDP port ${port}: ${userDataDir}`);
+                return userDataDir;
+            }
+        }
+
+        return null;
+    }
+
+    private async getProcessCommandLines(): Promise<string[]> {
+        const run = (command: string, args: string[]): Promise<string> =>
+            new Promise((resolve, reject) => {
+                execFile(command, args, { windowsHide: true, maxBuffer: 20 * 1024 * 1024 }, (error, stdout) => {
+                    if (error) {
+                        reject(error);
+                        return;
+                    }
+                    resolve(stdout);
+                });
+            });
+
+        const parseLines = (output: string): string[] =>
+            output
+                .split('\n')
+                .map((line) => line.trim())
+                .filter((line) => line.length > 0);
+
+        try {
+            if (process.platform === 'win32') {
+                try {
+                    const psOutput = await run('powershell.exe', [
+                        '-NoProfile',
+                        '-Command',
+                        'Get-CimInstance Win32_Process | Select-Object -ExpandProperty CommandLine | Where-Object { $_ }',
+                    ]);
+                    return parseLines(psOutput);
+                } catch {
+                    const wmicOutput = await run('wmic', ['process', 'get', 'CommandLine']);
+                    return parseLines(wmicOutput).filter((line) => line !== 'CommandLine');
+                }
+            }
+
+            const psOutput = await run('ps', ['-axo', 'command=']);
+            return parseLines(psOutput);
+        } catch (error) {
+            logger.warn(`[CdpService] Failed to inspect Antigravity processes: ${error instanceof Error ? error.message : String(error)}`);
+            return [];
+        }
+    }
+
     /**
      * Quietly disconnect the existing connection (no reconnect attempts).
      * Used during workspace switching.
@@ -802,6 +1073,93 @@ export class CdpService extends EventEmitter {
             this.contexts = [];
             this.clearPendingCalls(new Error('Disconnected for workspace switch'));
             this.targetUrl = null;
+            this.targetId = null;
+        }
+    }
+
+    async closeCurrentTarget(): Promise<boolean> {
+        if (!this.targetId) {
+            return false;
+        }
+
+        try {
+            await this.call('Target.closeTarget', { targetId: this.targetId });
+            return true;
+        } finally {
+            await this.disconnect();
+        }
+    }
+
+    async inspectWorkspaceRuntimeState(): Promise<WorkspaceRuntimeState> {
+        const result = await this.evaluateAcrossContexts<WorkspaceRuntimeState>(
+            WORKSPACE_STATE_SCRIPT,
+            (value) => !!(value && typeof value === 'object' && (value as any).hasActiveChat),
+        );
+        const value = result.value;
+
+        return {
+            isGenerating: !!(value && typeof value === 'object' && (value as any).isGenerating),
+            sessionTitle: value && typeof value === 'object' && typeof (value as any).sessionTitle === 'string'
+                ? (value as any).sessionTitle
+                : '(Untitled)',
+            hasActiveChat: !!(value && typeof value === 'object' && (value as any).hasActiveChat),
+            contextId: result.contextId,
+        };
+    }
+
+    async closeCurrentTargetGracefully(timeoutMs = 5000): Promise<boolean> {
+        if (!this.targetId) {
+            return false;
+        }
+
+        const closingTargetId = this.targetId;
+
+        try {
+            await this.call('Page.bringToFront', {}).catch(() => {});
+
+            const modifiers = process.platform === 'darwin' ? 4 : 2;
+            await this.call('Input.dispatchKeyEvent', {
+                type: 'keyDown',
+                key: 'w',
+                code: 'KeyW',
+                modifiers,
+                windowsVirtualKeyCode: 87,
+                nativeVirtualKeyCode: 87,
+            });
+            await this.call('Input.dispatchKeyEvent', {
+                type: 'keyUp',
+                key: 'w',
+                code: 'KeyW',
+                modifiers,
+                windowsVirtualKeyCode: 87,
+                nativeVirtualKeyCode: 87,
+            });
+
+            const deadline = Date.now() + timeoutMs;
+            while (Date.now() <= deadline) {
+                let stillOpen = false;
+                for (const port of this.ports) {
+                    try {
+                        const list = await this.getJson(`http://127.0.0.1:${port}/json/list`);
+                        if (list.some((page: any) => page?.id === closingTargetId)) {
+                            stillOpen = true;
+                            break;
+                        }
+                    } catch {
+                        // Ignore port failures while polling close state.
+                    }
+                }
+
+                if (!stillOpen) {
+                    return true;
+                }
+
+                await new Promise((resolve) => setTimeout(resolve, 250));
+            }
+
+            return false;
+        } finally {
+            await this.disconnect();
         }
     }
 
@@ -1010,6 +1368,130 @@ export class CdpService extends EventEmitter {
         return { ok: false, error: 'Chat input field not found' };
     }
 
+    private async waitForChatInputReady(timeoutMs = CHAT_READY_TIMEOUT_MS): Promise<{ ok: boolean; contextId?: number; error?: string }> {
+        const deadline = Date.now() + timeoutMs;
+        let lastError = 'Chat input field not found';
+
+        while (Date.now() < deadline) {
+            const focusResult = await this.focusChatInput();
+            if (focusResult.ok) {
+                return focusResult;
+            }
+            lastError = focusResult.error || lastError;
+            await new Promise((r) => setTimeout(r, CHAT_READY_POLL_MS));
+        }
+
+        return { ok: false, error: lastError };
+    }
+
+    private isTransientInjectError(error?: string): boolean {
+        const message = String(error || '');
+        return [
+            'No editor found',
+            'Chat input field not found',
+            'WebSocket is not connected',
+            'WebSocket disconnected',
+        ].some((fragment) => message.includes(fragment));
+    }
+
+    private async isModeToggleReady(): Promise<boolean> {
+        const expression = '(() => {'
+            + ' const uiNameMap = { fast: "Fast", plan: "Planning" };'
+            + ' const knownModes = Object.values(uiNameMap).map(n => n.toLowerCase());'
+            + ' const allBtns = Array.from(document.querySelectorAll("button"));'
+            + ' const visibleBtns = allBtns.filter(b => b.offsetParent !== null);'
+            + ' const modeToggleBtn = visibleBtns.find(b => {'
+            + '   const text = (b.textContent || "").trim().toLowerCase();'
+            + '   const hasChevron = b.querySelector("svg[class*=\\"chevron\\"]");'
+            + '   return knownModes.some(m => text === m) && hasChevron;'
+            + ' });'
+            + ' return !!modeToggleBtn;'
+            + '})()';
+        try {
+            const contextId = this.getPrimaryContextId();
+            const callParams: any = {
+                expression,
+                returnByValue: true,
+                awaitPromise: false,
+            };
+            if (contextId !== null) callParams.contextId = contextId;
+            const res = await this.call('Runtime.evaluate', callParams);
+            return Boolean(res?.result?.value);
+        } catch {
+            return false;
+        }
+    }
+
+    private async waitForModeToggleReady(timeoutMs = MODE_READY_TIMEOUT_MS): Promise<boolean> {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+            if (await this.isModeToggleReady()) {
+                return true;
+            }
+            await new Promise((r) => setTimeout(r, CHAT_READY_POLL_MS));
+        }
+        return false;
+    }
+
+    private isTransientModeError(error?: string): boolean {
+        const message = String(error || '');
+        return [
+            'Mode toggle button not found',
+            'WebSocket is not connected',
+            'WebSocket disconnected',
+        ].some((fragment) => message.includes(fragment));
+    }
+
+    private async injectMessageCore(text: string, imageFilePaths?: string[]): Promise<InjectResult> {
+        const focusResult = await this.waitForChatInputReady();
+        if (!focusResult.ok) {
+            return { ok: false, error: focusResult.error || 'Chat input field not found' };
+        }
+
+        // Clear any existing text in the input field before injecting.
+        await this.clearInputField();
+
+        if (imageFilePaths && imageFilePaths.length > 0) {
+            const attachResult = await this.attachImageFiles(imageFilePaths, focusResult.contextId);
+            if (!attachResult.ok) {
+                return { ok: false, error: attachResult.error || 'Failed to attach images' };
+            }
+        }
+
+        await this.call('Input.insertText', { text });
+        await new Promise(r => setTimeout(r, 200));
+        await this.pressEnterToSend();
+
+        return {
+            ok: true,
+            method: 'enter',
+            contextId: focusResult.contextId,
+        };
+    }
+
+    private async retryInjectOnce(
+        text: string,
+        firstError: string,
+        imageFilePaths?: string[],
+    ): Promise<InjectResult> {
+        logger.warn(`[CdpService] Initial message injection failed: ${firstError}. Retrying once after readiness check...`);
+
+        try {
+            await this.reconnectOnDemand(INJECT_RETRY_READY_TIMEOUT_MS);
+        } catch {
+            // Ignore reconnect failures here; readiness check below will produce the final error.
+        }
+
+        await new Promise((r) => setTimeout(r, INJECT_RETRY_BACKOFF_MS));
+
+        const ready = await this.waitForChatInputReady(INJECT_RETRY_READY_TIMEOUT_MS);
+        if (!ready.ok) {
+            return { ok: false, error: ready.error || firstError };
+        }
+
+        return this.injectMessageCore(text, imageFilePaths);
+    }
+
     /**
      * Select all text in the focused input and delete it to ensure a clean state.
      * Uses Meta+A (select all) then Backspace (delete) via CDP key events.
@@ -1207,22 +1689,12 @@ export class CdpService extends EventEmitter {
             throw new Error('Not connected to CDP. Call connect() first.');
         }
 
-        const focusResult = await this.focusChatInput();
-        if (!focusResult.ok) {
-            return { ok: false, error: focusResult.error || 'Chat input field not found' };
+        const result = await this.injectMessageCore(text);
+        if (result.ok || !this.isTransientInjectError(result.error)) {
+            return result;
         }
 
-        // Clear any existing text in the input field before injecting
-        await this.clearInputField();
-
-        // 1. Input text via CDP Input.insertText
-        await this.call('Input.insertText', { text });
-        await new Promise(r => setTimeout(r, 200));
-
-        // 2. Send via Enter key
-        await this.pressEnterToSend();
-
-        return { ok: true, method: 'enter', contextId: focusResult.contextId };
+        return this.retryInjectOnce(text, result.error || 'Message injection failed');
     }
 
     /**
@@ -1233,24 +1705,12 @@ export class CdpService extends EventEmitter {
             throw new Error('Not connected to CDP. Call connect() first.');
         }
 
-        const focusResult = await this.focusChatInput();
-        if (!focusResult.ok) {
-            return { ok: false, error: focusResult.error || 'Chat input field not found' };
+        const result = await this.injectMessageCore(text, imageFilePaths);
+        if (result.ok || !this.isTransientInjectError(result.error)) {
+            return result;
         }
 
-        // Clear any existing text in the input field before injecting
-        await this.clearInputField();
-
-        const attachResult = await this.attachImageFiles(imageFilePaths, focusResult.contextId);
-        if (!attachResult.ok) {
-            return { ok: false, error: attachResult.error || 'Failed to attach images' };
-        }
-
-        await this.call('Input.insertText', { text });
-        await new Promise(r => setTimeout(r, 200));
-        await this.pressEnterToSend();
-
-        return { ok: true, method: 'enter', contextId: focusResult.contextId };
+        return this.retryInjectOnce(text, result.error || 'Image message injection failed', imageFilePaths);
     }
 
     /**
@@ -1493,6 +1953,8 @@ export class CdpService extends EventEmitter {
             await this.reconnectOnDemand();
         }
 
+        await this.waitForModeToggleReady();
+
         const safeMode = JSON.stringify(modeName);
 
         // Internal mode name -> Antigravity UI display name mapping
@@ -1588,7 +2050,25 @@ export class CdpService extends EventEmitter {
             if (value?.ok) {
                 return { ok: true, mode: value.mode };
             }
-            return { ok: false, error: value?.error || 'UI operation failed (setUiMode)' };
+            const errorMessage = value?.error || 'UI operation failed (setUiMode)';
+            if (!this.isTransientModeError(errorMessage)) {
+                return { ok: false, error: errorMessage };
+            }
+
+            logger.warn(`[CdpService] setUiMode initial attempt failed: ${errorMessage}. Retrying once after readiness check...`);
+            try {
+                await this.reconnectOnDemand(MODE_RETRY_READY_TIMEOUT_MS);
+            } catch {
+                // Fall through to the readiness wait and retry below.
+            }
+            await this.waitForModeToggleReady(MODE_RETRY_READY_TIMEOUT_MS);
+
+            const retryRes = await this.call('Runtime.evaluate', callParams);
+            const retryValue = retryRes?.result?.value;
+            if (retryValue?.ok) {
+                return { ok: true, mode: retryValue.mode };
+            }
+            return { ok: false, error: retryValue?.error || errorMessage };
         } catch (error: any) {
             return { ok: false, error: error?.message || String(error) };
         }
@@ -1603,27 +2083,67 @@ export class CdpService extends EventEmitter {
         }
 
         const expression = `(async () => {
-            return Array.from(document.querySelectorAll('div.cursor-pointer'))
-                .map(e => ({text: (e.textContent || '').trim().replace(/New$/, ''), class: e.className}))
-                .filter(e => e.class.includes('px-2 py-1 flex items-center justify-between') || e.text.includes('Gemini') || e.text.includes('GPT') || e.text.includes('Claude'))
-                .map(e => e.text);
+            const normalize = (text) => (text || '').trim().replace(/New$/, '').trim();
+            const isVisible = (el) => {
+                if (!(el instanceof HTMLElement)) return false;
+                const style = window.getComputedStyle(el);
+                const rect = el.getBoundingClientRect();
+                return style.visibility !== 'hidden'
+                    && style.display !== 'none'
+                    && rect.width > 0
+                    && rect.height > 0;
+            };
+            const looksLikeModel = (text) => /gemini|gpt|claude/i.test(text || '');
+            const collectModels = () => Array.from(document.querySelectorAll('button, [role="button"], div.cursor-pointer'))
+                .filter(isVisible)
+                .map((el) => normalize(el.textContent))
+                .filter((text) => looksLikeModel(text))
+                .filter((text, index, arr) => arr.indexOf(text) === index);
+
+            let models = collectModels();
+            if (models.length > 1) {
+                return models;
+            }
+
+            const triggers = Array.from(document.querySelectorAll('button, [role="button"], div.cursor-pointer'))
+                .filter(isVisible)
+                .filter((el) => looksLikeModel(normalize(el.textContent)));
+
+            for (const trigger of triggers) {
+                trigger.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                await new Promise((resolve) => setTimeout(resolve, 250));
+                models = collectModels();
+                if (models.length > 1) {
+                    return models;
+                }
+            }
+
+            return models;
         })()`;
 
         try {
-            const contextId = this.getPrimaryContextId();
-            const callParams: any = {
-                expression,
-                returnByValue: true,
-                awaitPromise: true,
-            };
-            if (contextId !== null) callParams.contextId = contextId;
+            const contexts = this.getContexts();
+            const contextIds = [
+                this.getPrimaryContextId(),
+                ...contexts.map((ctx) => ctx.id),
+            ].filter((value, index, arr): value is number => typeof value === 'number' && arr.indexOf(value) === index);
+            const targets: Array<number | null> = contextIds.length > 0 ? contextIds : [null];
 
-            const res = await this.call('Runtime.evaluate', callParams);
-            const value = res?.result?.value;
-            if (Array.isArray(value) && value.length > 0) {
-                // remove duplicates
-                return Array.from(new Set(value));
+            for (const contextId of targets) {
+                const params: any = {
+                    expression,
+                    returnByValue: true,
+                    awaitPromise: true,
+                };
+                if (typeof contextId === 'number') params.contextId = contextId;
+                const res = await this.call('Runtime.evaluate', params);
+                const value = res?.result?.value;
+                if (Array.isArray(value) && value.length > 0) {
+                    return Array.from(new Set(value));
+                }
             }
+
+            logger.warn('[CdpService] getUiModels returned no models from any execution context.');
             return [];
         } catch (error: any) {
             logger.error('Failed to get UI models:', error);
@@ -1639,17 +2159,43 @@ export class CdpService extends EventEmitter {
             return null;
         }
         const expression = `(() => {
-            return Array.from(document.querySelectorAll('div.cursor-pointer'))
-                .find(e => e.className.includes('px-2 py-1 flex items-center justify-between') && e.className.includes('bg-gray-500/20'))
-                ?.textContent?.trim().replace(/New$/, '') || null;
+            const normalize = (text) => (text || '').trim().replace(/New$/, '').trim();
+            const isVisible = (el) => {
+                if (!(el instanceof HTMLElement)) return false;
+                const style = window.getComputedStyle(el);
+                const rect = el.getBoundingClientRect();
+                return style.visibility !== 'hidden'
+                    && style.display !== 'none'
+                    && rect.width > 0
+                    && rect.height > 0;
+            };
+            const selected = Array.from(document.querySelectorAll('button, [role="button"], div.cursor-pointer'))
+                .filter(isVisible)
+                .find(e => /gemini|gpt|claude/i.test(normalize(e.textContent)) && e.className.includes('bg-gray-500/20'));
+            return selected ? normalize(selected.textContent) : null;
         })()`;
         try {
-            const contextId = this.getPrimaryContextId();
-            const res = await this.call('Runtime.evaluate', {
-                expression, returnByValue: true, awaitPromise: true,
-                contextId: contextId || undefined
-            });
-            return res?.result?.value || null;
+            const contexts = this.getContexts();
+            const contextIds = [
+                this.getPrimaryContextId(),
+                ...contexts.map((ctx) => ctx.id),
+            ].filter((value, index, arr): value is number => typeof value === 'number' && arr.indexOf(value) === index);
+            const targets: Array<number | null> = contextIds.length > 0 ? contextIds : [null];
+
+            for (const contextId of targets) {
+                const params: any = {
+                    expression,
+                    returnByValue: true,
+                    awaitPromise: true,
+                };
+                if (typeof contextId === 'number') params.contextId = contextId;
+                const res = await this.call('Runtime.evaluate', params);
+                const value = res?.result?.value;
+                if (typeof value === 'string' && value.trim().length > 0) {
+                    return value;
+                }
+            }
+            return null;
         } catch (e: any) {
             return null;
         }
@@ -1673,23 +2219,55 @@ export class CdpService extends EventEmitter {
         const safeModel = JSON.stringify(modelName);
         const expression = `(async () => {
             const targetModel = ${safeModel};
+            const normalize = (text) => (text || '').trim().replace(/New$/, '').trim();
+            const isVisible = (el) => {
+                if (!(el instanceof HTMLElement)) return false;
+                const style = window.getComputedStyle(el);
+                const rect = el.getBoundingClientRect();
+                return style.visibility !== 'hidden'
+                    && style.display !== 'none'
+                    && rect.width > 0
+                    && rect.height > 0;
+            };
+            const looksLikeModel = (text) => /gemini|gpt|claude/i.test(text || '');
+            const clickPossibleTrigger = async () => {
+                const triggers = Array.from(document.querySelectorAll('button, [role="button"], div.cursor-pointer'))
+                    .filter(isVisible)
+                    .filter((el) => looksLikeModel(normalize(el.textContent)));
+                for (const trigger of triggers) {
+                    trigger.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                    await new Promise(r => setTimeout(r, 200));
+                    const candidateItems = Array.from(document.querySelectorAll('div.cursor-pointer'))
+                        .filter(el => el.className.includes('px-2 py-1 flex items-center justify-between'));
+                    if (candidateItems.length > 0) {
+                        return true;
+                    }
+                }
+                return false;
+            };
             
             // Get all items in the model list
-            const modelItems = Array.from(document.querySelectorAll('div.cursor-pointer'))
+            let modelItems = Array.from(document.querySelectorAll('div.cursor-pointer'))
                 .filter(e => e.className.includes('px-2 py-1 flex items-center justify-between'));
             
+            if (modelItems.length === 0) {
+                await clickPossibleTrigger();
+                modelItems = Array.from(document.querySelectorAll('div.cursor-pointer'))
+                    .filter(e => e.className.includes('px-2 py-1 flex items-center justify-between'));
+            }
+
             if (modelItems.length === 0) {
                 return { ok: false, error: 'Model list not found. The dropdown may not be open.' };
             }
             
             // Match target model by name (compare after removing New suffix)
             const targetItem = modelItems.find(el => {
-                const text = (el.textContent || '').trim().replace(/New$/, '').trim();
+                const text = normalize(el.textContent);
                 return text === targetModel || text.toLowerCase() === targetModel.toLowerCase();
             });
             
             if (!targetItem) {
-                const available = modelItems.map(el => (el.textContent || '').trim().replace(/New$/, '').trim()).join(', ');
+                const available = modelItems.map(el => normalize(el.textContent)).join(', ');
                 return { ok: false, error: 'Model "' + targetModel + '" not found. Available: ' + available };
             }
             
@@ -1706,7 +2284,7 @@ export class CdpService extends EventEmitter {
             const updatedItems = Array.from(document.querySelectorAll('div.cursor-pointer'))
                 .filter(e => e.className.includes('px-2 py-1 flex items-center justify-between'));
             const selectedItem = updatedItems.find(el => {
-                const text = (el.textContent || '').trim().replace(/New$/, '').trim();
+                const text = normalize(el.textContent);
                 return text === targetModel || text.toLowerCase() === targetModel.toLowerCase();
             });
             
@@ -1719,20 +2297,31 @@ export class CdpService extends EventEmitter {
         })()`;
 
         try {
-            const contextId = this.getPrimaryContextId();
-            const callParams: any = {
-                expression,
-                returnByValue: true,
-                awaitPromise: true,
-            };
-            if (contextId !== null) callParams.contextId = contextId;
+            const contexts = this.getContexts();
+            const contextIds = [
+                this.getPrimaryContextId(),
+                ...contexts.map((ctx) => ctx.id),
+            ].filter((value, index, arr): value is number => typeof value === 'number' && arr.indexOf(value) === index);
+            const targets: Array<number | null> = contextIds.length > 0 ? contextIds : [null];
 
-            const res = await this.call('Runtime.evaluate', callParams);
-            const value = res?.result?.value;
-            if (value?.ok) {
-                return { ok: true, model: value.model };
+            let lastError = 'UI operation failed (setUiModel)';
+            for (const contextId of targets) {
+                const params: any = {
+                    expression,
+                    returnByValue: true,
+                    awaitPromise: true,
+                };
+                if (typeof contextId === 'number') params.contextId = contextId;
+                const res = await this.call('Runtime.evaluate', params);
+                const value = res?.result?.value;
+                if (value?.ok) {
+                    return { ok: true, model: value.model };
+                }
+                if (value?.error) {
+                    lastError = value.error;
+                }
             }
-            return { ok: false, error: value?.error || 'UI operation failed (setUiModel)' };
+            return { ok: false, error: lastError };
         } catch (error: any) {
             return { ok: false, error: error?.message || String(error) };
         }

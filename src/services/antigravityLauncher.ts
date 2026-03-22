@@ -1,5 +1,5 @@
 import { logger } from '../utils/logger';
-import { CDP_PORTS } from '../utils/cdpPorts';
+import { getConfiguredCdpPorts } from '../utils/cdpPorts';
 import { getAntigravityCdpHint } from '../utils/pathUtils';
 import * as http from 'http';
 
@@ -35,9 +35,10 @@ function checkPort(port: number): Promise<boolean> {
  * Called during Bot initialization.
  */
 export async function ensureAntigravityRunning(): Promise<void> {
+    const ports = getConfiguredCdpPorts(process.env.ANTIGRAVITY_ACCOUNTS);
     logger.debug('[AntigravityLauncher] Checking CDP ports...');
 
-    for (const port of CDP_PORTS) {
+    for (const port of ports) {
         if (await checkPort(port)) {
             logger.debug(`[AntigravityLauncher] OK — Port ${port} responding`);
             return;
@@ -53,7 +54,7 @@ export async function ensureAntigravityRunning(): Promise<void> {
     logger.warn('    lazy-gravity open');
     logger.warn('');
     logger.warn('  Or manually:');
-    logger.warn(`    ${getAntigravityCdpHint(9222)}`);
+    logger.warn(`    ${getAntigravityCdpHint(ports[0] ?? 9222)}`);
     logger.warn('');
     logger.warn('  Then run:  lazy-gravity start');
     logger.warn('='.repeat(70));

@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Named Antigravity account configuration via `ANTIGRAVITY_ACCOUNTS` for mapping multiple CDP ports to reusable account aliases
+- `/account` command plus per-user and per-channel account preferences for Discord workflows with multiple Antigravity instances
+- `/open` command to explicitly launch and connect a workspace to its assigned Antigravity account
+- **Telegram Topics (Forums) Support**: `/project` and `/new` commands now automatically create and bind isolated Topics in Telegram Forums, matching Discord's thread/channel isolation behavior
+- **Telegram Session Management**: Added `/join` command to take over existing Antigravity sessions and `/mirror` command to toggle PC-to-Telegram message mirroring, bringing feature parity with Discord
+
+### Changed
+
+- CDP connection management, launcher scripts, `open`, and `doctor` now respect configured Antigravity account ports instead of relying only on the default fixed scan list
+- README and `.env.example` now document multi-instance account setup for custom Antigravity profiles
+
 ## [0.3.0] - 2026-03-03
 
 ### Added

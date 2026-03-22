@@ -54,6 +54,7 @@ describe('ensureAntigravityRunning', () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
+        delete process.env.ANTIGRAVITY_ACCOUNTS;
         logger.setLogLevel('debug');
         consoleDebugSpy = jest.spyOn(console, 'debug').mockImplementation(() => { });
         consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation(() => { });

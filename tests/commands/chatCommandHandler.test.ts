@@ -16,6 +16,7 @@ describe('ChatCommandHandler', () => {
     let bindingRepo: WorkspaceBindingRepository;
     let channelManager: ChannelManager;
     let mockWorkspaceService: jest.Mocked<WorkspaceService>;
+    let resolveAccountForChannel: jest.Mock;
 
     beforeEach(() => {
         mockService = {
@@ -44,7 +45,16 @@ describe('ChatCommandHandler', () => {
             exists: jest.fn().mockReturnValue(true),
         } as any;
 
-        handler = new ChatCommandHandler(mockService, chatSessionRepo, bindingRepo, channelManager, mockWorkspaceService, mockPool);
+        resolveAccountForChannel = jest.fn().mockReturnValue('work4');
+        handler = new ChatCommandHandler(
+            mockService,
+            chatSessionRepo,
+            bindingRepo,
+            channelManager,
+            mockWorkspaceService,
+            mockPool,
+            resolveAccountForChannel,
+        );
     });
 
     afterEach(() => {
@@ -72,6 +82,7 @@ describe('ChatCommandHandler', () => {
                 guild: { id: 'guild-1' },
                 channel: { type: 0, parentId: null },
                 channelId: 'ch-1',
+                user: { id: 'user-1' },
                 editReply: jest.fn().mockResolvedValue(undefined),
             };
 
@@ -89,6 +100,7 @@ describe('ChatCommandHandler', () => {
                 guild: { id: 'guild-1' },
                 channel: { type: 0, parentId: 'cat-1' },
                 channelId: 'unbound-ch',
+                user: { id: 'user-1' },
                 editReply: jest.fn().mockResolvedValue(undefined),
             };
 
@@ -129,15 +141,17 @@ describe('ChatCommandHandler', () => {
                 guild: mockGuild,
                 channel: { type: 0, parentId: 'cat-1' },
                 channelId: 'ch-1',
+                user: { id: 'user-1' },
                 editReply: jest.fn().mockResolvedValue(undefined),
             };
 
             await handler.handleNew(interaction as any);
 
-            expect(mockPool.getOrConnect).toHaveBeenCalledWith('/tmp/workspaces/my-proj');
+            expect(mockPool.getOrConnect).toHaveBeenCalledWith('/tmp/workspaces/my-proj', { name: 'work4' });
             expect(mockGuild.channels.create).toHaveBeenCalledWith(
                 expect.objectContaining({ name: 'session-2', parent: 'cat-1' })
             );
+            expect(chatSessionRepo.findByChannelId('new-ch-2')?.activeAccountName).toBe('work4');
             expect(interaction.editReply).toHaveBeenCalledWith(
                 expect.objectContaining({
                     embeds: expect.arrayContaining([
@@ -177,6 +191,7 @@ describe('ChatCommandHandler', () => {
                 guild: mockGuild,
                 channel: { type: 0, parentId: 'cat-1' },
                 channelId: 'ch-1',
+                user: { id: 'user-1' },
                 editReply: jest.fn().mockResolvedValue(undefined),
             };
 
@@ -187,7 +202,13 @@ describe('ChatCommandHandler', () => {
         });
 
         it('returns an error when the pool is not initialized', async () => {
-            const handlerNoPool = new ChatCommandHandler(mockService, chatSessionRepo, bindingRepo, channelManager, mockWorkspaceService);
+            const handlerNoPool = new ChatCommandHandler(
+                mockService,
+                chatSessionRepo,
+                bindingRepo,
+                channelManager,
+                mockWorkspaceService,
+            );
 
             chatSessionRepo.create({
                 channelId: 'ch-1', categoryId: 'cat-1', workspacePath: 'proj',
@@ -198,6 +219,7 @@ describe('ChatCommandHandler', () => {
                 guild: { id: 'guild-1' },
                 channel: { type: 0, parentId: 'cat-1' },
                 channelId: 'ch-1',
+                user: { id: 'user-1' },
                 editReply: jest.fn().mockResolvedValue(undefined),
             };
 
@@ -206,6 +228,51 @@ describe('ChatCommandHandler', () => {
             expect(interaction.editReply).toHaveBeenCalledWith(
                 expect.objectContaining({
                     content: expect.stringContaining('CDP pool is not initialized'),
+                })
+            );
+        });
+
+        it('creates a new session from the saved session context even when the channel parent is missing', async () => {
+            chatSessionRepo.create({
+                channelId: 'ch-1',
+                categoryId: 'cat-1',
+                workspacePath: 'my-proj',
+                sessionNumber: 1,
+                activeAccountName: 'work4',
+                guildId: 'guild-1',
+            });
+
+            const mockCdp = {
+                isConnected: jest.fn().mockReturnValue(true),
+                discoverAndConnectForWorkspace: jest.fn().mockResolvedValue(true),
+            };
+            mockPool.getOrConnect.mockResolvedValue(mockCdp as any);
+
+            const mockGuild = {
+                id: 'guild-1',
+                channels: {
+                    cache: { get: jest.fn().mockReturnValue(undefined) },
+                    create: jest.fn().mockResolvedValue({ id: 'new-ch-2', name: 'session-2' }),
+                },
+            };
+
+            const interaction = {
+                guild: mockGuild,
+                channel: { type: 0, parentId: null },
+                channelId: 'ch-1',
+                user: { id: 'user-1' },
+                editReply: jest.fn().mockResolvedValue(undefined),
+            };
+
+            await handler.handleNew(interaction as any);
+
+            expect(mockPool.getOrConnect).toHaveBeenCalledWith('/tmp/workspaces/my-proj', { name: 'work4' });
+            expect(mockGuild.channels.create).toHaveBeenCalledWith(
+                expect.objectContaining({ name: 'session-2', parent: 'cat-1' })
+            );
+            expect(interaction.editReply).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    embeds: expect.any(Array),
                 })
             );
         });

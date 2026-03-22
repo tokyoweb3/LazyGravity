@@ -179,8 +179,10 @@ describe('ChatSessionService', () => {
         });
 
         it('falls back to Past Conversations flow when direct side-panel search cannot find the chat', async () => {
+            const calls: Array<{ method: string; params?: any }> = [];
             let infoCallCount = 0;
-            mockCdpService.call.mockImplementation(async (_method: string, params: any) => {
+            mockCdpService.call.mockImplementation(async (method: string, params: any) => {
+                calls.push({ method, params });
                 const expression = String(params?.expression || '');
 
                 if (expression.includes('const header = panel.querySelector(\'div[class*="border-b"]\');')) {
@@ -204,6 +206,10 @@ describe('ChatSessionService', () => {
 
             const result = await service.activateSessionByTitle(mockCdpService, 'target-session');
             expect(result).toEqual({ ok: true });
+            const escapeCall = calls.find(
+                (c) => c.method === 'Input.dispatchKeyEvent' && c.params?.key === 'Escape',
+            );
+            expect(escapeCall).toBeDefined();
         });
 
         it('retries activation while UI is still loading and eventually succeeds', async () => {
