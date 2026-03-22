@@ -39,7 +39,7 @@ import { logBuffer } from '../utils/logBuffer';
 import { escapeHtml } from '../platform/telegram/telegramFormatter';
 import { logger } from '../utils/logger';
 import { tryCreateTopicAndBind } from './telegramProjectCommand';
-import { listAccountNames, resolveValidAccountName } from '../utils/accountUtils';
+import { listAccountNames, resolveScopedAccountName } from '../utils/accountUtils';
 import type { AccountPreferenceRepository } from '../database/accountPreferenceRepository';
 import type { ChannelPreferenceRepository } from '../database/channelPreferenceRepository';
 import type { AntigravityAccountConfig } from '../utils/configLoader';
@@ -422,13 +422,14 @@ async function handleAccount(deps: TelegramCommandDeps, message: PlatformMessage
         return;
     }
 
-    const current = resolveValidAccountName(
-        deps.bridge.selectedAccountByChannel?.get(chatId)
-            ?? deps.channelPrefRepo?.getAccountName(chatId)
-            ?? deps.accountPrefRepo.getAccountName(userId)
-            ?? 'default',
-        deps.antigravityAccounts,
-    );
+    const current = resolveScopedAccountName({
+        channelId: chatId,
+        userId,
+        selectedAccountByChannel: deps.bridge.selectedAccountByChannel,
+        channelPrefRepo: deps.channelPrefRepo,
+        accountPrefRepo: deps.accountPrefRepo,
+        accounts: deps.antigravityAccounts,
+    });
 
     const payload = buildAccountPayload(current, names);
     await message.reply(payload).catch(logger.error);
@@ -551,10 +552,10 @@ async function handleLogs(message: PlatformMessage, args: string): Promise<void>
 
 async function handleNew(deps: TelegramCommandDeps, message: PlatformMessage): Promise<void> {
     const originalChannelId = message.channel.id;
-    const binding = deps.telegramBindingRepo?.findByChatId(originalChannelId);
+    const binding = deps.telegramBindingRepo?.findByChatIdWithParentFallback(originalChannelId);
 
     if (!binding) {
-        await message.reply({ text: '⚠️ No project is linked to this chat. Use /project first.' }).catch(logger.error);
+        await message.reply({ text: '⚠️ No project is linked to this chat. Use /project first, or /project_reopen if this is a previously used session.' }).catch(logger.error);
         return;
     }
 
@@ -577,13 +578,14 @@ async function handleNew(deps: TelegramCommandDeps, message: PlatformMessage): P
         await message.reply({ text: `✅ Created a new topic for the session.` }).catch(() => {});
     }
 
-    const selectedAccount = resolveValidAccountName(
-        deps.bridge.selectedAccountByChannel?.get(originalChannelId)
-            ?? deps.channelPrefRepo?.getAccountName(originalChannelId)
-            ?? deps.accountPrefRepo?.getAccountName(message.author.id)
-            ?? 'default',
-        deps.antigravityAccounts,
-    );
+    const selectedAccount = resolveScopedAccountName({
+        channelId: originalChannelId,
+        userId: message.author.id,
+        selectedAccountByChannel: deps.bridge.selectedAccountByChannel,
+        channelPrefRepo: deps.channelPrefRepo,
+        accountPrefRepo: deps.accountPrefRepo,
+        accounts: deps.antigravityAccounts,
+    });
 
     try {
         const cdp = await deps.bridge.pool.getOrConnect(resolvedWorkspacePath, { name: selectedAccount });
@@ -629,10 +631,10 @@ async function sendFilePayload(message: PlatformMessage, payload: MessagePayload
 
 async function handleProjectReopen(deps: TelegramCommandDeps, message: PlatformMessage): Promise<void> {
     const chatId = message.channel.id;
-    const channelBinding = deps.telegramBindingRepo?.findByChatId(chatId);
+    const channelBinding = deps.telegramBindingRepo?.findByChatIdWithParentFallback(chatId);
     
     if (!channelBinding) {
-        await message.reply({ text: '⚠️ No project is bound to this chat. Use /project first.' }).catch(logger.error);
+        await message.reply({ text: '⚠️ No project is bound to this chat. Use /project first, or /project_reopen if this is a previously used session.' }).catch(logger.error);
         return;
     }
 
@@ -645,13 +647,14 @@ async function handleProjectReopen(deps: TelegramCommandDeps, message: PlatformM
         return;
     }
 
-    const selectedAccount = resolveValidAccountName(
-        deps.bridge.selectedAccountByChannel?.get(chatId)
-            ?? deps.channelPrefRepo?.getAccountName(chatId)
-            ?? deps.accountPrefRepo?.getAccountName(message.author.id)
-            ?? 'default',
-        deps.antigravityAccounts,
-    );
+    const selectedAccount = resolveScopedAccountName({
+        channelId: chatId,
+        userId: message.author.id,
+        selectedAccountByChannel: deps.bridge.selectedAccountByChannel,
+        channelPrefRepo: deps.channelPrefRepo,
+        accountPrefRepo: deps.accountPrefRepo,
+        accounts: deps.antigravityAccounts,
+    });
     
     const accountPorts = Object.fromEntries(
         (deps.antigravityAccounts ?? []).map((account) => [account.name, account.cdpPort]),
@@ -688,6 +691,7 @@ async function handleProjectReopen(deps: TelegramCommandDeps, message: PlatformM
         }
 
         deps.bridge.selectedAccountByChannel?.set(chatId, selectedAccount);
+        deps.bridge.pool.setPreferredAccountForWorkspace(workspacePath, selectedAccount);
 
         await message.reply({
             text: `✅ Reopened <b>${escapeHtml(projectName)}</b> in account <b>${escapeHtml(selectedAccount)}</b>${port ? ` (CDP ${port})` : ''}.`,

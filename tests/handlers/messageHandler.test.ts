@@ -236,7 +236,7 @@ describe('createPlatformMessageHandler', () => {
         await handler(message);
 
         expect(message.reply).toHaveBeenCalledWith({
-            text: 'No project is configured for this channel. Please create or select one with `/project`.',
+            text: 'No project is configured for this channel. Use `/project` to bind one, or `/project reopen` if this is a previously used session.',
         });
         expect(deps.sendPrompt).not.toHaveBeenCalled();
     });

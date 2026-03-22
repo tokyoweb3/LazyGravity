@@ -26,6 +26,7 @@ import {
 import { AccountPreferenceRepository } from '../database/accountPreferenceRepository';
 import { ChannelPreferenceRepository } from '../database/channelPreferenceRepository';
 import { UserPreferenceRepository, OutputFormat } from '../database/userPreferenceRepository';
+import { ChatSessionRepository } from '../database/chatSessionRepository';
 import { ChatCommandHandler } from '../commands/chatCommandHandler';
 import {
     CleanupCommandHandler,
@@ -44,7 +45,7 @@ import { AutoAcceptService } from '../services/autoAcceptService';
 import { JoinCommandHandler } from '../commands/joinCommandHandler';
 import { isSessionSelectId } from '../ui/sessionPickerUi';
 import type { AntigravityAccountConfig } from '../utils/configLoader';
-import { listAccountNames, resolveValidAccountName } from '../utils/accountUtils';
+import { inferParentScopeChannelId, listAccountNames, resolveScopedAccountName } from '../utils/accountUtils';
 import { ACCOUNT_SELECT_ID, sendAccountUI } from '../ui/accountUi';
 
 export interface InteractionCreateHandlerDeps {
@@ -86,6 +87,7 @@ export interface InteractionCreateHandlerDeps {
         accountPrefRepo?: AccountPreferenceRepository,
         channelPrefRepo?: ChannelPreferenceRepository,
         antigravityAccounts?: AntigravityAccountConfig[],
+        chatSessionRepo?: ChatSessionRepository,
     ) => Promise<void>;
     handleTemplateUse?: (interaction: ButtonInteraction, templateId: number) => Promise<void>;
     joinHandler?: JoinCommandHandler;
@@ -93,26 +95,90 @@ export interface InteractionCreateHandlerDeps {
     accountPrefRepo?: AccountPreferenceRepository;
     channelPrefRepo?: ChannelPreferenceRepository;
     antigravityAccounts?: AntigravityAccountConfig[];
+    chatSessionRepo?: ChatSessionRepository;
 }
 
 export function createInteractionCreateHandler(deps: InteractionCreateHandlerDeps) {
-    const resolveSelectedAccount = (channelId: string, userId: string): string =>
-        resolveValidAccountName(
-            deps.bridge.selectedAccountByChannel?.get(channelId)
-                ?? deps.channelPrefRepo?.getAccountName(channelId)
-                ?? deps.accountPrefRepo?.getAccountName(userId)
-                ?? 'default',
-            deps.antigravityAccounts,
+    const getParentChannelId = (interaction: Interaction): string | null =>
+        inferParentScopeChannelId(
+            (interaction as any).channelId,
+            (interaction as any).channel?.parentId ?? null,
         );
+    const getSessionAccountName = (channelId: string): string | null =>
+        deps.chatSessionRepo?.findByChannelId(channelId)?.activeAccountName ?? null;
+    const resolveSelectedAccount = (channelId: string, userId: string, parentChannelId?: string | null): string =>
+        resolveScopedAccountName({
+            channelId,
+            userId,
+            sessionAccountName: getSessionAccountName(channelId),
+            parentChannelId,
+            selectedAccountByChannel: deps.bridge.selectedAccountByChannel,
+            channelPrefRepo: deps.channelPrefRepo,
+            accountPrefRepo: deps.accountPrefRepo,
+            accounts: deps.antigravityAccounts,
+        });
     const getChannelCdp = (channelId: string, userId: string): CdpService | null =>
-        deps.bridge.lastActiveWorkspace
-            ? deps.bridge.pool.getConnected(
-                deps.bridge.lastActiveWorkspace,
-                resolveSelectedAccount(channelId, userId),
-            )
-            : null;
+        (() => {
+            const workspacePath = deps.wsHandler.getWorkspaceForChannel(channelId);
+            if (workspacePath) {
+                const projectName = deps.bridge.pool.extractProjectName(workspacePath);
+                return deps.bridge.pool.getConnected(
+                    projectName,
+                    resolveSelectedAccount(channelId, userId),
+                );
+            }
+
+            return deps.bridge.lastActiveWorkspace
+                ? deps.bridge.pool.getConnected(
+                    deps.bridge.lastActiveWorkspace,
+                    resolveSelectedAccount(channelId, userId),
+                )
+                : null;
+        })();
 
     return async (interaction: Interaction): Promise<void> => {
+        if (interaction.isAutocomplete()) {
+            if (!deps.config.allowedUserIds.includes(interaction.user.id)) {
+                await interaction.respond([]).catch(logger.error);
+                return;
+            }
+
+            try {
+                if (interaction.commandName === 'project') {
+                    const subcommand = interaction.options.getSubcommand(false);
+                    const focused = interaction.options.getFocused(true);
+
+                    if (
+                        (subcommand === 'reopen' || subcommand === 'account')
+                        && focused.name === 'account'
+                    ) {
+                        const names = listAccountNames(deps.antigravityAccounts);
+                        const currentAccount = resolveSelectedAccount(
+                            interaction.channelId,
+                            interaction.user.id,
+                            getParentChannelId(interaction),
+                        );
+                        const needle = String(focused.value || '').trim().toLowerCase();
+                        const choices = names
+                            .filter((name) => !needle || name.toLowerCase().includes(needle))
+                            .slice(0, 25)
+                            .map((name) => ({
+                                name: name === currentAccount ? `${name} (current)` : name,
+                                value: name,
+                            }));
+
+                        await interaction.respond(choices);
+                        return;
+                    }
+                }
+            } catch (error) {
+                logger.error('Autocomplete handling error:', error);
+            }
+
+            await interaction.respond([]).catch(logger.error);
+            return;
+        }
+
         if (interaction.isButton()) {
             if (!deps.config.allowedUserIds.includes(interaction.user.id)) {
                 await interaction.reply({ content: t('You do not have permission.'), flags: MessageFlags.Ephemeral }).catch(logger.error);
@@ -134,7 +200,11 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                     const detector = projectName
                         ? deps.bridge.pool.getApprovalDetector(
                             projectName,
-                            resolveSelectedAccount(interaction.channelId, interaction.user.id),
+                            resolveSelectedAccount(
+                                interaction.channelId,
+                                interaction.user.id,
+                                getParentChannelId(interaction),
+                            ),
                         )
                         : undefined;
 
@@ -207,7 +277,11 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                     const planDetector = planWorkspaceDirName
                         ? deps.bridge.pool.getPlanningDetector(
                             planWorkspaceDirName,
-                            resolveSelectedAccount(interaction.channelId, interaction.user.id),
+                            resolveSelectedAccount(
+                                interaction.channelId,
+                                interaction.user.id,
+                                getParentChannelId(interaction),
+                            ),
                         )
                         : undefined;
 
@@ -340,7 +414,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                     const errorDetector = errorWorkspaceDirName
                         ? deps.bridge.pool.getErrorPopupDetector(
                             errorWorkspaceDirName,
-                            resolveSelectedAccount(interaction.channelId, interaction.user.id),
+                            resolveSelectedAccount(interaction.channelId, interaction.user.id, getParentChannelId(interaction)),
                         )
                         : undefined;
 
@@ -497,7 +571,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                     const runCmdDetector = runCmdWorkspace
                         ? deps.bridge.pool.getRunCommandDetector(
                             runCmdWorkspace,
-                            resolveSelectedAccount(interaction.channelId, interaction.user.id),
+                            resolveSelectedAccount(interaction.channelId, interaction.user.id, getParentChannelId(interaction)),
                         )
                         : undefined;
 
@@ -811,9 +885,14 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                     return;
                 }
 
-                deps.accountPrefRepo.setAccountName(interaction.user.id, selectedAccount);
-                deps.channelPrefRepo?.setAccountName(interaction.channelId, selectedAccount);
                 deps.bridge.selectedAccountByChannel?.set(interaction.channelId, selectedAccount);
+                const currentSession = deps.chatSessionRepo?.findByChannelId(interaction.channelId);
+                if (currentSession) {
+                    deps.chatSessionRepo?.setActiveAccountName(interaction.channelId, selectedAccount);
+                } else {
+                    deps.accountPrefRepo.setAccountName(interaction.user.id, selectedAccount);
+                    deps.channelPrefRepo?.setAccountName(interaction.channelId, selectedAccount);
+                }
 
                 const channelWorkspace = deps.wsHandler.getWorkspaceForChannel(interaction.channelId);
 
@@ -831,7 +910,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                 );
 
                 await interaction.followUp({
-                    content: `✅ Switched account to **${selectedAccount}**.`,
+                    content: `✅ Switched session account to **${selectedAccount}**.`,
                     flags: MessageFlags.Ephemeral,
                 }).catch(logger.error);
             } catch (error: any) {
@@ -889,6 +968,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
             }
 
             try {
+                await interaction.deferUpdate();
                 await deps.wsHandler.handleSelectMenu(interaction, interaction.guild);
             } catch (error) {
                 logger.error('Workspace selection error:', error);
@@ -937,6 +1017,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                 deps.accountPrefRepo,
                 deps.channelPrefRepo,
                 deps.antigravityAccounts,
+                deps.chatSessionRepo,
             );
         } catch (error) {
             logger.error('Error during slash command handling:', error);

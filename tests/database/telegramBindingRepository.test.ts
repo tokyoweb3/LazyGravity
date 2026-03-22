@@ -61,6 +61,13 @@ describe('TelegramBindingRepository', () => {
             expect(found?.createdAt).toBeDefined();
             expect(typeof found?.createdAt).toBe('string');
         });
+
+        it('falls back from a topic chat id to the base chat binding', () => {
+            repo.create({ chatId: '100200300', workspacePath: 'my-project' });
+            const found = repo.findByChatIdWithParentFallback('100200300_77');
+            expect(found).toBeDefined();
+            expect(found?.workspacePath).toBe('my-project');
+        });
     });
 
     describe('findByWorkspacePath - search by workspace path', () => {

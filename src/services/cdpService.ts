@@ -38,6 +38,13 @@ export interface ExtractedResponseImage {
     url?: string;
 }
 
+export interface WorkspaceRuntimeState {
+    isGenerating: boolean;
+    sessionTitle: string;
+    hasActiveChat: boolean;
+    contextId: number | null;
+}
+
 /** UI sync operation result type (Step 9) */
 export interface UiSyncResult {
     ok: boolean;
@@ -60,6 +67,63 @@ const SELECTORS = {
     CONTEXT_URL_KEYWORD: 'cascade-panel',
 };
 
+const WORKSPACE_STATE_SCRIPT = `(() => {
+    const panel = document.querySelector('.antigravity-agent-side-panel');
+    const scopes = [panel, document].filter(Boolean);
+
+    let isGenerating = false;
+    for (const scope of scopes) {
+        const stopEl = scope.querySelector('[data-tooltip-id="input-send-button-cancel-tooltip"]');
+        if (stopEl) {
+            isGenerating = true;
+            break;
+        }
+    }
+
+    if (!isGenerating) {
+        const normalize = (value) => (value || '').toLowerCase().replace(/\\s+/g, ' ').trim();
+        const stopPatterns = [
+            /^stop$/,
+            /^stop generating$/,
+            /^stop response$/,
+            /^停止$/,
+            /^生成を停止$/,
+            /^応答を停止$/,
+        ];
+        for (const scope of scopes) {
+            const buttons = scope.querySelectorAll('button, [role="button"]');
+            for (let i = 0; i < buttons.length; i++) {
+                const btn = buttons[i];
+                const labels = [
+                    btn.textContent || '',
+                    btn.getAttribute('aria-label') || '',
+                    btn.getAttribute('title') || '',
+                ];
+                if (labels.some((label) => stopPatterns.some((re) => re.test(normalize(label))))) {
+                    isGenerating = true;
+                    break;
+                }
+            }
+            if (isGenerating) break;
+        }
+    }
+
+    if (!panel) {
+        return { isGenerating, sessionTitle: '', hasActiveChat: false };
+    }
+
+    const header = panel.querySelector('div[class*="border-b"]');
+    const titleEl = header?.querySelector('div[class*="text-ellipsis"]');
+    const rawTitle = titleEl ? (titleEl.textContent || '').trim() : '';
+    const hasActiveChat = rawTitle.length > 0 && rawTitle !== 'Agent';
+
+    return {
+        isGenerating,
+        sessionTitle: rawTitle || '(Untitled)',
+        hasActiveChat,
+    };
+})()`;
+
 const CHAT_READY_TIMEOUT_MS = 6000;
 const CHAT_READY_POLL_MS = 250;
 const INJECT_RETRY_READY_TIMEOUT_MS = 2500;
@@ -76,6 +140,7 @@ export class CdpService extends EventEmitter {
     private idCounter = 1;
     private cdpCallTimeout = 30000;
     private targetUrl: string | null = null;
+    private targetId: string | null = null;
     /** Number of auto-reconnect attempts on disconnect */
     private maxReconnectAttempts: number;
     /** Delay between reconnect attempts (ms) */
@@ -183,6 +248,7 @@ export class CdpService extends EventEmitter {
 
         if (target && target.webSocketDebuggerUrl) {
             this.targetUrl = target.webSocketDebuggerUrl;
+            this.targetId = typeof target.id === 'string' ? target.id : null;
             // Extract workspace name from title (e.g., "ProjectName — Antigravity")
             if (target.title && !this.currentWorkspaceName) {
                 const titleParts = target.title.split(/\\s[—–-]\\s/);
@@ -315,9 +381,54 @@ export class CdpService extends EventEmitter {
         }
         this.isConnectedFlag = false;
         this.contexts = [];
+        this.targetId = null;
         this.currentWorkspacePath = null;
         this.currentWorkspaceName = null;
         this.clearPendingCalls(new Error('disconnect() was called'));
+    }
+
+    private async evaluateAcrossContexts<T = unknown>(
+        expression: string,
+        accept: (value: T) => boolean,
+        options?: { awaitPromise?: boolean },
+    ): Promise<{ value: T | null; contextId: number | null }> {
+        const awaitPromise = options?.awaitPromise ?? true;
+        const contexts = this.getContexts();
+        let firstValue: { value: T | null; contextId: number | null } | null = null;
+
+        if (contexts.length === 0) {
+            const result = await this.call('Runtime.evaluate', {
+                expression,
+                returnByValue: true,
+                awaitPromise,
+            });
+            return {
+                value: (result?.result?.value ?? null) as T,
+                contextId: null,
+            };
+        }
+
+        for (const ctx of contexts) {
+            try {
+                const result = await this.call('Runtime.evaluate', {
+                    expression,
+                    returnByValue: true,
+                    awaitPromise,
+                    contextId: ctx.id,
+                });
+                const value = (result?.result?.value ?? null) as T;
+                if (!firstValue) {
+                    firstValue = { value, contextId: ctx.id };
+                }
+                if (accept(value)) {
+                    return { value, contextId: ctx.id };
+                }
+            } catch {
+                // Try the next context.
+            }
+        }
+
+        return firstValue ?? { value: null, contextId: null };
     }
 
     /**
@@ -474,6 +585,7 @@ export class CdpService extends EventEmitter {
 
         this.disconnectQuietly();
         this.targetUrl = page.webSocketDebuggerUrl;
+        this.targetId = typeof page.id === 'string' ? page.id : null;
         await this.connect();
         this.currentWorkspaceName = projectName;
         logger.debug(`[CdpService] Connected to workspace "${projectName}"`);
@@ -501,6 +613,7 @@ export class CdpService extends EventEmitter {
                 // Temporarily connect to retrieve document.title
                 this.disconnectQuietly();
                 this.targetUrl = page.webSocketDebuggerUrl;
+                this.targetId = typeof page.id === 'string' ? page.id : null;
                 await this.connect();
 
                 const result = await this.call('Runtime.evaluate', {
@@ -960,6 +1073,93 @@ export class CdpService extends EventEmitter {
             this.contexts = [];
             this.clearPendingCalls(new Error('Disconnected for workspace switch'));
             this.targetUrl = null;
+            this.targetId = null;
+        }
+    }
+
+    async closeCurrentTarget(): Promise<boolean> {
+        if (!this.targetId) {
+            return false;
+        }
+
+        try {
+            await this.call('Target.closeTarget', { targetId: this.targetId });
+            return true;
+        } finally {
+            await this.disconnect();
+        }
+    }
+
+    async inspectWorkspaceRuntimeState(): Promise<WorkspaceRuntimeState> {
+        const result = await this.evaluateAcrossContexts<WorkspaceRuntimeState>(
+            WORKSPACE_STATE_SCRIPT,
+            (value) => !!(value && typeof value === 'object' && (value as any).hasActiveChat),
+        );
+        const value = result.value;
+
+        return {
+            isGenerating: !!(value && typeof value === 'object' && (value as any).isGenerating),
+            sessionTitle: value && typeof value === 'object' && typeof (value as any).sessionTitle === 'string'
+                ? (value as any).sessionTitle
+                : '(Untitled)',
+            hasActiveChat: !!(value && typeof value === 'object' && (value as any).hasActiveChat),
+            contextId: result.contextId,
+        };
+    }
+
+    async closeCurrentTargetGracefully(timeoutMs = 5000): Promise<boolean> {
+        if (!this.targetId) {
+            return false;
+        }
+
+        const closingTargetId = this.targetId;
+
+        try {
+            await this.call('Page.bringToFront', {}).catch(() => {});
+
+            const modifiers = process.platform === 'darwin' ? 4 : 2;
+            await this.call('Input.dispatchKeyEvent', {
+                type: 'keyDown',
+                key: 'w',
+                code: 'KeyW',
+                modifiers,
+                windowsVirtualKeyCode: 87,
+                nativeVirtualKeyCode: 87,
+            });
+            await this.call('Input.dispatchKeyEvent', {
+                type: 'keyUp',
+                key: 'w',
+                code: 'KeyW',
+                modifiers,
+                windowsVirtualKeyCode: 87,
+                nativeVirtualKeyCode: 87,
+            });
+
+            const deadline = Date.now() + timeoutMs;
+            while (Date.now() <= deadline) {
+                let stillOpen = false;
+                for (const port of this.ports) {
+                    try {
+                        const list = await this.getJson(`http://127.0.0.1:${port}/json/list`);
+                        if (list.some((page: any) => page?.id === closingTargetId)) {
+                            stillOpen = true;
+                            break;
+                        }
+                    } catch {
+                        // Ignore port failures while polling close state.
+                    }
+                }
+
+                if (!stillOpen) {
+                    return true;
+                }
+
+                await new Promise((resolve) => setTimeout(resolve, 250));
+            }
+
+            return false;
+        } finally {
+            await this.disconnect();
         }
     }
 
@@ -1883,27 +2083,67 @@ export class CdpService extends EventEmitter {
         }
 
         const expression = `(async () => {
-            return Array.from(document.querySelectorAll('div.cursor-pointer'))
-                .map(e => ({text: (e.textContent || '').trim().replace(/New$/, ''), class: e.className}))
-                .filter(e => e.class.includes('px-2 py-1 flex items-center justify-between') || e.text.includes('Gemini') || e.text.includes('GPT') || e.text.includes('Claude'))
-                .map(e => e.text);
+            const normalize = (text) => (text || '').trim().replace(/New$/, '').trim();
+            const isVisible = (el) => {
+                if (!(el instanceof HTMLElement)) return false;
+                const style = window.getComputedStyle(el);
+                const rect = el.getBoundingClientRect();
+                return style.visibility !== 'hidden'
+                    && style.display !== 'none'
+                    && rect.width > 0
+                    && rect.height > 0;
+            };
+            const looksLikeModel = (text) => /gemini|gpt|claude/i.test(text || '');
+            const collectModels = () => Array.from(document.querySelectorAll('button, [role="button"], div.cursor-pointer'))
+                .filter(isVisible)
+                .map((el) => normalize(el.textContent))
+                .filter((text) => looksLikeModel(text))
+                .filter((text, index, arr) => arr.indexOf(text) === index);
+
+            let models = collectModels();
+            if (models.length > 1) {
+                return models;
+            }
+
+            const triggers = Array.from(document.querySelectorAll('button, [role="button"], div.cursor-pointer'))
+                .filter(isVisible)
+                .filter((el) => looksLikeModel(normalize(el.textContent)));
+
+            for (const trigger of triggers) {
+                trigger.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                await new Promise((resolve) => setTimeout(resolve, 250));
+                models = collectModels();
+                if (models.length > 1) {
+                    return models;
+                }
+            }
+
+            return models;
         })()`;
 
         try {
-            const contextId = this.getPrimaryContextId();
-            const callParams: any = {
-                expression,
-                returnByValue: true,
-                awaitPromise: true,
-            };
-            if (contextId !== null) callParams.contextId = contextId;
+            const contexts = this.getContexts();
+            const contextIds = [
+                this.getPrimaryContextId(),
+                ...contexts.map((ctx) => ctx.id),
+            ].filter((value, index, arr): value is number => typeof value === 'number' && arr.indexOf(value) === index);
+            const targets: Array<number | null> = contextIds.length > 0 ? contextIds : [null];
 
-            const res = await this.call('Runtime.evaluate', callParams);
-            const value = res?.result?.value;
-            if (Array.isArray(value) && value.length > 0) {
-                // remove duplicates
-                return Array.from(new Set(value));
+            for (const contextId of targets) {
+                const params: any = {
+                    expression,
+                    returnByValue: true,
+                    awaitPromise: true,
+                };
+                if (typeof contextId === 'number') params.contextId = contextId;
+                const res = await this.call('Runtime.evaluate', params);
+                const value = res?.result?.value;
+                if (Array.isArray(value) && value.length > 0) {
+                    return Array.from(new Set(value));
+                }
             }
+
+            logger.warn('[CdpService] getUiModels returned no models from any execution context.');
             return [];
         } catch (error: any) {
             logger.error('Failed to get UI models:', error);
@@ -1919,17 +2159,43 @@ export class CdpService extends EventEmitter {
             return null;
         }
         const expression = `(() => {
-            return Array.from(document.querySelectorAll('div.cursor-pointer'))
-                .find(e => e.className.includes('px-2 py-1 flex items-center justify-between') && e.className.includes('bg-gray-500/20'))
-                ?.textContent?.trim().replace(/New$/, '') || null;
+            const normalize = (text) => (text || '').trim().replace(/New$/, '').trim();
+            const isVisible = (el) => {
+                if (!(el instanceof HTMLElement)) return false;
+                const style = window.getComputedStyle(el);
+                const rect = el.getBoundingClientRect();
+                return style.visibility !== 'hidden'
+                    && style.display !== 'none'
+                    && rect.width > 0
+                    && rect.height > 0;
+            };
+            const selected = Array.from(document.querySelectorAll('button, [role="button"], div.cursor-pointer'))
+                .filter(isVisible)
+                .find(e => /gemini|gpt|claude/i.test(normalize(e.textContent)) && e.className.includes('bg-gray-500/20'));
+            return selected ? normalize(selected.textContent) : null;
         })()`;
         try {
-            const contextId = this.getPrimaryContextId();
-            const res = await this.call('Runtime.evaluate', {
-                expression, returnByValue: true, awaitPromise: true,
-                contextId: contextId || undefined
-            });
-            return res?.result?.value || null;
+            const contexts = this.getContexts();
+            const contextIds = [
+                this.getPrimaryContextId(),
+                ...contexts.map((ctx) => ctx.id),
+            ].filter((value, index, arr): value is number => typeof value === 'number' && arr.indexOf(value) === index);
+            const targets: Array<number | null> = contextIds.length > 0 ? contextIds : [null];
+
+            for (const contextId of targets) {
+                const params: any = {
+                    expression,
+                    returnByValue: true,
+                    awaitPromise: true,
+                };
+                if (typeof contextId === 'number') params.contextId = contextId;
+                const res = await this.call('Runtime.evaluate', params);
+                const value = res?.result?.value;
+                if (typeof value === 'string' && value.trim().length > 0) {
+                    return value;
+                }
+            }
+            return null;
         } catch (e: any) {
             return null;
         }
@@ -1953,23 +2219,55 @@ export class CdpService extends EventEmitter {
         const safeModel = JSON.stringify(modelName);
         const expression = `(async () => {
             const targetModel = ${safeModel};
+            const normalize = (text) => (text || '').trim().replace(/New$/, '').trim();
+            const isVisible = (el) => {
+                if (!(el instanceof HTMLElement)) return false;
+                const style = window.getComputedStyle(el);
+                const rect = el.getBoundingClientRect();
+                return style.visibility !== 'hidden'
+                    && style.display !== 'none'
+                    && rect.width > 0
+                    && rect.height > 0;
+            };
+            const looksLikeModel = (text) => /gemini|gpt|claude/i.test(text || '');
+            const clickPossibleTrigger = async () => {
+                const triggers = Array.from(document.querySelectorAll('button, [role="button"], div.cursor-pointer'))
+                    .filter(isVisible)
+                    .filter((el) => looksLikeModel(normalize(el.textContent)));
+                for (const trigger of triggers) {
+                    trigger.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+                    await new Promise(r => setTimeout(r, 200));
+                    const candidateItems = Array.from(document.querySelectorAll('div.cursor-pointer'))
+                        .filter(el => el.className.includes('px-2 py-1 flex items-center justify-between'));
+                    if (candidateItems.length > 0) {
+                        return true;
+                    }
+                }
+                return false;
+            };
             
             // Get all items in the model list
-            const modelItems = Array.from(document.querySelectorAll('div.cursor-pointer'))
+            let modelItems = Array.from(document.querySelectorAll('div.cursor-pointer'))
                 .filter(e => e.className.includes('px-2 py-1 flex items-center justify-between'));
             
+            if (modelItems.length === 0) {
+                await clickPossibleTrigger();
+                modelItems = Array.from(document.querySelectorAll('div.cursor-pointer'))
+                    .filter(e => e.className.includes('px-2 py-1 flex items-center justify-between'));
+            }
+
             if (modelItems.length === 0) {
                 return { ok: false, error: 'Model list not found. The dropdown may not be open.' };
             }
             
             // Match target model by name (compare after removing New suffix)
             const targetItem = modelItems.find(el => {
-                const text = (el.textContent || '').trim().replace(/New$/, '').trim();
+                const text = normalize(el.textContent);
                 return text === targetModel || text.toLowerCase() === targetModel.toLowerCase();
             });
             
             if (!targetItem) {
-                const available = modelItems.map(el => (el.textContent || '').trim().replace(/New$/, '').trim()).join(', ');
+                const available = modelItems.map(el => normalize(el.textContent)).join(', ');
                 return { ok: false, error: 'Model "' + targetModel + '" not found. Available: ' + available };
             }
             
@@ -1986,7 +2284,7 @@ export class CdpService extends EventEmitter {
             const updatedItems = Array.from(document.querySelectorAll('div.cursor-pointer'))
                 .filter(e => e.className.includes('px-2 py-1 flex items-center justify-between'));
             const selectedItem = updatedItems.find(el => {
-                const text = (el.textContent || '').trim().replace(/New$/, '').trim();
+                const text = normalize(el.textContent);
                 return text === targetModel || text.toLowerCase() === targetModel.toLowerCase();
             });
             
@@ -1999,20 +2297,31 @@ export class CdpService extends EventEmitter {
         })()`;
 
         try {
-            const contextId = this.getPrimaryContextId();
-            const callParams: any = {
-                expression,
-                returnByValue: true,
-                awaitPromise: true,
-            };
-            if (contextId !== null) callParams.contextId = contextId;
+            const contexts = this.getContexts();
+            const contextIds = [
+                this.getPrimaryContextId(),
+                ...contexts.map((ctx) => ctx.id),
+            ].filter((value, index, arr): value is number => typeof value === 'number' && arr.indexOf(value) === index);
+            const targets: Array<number | null> = contextIds.length > 0 ? contextIds : [null];
 
-            const res = await this.call('Runtime.evaluate', callParams);
-            const value = res?.result?.value;
-            if (value?.ok) {
-                return { ok: true, model: value.model };
+            let lastError = 'UI operation failed (setUiModel)';
+            for (const contextId of targets) {
+                const params: any = {
+                    expression,
+                    returnByValue: true,
+                    awaitPromise: true,
+                };
+                if (typeof contextId === 'number') params.contextId = contextId;
+                const res = await this.call('Runtime.evaluate', params);
+                const value = res?.result?.value;
+                if (value?.ok) {
+                    return { ok: true, model: value.model };
+                }
+                if (value?.error) {
+                    lastError = value.error;
+                }
             }
-            return { ok: false, error: value?.error || 'UI operation failed (setUiModel)' };
+            return { ok: false, error: lastError };
         } catch (error: any) {
             return { ok: false, error: error?.message || String(error) };
         }

@@ -713,6 +713,7 @@ export class ChatSessionService {
         options?: {
             maxWaitMs?: number;
             retryIntervalMs?: number;
+            allowVisibilityWarmupMs?: number;
         },
     ): Promise<{ ok: boolean; error?: string }> {
         if (!title || title.trim().length === 0) {
@@ -726,13 +727,15 @@ export class ChatSessionService {
 
         const maxWaitMs = options?.maxWaitMs ?? ChatSessionService.ACTIVATE_SESSION_MAX_WAIT_MS;
         const retryIntervalMs = options?.retryIntervalMs ?? ChatSessionService.ACTIVATE_SESSION_RETRY_INTERVAL_MS;
+        const allowVisibilityWarmupMs = options?.allowVisibilityWarmupMs ?? 0;
 
         let usedPastConversations = false;
         let directResult: { ok: boolean; error?: string } = { ok: false, error: 'not attempted' };
         let pastResult: { ok: boolean; error?: string } | null = null;
         let clicked = false;
-        const startedAt = Date.now();
+        let startedAt = Date.now();
         let attempts = 0;
+        let warmupConsumed = false;
 
         while (Date.now() - startedAt <= maxWaitMs) {
             attempts += 1;
@@ -769,7 +772,21 @@ export class ChatSessionService {
         await new Promise((resolve) => setTimeout(resolve, 500));
         const after = await this.getCurrentSessionInfo(cdpService);
         if (after.title.trim() === title.trim()) {
+            if (usedPastConversations) {
+                await this.closePanelWithEscape(cdpService);
+            }
             return { ok: true };
+        }
+
+        if (!warmupConsumed && allowVisibilityWarmupMs > 0 && after.title.trim() === 'Agent') {
+            warmupConsumed = true;
+            startedAt = Date.now();
+            await new Promise((resolve) => setTimeout(resolve, allowVisibilityWarmupMs));
+            return this.activateSessionByTitle(cdpService, title, {
+                maxWaitMs,
+                retryIntervalMs,
+                allowVisibilityWarmupMs: 0,
+            });
         }
 
         // If direct side-panel activation hit the wrong row, try the explicit Past Conversations flow.
@@ -779,6 +796,7 @@ export class ChatSessionService {
                 await new Promise((resolve) => setTimeout(resolve, 500));
                 const afterPast = await this.getCurrentSessionInfo(cdpService);
                 if (afterPast.title.trim() === title.trim()) {
+                    await this.closePanelWithEscape(cdpService);
                     return { ok: true };
                 }
                 return {

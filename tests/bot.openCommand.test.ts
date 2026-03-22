@@ -97,7 +97,7 @@ describe('/open command', () => {
         );
 
         expect(CdpService).toHaveBeenCalledWith(expect.objectContaining({
-            accountName: 'work1',
+            activeAccountName: 'work1',
             accountPorts: { default: 9222, work1: 9333 },
         }));
 
@@ -157,5 +157,103 @@ describe('/account command', () => {
         const payload = interaction.editReply.mock.calls[0][0];
         expect(payload.embeds?.length).toBeGreaterThan(0);
         expect(payload.components?.length).toBeGreaterThan(0);
+    });
+
+    it('stores session account without mutating channel or user defaults for session channels', async () => {
+        const interaction = {
+            commandName: 'account',
+            channelId: 'channel-1',
+            user: { id: 'user-1' },
+            options: { getString: jest.fn().mockReturnValue('work1'), getSubcommand: jest.fn() },
+            editReply: jest.fn().mockResolvedValue(undefined),
+        } as any;
+        const bridge = {
+            selectedAccountByChannel: new Map<string, string>(),
+            pool: { setPreferredAccountForWorkspace: jest.fn() },
+            autoAccept: { isEnabled: jest.fn().mockReturnValue(false), handle: jest.fn() },
+        } as any;
+        const accountPrefRepo = { setAccountName: jest.fn() } as any;
+        const channelPrefRepo = { setAccountName: jest.fn() } as any;
+        const chatSessionRepo = {
+            findByChannelId: jest.fn().mockReturnValue({ channelId: 'channel-1', activeAccountName: 'default' }),
+            setActiveAccountName: jest.fn(),
+        } as any;
+
+        await handleSlashInteraction(
+            interaction,
+            {} as any,
+            bridge,
+            { getWorkspaceForChannel: jest.fn().mockReturnValue('/tmp/demo-project') } as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            bridge.autoAccept,
+            {} as any,
+            {} as any,
+            {} as any,
+            undefined,
+            undefined,
+            accountPrefRepo,
+            channelPrefRepo,
+            [
+                { name: 'default', cdpPort: 9222 },
+                { name: 'work1', cdpPort: 9333 },
+            ],
+            chatSessionRepo,
+        );
+
+        expect(chatSessionRepo.setActiveAccountName).toHaveBeenCalledWith('channel-1', 'work1');
+        expect(accountPrefRepo.setAccountName).not.toHaveBeenCalled();
+        expect(channelPrefRepo.setAccountName).not.toHaveBeenCalled();
+        expect(interaction.editReply).toHaveBeenCalledWith({ content: '✅ Switched session account to **work1**.' });
+    });
+});
+
+describe('/project account subcommand', () => {
+    it('stores the channel-scoped project account binding', async () => {
+        const interaction = {
+            commandName: 'project',
+            channelId: 'channel-1',
+            user: { id: 'user-1' },
+            options: {
+                getString: jest.fn().mockReturnValue('work1'),
+                getSubcommand: jest.fn().mockReturnValue('account'),
+            },
+            channel: {},
+            editReply: jest.fn().mockResolvedValue(undefined),
+        } as any;
+        const bridge = {
+            selectedAccountByChannel: new Map<string, string>(),
+            pool: { setPreferredAccountForWorkspace: jest.fn(), extractProjectName: jest.fn() },
+            autoAccept: { isEnabled: jest.fn().mockReturnValue(false), handle: jest.fn() },
+        } as any;
+        const channelPrefRepo = { setAccountName: jest.fn(), getAccountName: jest.fn().mockReturnValue(null) } as any;
+
+        await handleSlashInteraction(
+            interaction,
+            {} as any,
+            bridge,
+            { getWorkspaceForChannel: jest.fn().mockReturnValue('/tmp/demo-project') } as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            {} as any,
+            bridge.autoAccept,
+            {} as any,
+            {} as any,
+            {} as any,
+            undefined,
+            undefined,
+            undefined,
+            channelPrefRepo,
+            [
+                { name: 'default', cdpPort: 9222 },
+                { name: 'work1', cdpPort: 9333 },
+            ],
+        );
+
+        expect(channelPrefRepo.setAccountName).toHaveBeenCalledWith('channel-1', 'work1');
+        expect(interaction.editReply).toHaveBeenCalledWith({ content: '✅ Bound this project channel to account **work1**.' });
     });
 });

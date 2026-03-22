@@ -33,15 +33,19 @@ export class CdpConnectionPool {
         this.cdpOptions = cdpOptions;
     }
 
-    private resolveAccountName(projectName: string, accountName: string): string {
+    private resolveAccountName(projectName: string, accountName: string, explicitSelection: boolean = false): string {
+        if (explicitSelection) {
+            return accountName;
+        }
         if (accountName !== 'default') return accountName;
         return this.workspaceToAccount.get(projectName) || accountName;
     }
 
     async getOrConnect(workspacePath: string, selection?: AccountSelection): Promise<CdpService> {
         const projectName = this.extractProjectName(workspacePath);
+        const explicitSelection = typeof selection?.name === 'string';
         const accountName = selection?.name || this.workspaceToAccount.get(projectName) || 'default';
-        const effectiveAccount = this.resolveAccountName(projectName, accountName);
+        const effectiveAccount = this.resolveAccountName(projectName, accountName, explicitSelection);
         const key = buildConnectionKey(projectName, effectiveAccount);
 
         const existing = this.connections.get(key);
@@ -199,8 +203,7 @@ export class CdpConnectionPool {
         projectName: string,
         accountName: string,
     ): Promise<CdpService> {
-        const effectiveAccount = this.resolveAccountName(projectName, accountName);
-        const key = buildConnectionKey(projectName, effectiveAccount);
+        const key = buildConnectionKey(projectName, accountName);
         const old = this.connections.get(key);
         if (old) {
             await old.disconnect().catch(() => {});
@@ -209,7 +212,7 @@ export class CdpConnectionPool {
 
         const cdp = new CdpService({
             ...this.cdpOptions,
-            accountName: effectiveAccount,
+            accountName,
         });
 
         cdp.on('reconnectFailed', () => {

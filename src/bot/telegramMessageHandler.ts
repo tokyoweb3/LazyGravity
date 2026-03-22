@@ -32,7 +32,7 @@ import type { ChatSessionService } from '../services/chatSessionService';
 import type { AccountPreferenceRepository } from '../database/accountPreferenceRepository';
 import type { ChannelPreferenceRepository } from '../database/channelPreferenceRepository';
 import type { AntigravityAccountConfig } from '../utils/configLoader';
-import { resolveValidAccountName } from '../utils/accountUtils';
+import { resolveScopedAccountName } from '../utils/accountUtils';
 
 export interface TelegramMessageHandlerDeps {
     readonly bridge: CdpBridge;
@@ -65,13 +65,14 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
     const workspaceQueues = new Map<string, Promise<void>>();
 
     function resolveAccount(chatId: string, userId: string): string {
-        return resolveValidAccountName(
-            deps.bridge.selectedAccountByChannel?.get(chatId)
-                ?? deps.channelPrefRepo?.getAccountName(chatId)
-                ?? deps.accountPrefRepo?.getAccountName(userId)
-                ?? 'default',
-            deps.antigravityAccounts,
-        );
+        return resolveScopedAccountName({
+            channelId: chatId,
+            userId,
+            selectedAccountByChannel: deps.bridge.selectedAccountByChannel,
+            channelPrefRepo: deps.channelPrefRepo,
+            accountPrefRepo: deps.accountPrefRepo,
+            accounts: deps.antigravityAccounts,
+        });
     }
 
     function enqueueForWorkspace(
@@ -141,10 +142,10 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
         }
 
         // Resolve workspace binding for this Telegram chat
-        const binding = deps.telegramBindingRepo.findByChatId(chatId);
+        const binding = deps.telegramBindingRepo.findByChatIdWithParentFallback(chatId);
         if (!binding) {
             await message.reply({
-                text: 'No project is linked to this chat. Use /project to bind a workspace.',
+                text: 'No project is linked to this chat. Use /project to bind a workspace, or /project_reopen if this is a previously used session.',
             }).catch(logger.error);
             return;
         }

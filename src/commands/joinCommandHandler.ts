@@ -24,6 +24,7 @@ import type { ExtractionMode } from '../utils/config';
 
 /** Maximum embed description length (Discord limit is 4096) */
 const MAX_EMBED_DESC = 4000;
+type ResolveAccountForChannel = (channelId: string, userId: string) => string;
 
 /**
  * Handler for /join and /mirror commands
@@ -40,6 +41,7 @@ export class JoinCommandHandler {
     private readonly workspaceService: WorkspaceService;
     private readonly client: Client;
     private readonly extractionMode?: ExtractionMode;
+    private readonly resolveAccountForChannel: ResolveAccountForChannel | null;
 
     /** Active ResponseMonitors per workspace (for AI response mirroring) */
     private readonly activeResponseMonitors = new Map<string, ResponseMonitor>();
@@ -53,6 +55,7 @@ export class JoinCommandHandler {
         workspaceService: WorkspaceService,
         client: Client,
         extractionMode?: ExtractionMode,
+        resolveAccountForChannel?: ResolveAccountForChannel,
     ) {
         this.chatSessionService = chatSessionService;
         this.chatSessionRepo = chatSessionRepo;
@@ -62,6 +65,7 @@ export class JoinCommandHandler {
         this.workspaceService = workspaceService;
         this.client = client;
         this.extractionMode = extractionMode;
+        this.resolveAccountForChannel = resolveAccountForChannel ?? null;
     }
 
     /**
@@ -91,10 +95,11 @@ export class JoinCommandHandler {
         }
 
         const projectPath = this.resolveProjectPath(projectName);
+        const accountName = this.resolveAccountForChannel?.(interaction.channelId, interaction.user.id) ?? 'default';
 
         let cdp;
         try {
-            cdp = await this.pool.getOrConnect(projectPath);
+            cdp = await this.pool.getOrConnect(projectPath, { name: accountName });
         } catch (e: any) {
             await interaction.editReply({
                 content: t(`⚠️ Failed to connect to project: ${e.message}`),
@@ -138,6 +143,7 @@ export class JoinCommandHandler {
         }
 
         const projectPath = this.resolveProjectPath(projectName);
+        const accountName = this.resolveAccountForChannel?.(interaction.channelId, interaction.user.id) ?? 'default';
 
         // Step 1: Check if a channel already exists for this session
         const existingSession = this.chatSessionRepo.findByDisplayName(projectName, selectedTitle);
@@ -163,7 +169,7 @@ export class JoinCommandHandler {
         // Step 2: Connect to CDP
         let cdp;
         try {
-            cdp = await this.pool.getOrConnect(projectPath);
+            cdp = await this.pool.getOrConnect(projectPath, { name: accountName });
         } catch (e: any) {
             await interaction.editReply({ content: t(`⚠️ Failed to connect to project: ${e.message}`) });
             return;
@@ -196,13 +202,14 @@ export class JoinCommandHandler {
             categoryId,
             workspacePath: projectName,
             sessionNumber,
+            activeAccountName: accountName,
             guildId: guild.id,
         });
 
         this.chatSessionRepo.updateDisplayName(newChannelId, selectedTitle);
 
         // Step 6: Start mirroring (routes dynamically to all bound session channels)
-        this.startMirroring(bridge, cdp, projectName);
+        this.startMirroring(bridge, cdp, projectName, accountName);
 
         const embed = new EmbedBuilder()
             .setTitle(t('🔗 Joined Session'))
@@ -236,7 +243,8 @@ export class JoinCommandHandler {
         }
 
         const projectPath = this.resolveProjectPath(projectName);
-        const detector = this.pool.getUserMessageDetector(projectName);
+        const accountName = this.resolveAccountForChannel?.(interaction.channelId, interaction.user.id) ?? 'default';
+        const detector = this.pool.getUserMessageDetector(projectName, accountName);
 
         if (detector?.isActive()) {
             // Turn OFF — stop user message detector and any active response monitor
@@ -257,7 +265,7 @@ export class JoinCommandHandler {
             // Turn ON
             let cdp;
             try {
-                cdp = await this.pool.getOrConnect(projectPath);
+                cdp = await this.pool.getOrConnect(projectPath, { name: accountName });
             } catch (e: any) {
                 await interaction.editReply({
                     content: t(`⚠️ Failed to connect to project: ${e.message}`),
@@ -265,7 +273,7 @@ export class JoinCommandHandler {
                 return;
             }
 
-            this.startMirroring(bridge, cdp, projectName);
+            this.startMirroring(bridge, cdp, projectName, accountName);
 
             const embed = new EmbedBuilder()
                 .setTitle(t('📡 Mirroring ON'))
@@ -290,11 +298,12 @@ export class JoinCommandHandler {
         bridge: CdpBridge,
         cdp: CdpService,
         projectName: string,
+        accountName: string,
     ): void {
         // Force re-prime: stop existing detector so that ensureUserMessageDetector
         // creates a fresh one. This prevents the detector from treating the
         // new session's last message as a "new" user message after /join.
-        const existing = this.pool.getUserMessageDetector(projectName);
+        const existing = this.pool.getUserMessageDetector(projectName, accountName);
         if (existing?.isActive()) {
             existing.stop();
         }
@@ -304,7 +313,7 @@ export class JoinCommandHandler {
                 .catch((err) => {
                     logger.error('[Mirror] Error routing mirrored message:', err);
                 });
-        });
+        }, accountName);
     }
 
     /**

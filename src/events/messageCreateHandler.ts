@@ -32,7 +32,7 @@ import {
     InboundImageAttachment,
     isImageAttachment as isImageAttachmentFn,
 } from '../utils/imageHandler';
-import { listAccountNames, resolveValidAccountName } from '../utils/accountUtils';
+import { listAccountNames, resolveScopedAccountName } from '../utils/accountUtils';
 import { logger } from '../utils/logger';
 
 export interface MessageCreateHandlerDeps {
@@ -92,11 +92,17 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
     const downloadInboundImageAttachments = deps.downloadInboundImageAttachments ?? downloadInboundImageAttachmentsFn;
     const cleanupInboundImageAttachments = deps.cleanupInboundImageAttachments ?? cleanupInboundImageAttachmentsFn;
     const isImageAttachment = deps.isImageAttachment ?? isImageAttachmentFn;
+    const getParentChannelId = (message: Message): string | null => {
+        const parentId = (message.channel as any)?.parentId;
+        return typeof parentId === 'string' && parentId.length > 0 ? parentId : null;
+    };
 
     const getAccountPort = (accountName: string): number | null => {
         const match = (deps.antigravityAccounts ?? []).find((account) => account.name === accountName);
         return match ? match.cdpPort : null;
     };
+    const getSessionAccountName = (channelId: string): string | null =>
+        deps.chatSessionRepo.findByChannelId(channelId)?.activeAccountName ?? null;
 
     // Per-workspace prompt queue: serializes send→response cycles
     const workspaceQueues = new Map<string, Promise<void>>();
@@ -144,22 +150,26 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
             if (parsed.commandName === 'status') {
                 const activeNames = deps.bridge.pool.getActiveWorkspaceNames();
                 const currentMode = deps.modeService.getCurrentMode();
+                const session = deps.chatSessionRepo.findByChannelId(message.channelId);
+                const currentAccount = resolveScopedAccountName({
+                    channelId: message.channelId,
+                    userId: message.author.id,
+                    sessionAccountName: getSessionAccountName(message.channelId),
+                    parentChannelId: getParentChannelId(message),
+                    selectedAccountByChannel: deps.bridge.selectedAccountByChannel,
+                    channelPrefRepo: deps.channelPrefRepo,
+                    accountPrefRepo: deps.accountPrefRepo,
+                    accounts: deps.antigravityAccounts,
+                });
+                const conversationTitle = session?.displayName ?? '(New chat / no saved title)';
 
                 const statusFields = [
                     { name: 'CDP Connection', value: activeNames.length > 0 ? `🟢 ${activeNames.length} project(s) connected` : '⚪ Disconnected', inline: true },
                     { name: 'Mode', value: MODE_DISPLAY_NAMES[currentMode] || currentMode, inline: true },
                     { name: 'Auto Approve', value: deps.bridge.autoAccept.isEnabled() ? '🟢 ON' : '⚪ OFF', inline: true },
-                    {
-                        name: 'Account',
-                        value: resolveValidAccountName(
-                            deps.bridge.selectedAccountByChannel?.get(message.channelId)
-                                ?? deps.channelPrefRepo?.getAccountName(message.channelId)
-                                ?? deps.accountPrefRepo?.getAccountName(message.author.id)
-                                ?? 'default',
-                            deps.antigravityAccounts,
-                        ),
-                        inline: true,
-                    },
+                    { name: 'Active Account', value: currentAccount, inline: true },
+                    { name: 'Original Account', value: session?.originAccountName ?? '(unset)', inline: true },
+                    { name: 'Conversation Title', value: conversationTitle, inline: false },
                 ];
 
                 let statusDescription = '';
@@ -204,13 +214,16 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                 const requested = parsed.args?.[0];
 
                 if (!requested) {
-                    const current = resolveValidAccountName(
-                        deps.bridge.selectedAccountByChannel?.get(message.channelId)
-                            ?? deps.channelPrefRepo?.getAccountName(message.channelId)
-                            ?? deps.accountPrefRepo?.getAccountName(message.author.id)
-                            ?? 'default',
-                        deps.antigravityAccounts,
-                    );
+                    const current = resolveScopedAccountName({
+                        channelId: message.channelId,
+                        userId: message.author.id,
+                        sessionAccountName: getSessionAccountName(message.channelId),
+                        parentChannelId: getParentChannelId(message),
+                        selectedAccountByChannel: deps.bridge.selectedAccountByChannel,
+                        channelPrefRepo: deps.channelPrefRepo,
+                        accountPrefRepo: deps.accountPrefRepo,
+                        accounts: deps.antigravityAccounts,
+                    });
                     await message.reply(`Current account: **${current}**\nAvailable: ${accountNames.join(', ')}`).catch(() => {});
                     return;
                 }
@@ -220,9 +233,14 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                     return;
                 }
 
-                deps.accountPrefRepo?.setAccountName(message.author.id, requested);
-                deps.channelPrefRepo?.setAccountName(message.channelId, requested);
                 deps.bridge.selectedAccountByChannel?.set(message.channelId, requested);
+                const currentSession = deps.chatSessionRepo.findByChannelId(message.channelId);
+                if (currentSession) {
+                    deps.chatSessionRepo.setActiveAccountName(message.channelId, requested);
+                } else {
+                    deps.accountPrefRepo?.setAccountName(message.author.id, requested);
+                    deps.channelPrefRepo?.setAccountName(message.channelId, requested);
+                }
 
                 const channelWorkspace = deps.wsHandler.getWorkspaceForChannel(message.channelId);
 
@@ -232,7 +250,7 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                     `workspace=${channelWorkspace ?? 'unbound'}`,
                 );
 
-                await message.reply(`✅ Switched account to **${requested}**.`).catch(() => {});
+                await message.reply(`✅ Switched session account to **${requested}**.`).catch(() => {});
                 return;
             }
 
@@ -317,13 +335,16 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                         }
 
                         try {
-                            const selectedAccount = resolveValidAccountName(
-                                deps.bridge.selectedAccountByChannel?.get(message.channelId)
-                                    ?? deps.channelPrefRepo?.getAccountName(message.channelId)
-                                    ?? deps.accountPrefRepo?.getAccountName(message.author.id)
-                                    ?? 'default',
-                                deps.antigravityAccounts,
-                            );
+                            const selectedAccount = resolveScopedAccountName({
+                                channelId: message.channelId,
+                                userId: message.author.id,
+                                sessionAccountName: getSessionAccountName(message.channelId),
+                                parentChannelId: getParentChannelId(message),
+                                selectedAccountByChannel: deps.bridge.selectedAccountByChannel,
+                                channelPrefRepo: deps.channelPrefRepo,
+                                accountPrefRepo: deps.accountPrefRepo,
+                                accounts: deps.antigravityAccounts,
+                            });
                             const selectedPort = getAccountPort(selectedAccount);
                             deps.bridge.selectedAccountByChannel?.set(message.channelId, selectedAccount);
 
@@ -333,8 +354,10 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                                 `port=${selectedPort ?? 'unknown'} workspacePath=${workspacePath}`,
                             );
 
+                            const previousPreferredAccount = deps.bridge.pool.getPreferredAccountForWorkspace?.(workspacePath) ?? null;
                             const cdp = await deps.bridge.pool.getOrConnect(workspacePath, { name: selectedAccount });
                             const projectName = deps.bridge.pool.extractProjectName(workspacePath);
+                            deps.bridge.pool.setPreferredAccountForWorkspace?.(workspacePath, selectedAccount);
 
                             deps.bridge.lastActiveWorkspace = projectName;
                             const platformChannel = wrapDiscordChannel(message.channel as TextChannel);
@@ -346,7 +369,27 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                             ensurePlanningDetector(deps.bridge, cdp, projectName, selectedAccount);
                             ensureRunCommandDetector(deps.bridge, cdp, projectName, selectedAccount);
 
-                            const session = deps.chatSessionRepo.findByChannelId(message.channelId);
+                            let session = deps.chatSessionRepo.findByChannelId(message.channelId);
+                            const staleSessionAccount = session?.isRenamed
+                                && (
+                                    (session.activeAccountName && session.activeAccountName !== selectedAccount)
+                                    || (!session.activeAccountName && previousPreferredAccount && previousPreferredAccount !== selectedAccount)
+                                );
+                            if (session && staleSessionAccount) {
+                                logger.info(
+                                    `[SessionAccountReset] channel=${message.channelId} ` +
+                                    `project=${projectName} oldAccount=${session.activeAccountName ?? previousPreferredAccount ?? 'unknown'} ` +
+                                    `newAccount=${selectedAccount}`,
+                                );
+                                deps.chatSessionRepo.setActiveAccountName?.(message.channelId, selectedAccount);
+                                session = deps.chatSessionRepo.findByChannelId(message.channelId);
+                            }
+
+                            if (session) {
+                                deps.chatSessionRepo.setActiveAccountName?.(message.channelId, selectedAccount);
+                                deps.chatSessionRepo.initializeOriginAccountName?.(message.channelId, selectedAccount);
+                            }
+
                             if (session?.displayName) {
                                 registerApprovalSessionChannel(deps.bridge, projectName, session.displayName, platformChannel);
                             }
@@ -378,6 +421,8 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                                                     `(channel: ${message.channelId})`,
                                                 );
                                                 deps.chatSessionRepo.updateDisplayName(message.channelId, recoveredTitle);
+                                                deps.chatSessionRepo.setActiveAccountName?.(message.channelId, selectedAccount);
+                                                deps.chatSessionRepo.initializeOriginAccountName?.(message.channelId, selectedAccount);
                                                 registerApprovalSessionChannel(deps.bridge, projectName, recoveredTitle, platformChannel);
                                             }
                                             activationResult = retryResult;
@@ -481,7 +526,10 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                         }
                     });
                 } else {
-                    await message.reply('No project is configured for this channel. Please create or select one with `/project`.');
+                    await message.reply(
+                        'No project is configured for this channel. Use `/project` to bind one, ' +
+                        'or `/project reopen` if this is a previously used session.',
+                    );
                 }
             } finally {
                 await cleanupInboundImageAttachments(inboundImages);

@@ -18,6 +18,7 @@ jest.mock('discord.js', () => {
                 setName: jest.fn().mockReturnThis(),
                 setDescription: jest.fn().mockReturnThis(),
                 setRequired: jest.fn().mockReturnThis(),
+                setAutocomplete: jest.fn().mockReturnThis(),
                 addChoices: jest.fn().mockReturnThis(),
             };
             fn(option);
@@ -45,6 +46,7 @@ jest.mock('discord.js', () => {
                         setName: jest.fn().mockReturnThis(),
                         setDescription: jest.fn().mockReturnThis(),
                         setRequired: jest.fn().mockReturnThis(),
+                        setAutocomplete: jest.fn().mockReturnThis(),
                     };
                     optFn(option);
                     return sub;
@@ -97,9 +99,9 @@ describe('registerSlashCommands', () => {
         expect(names).toContain('account');
     });
 
-    it('includes the open command in registration targets', () => {
+    it('includes the project command in registration targets', () => {
         const names = slashCommands.map((cmd) => cmd.toJSON().name);
-        expect(names).toContain('open');
+        expect(names).toContain('project');
     });
 
     beforeEach(() => {

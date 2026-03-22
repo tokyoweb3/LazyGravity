@@ -9,7 +9,7 @@ import { logger } from '../utils/logger';
 import { escapeHtml } from '../platform/telegram/telegramFormatter';
 import type { WorkspaceService } from '../services/workspaceService';
 import { tryCreateTopicAndBind } from './telegramProjectCommand';
-import { resolveValidAccountName } from '../utils/accountUtils';
+import { resolveScopedAccountName } from '../utils/accountUtils';
 import type { AccountPreferenceRepository } from '../database/accountPreferenceRepository';
 import type { ChannelPreferenceRepository } from '../database/channelPreferenceRepository';
 import type { AntigravityAccountConfig } from '../utils/configLoader';
@@ -29,19 +29,20 @@ export interface TelegramJoinCommandDeps {
 const activeResponseMonitors = new Map<string, ResponseMonitor>();
 
 function resolveAccount(deps: TelegramJoinCommandDeps, chatId: string, userId: string): string {
-    return resolveValidAccountName(
-        deps.bridge.selectedAccountByChannel?.get(chatId)
-            ?? deps.channelPrefRepo?.getAccountName(chatId)
-            ?? deps.accountPrefRepo?.getAccountName(userId)
-            ?? 'default',
-        deps.antigravityAccounts,
-    );
+    return resolveScopedAccountName({
+        channelId: chatId,
+        userId,
+        selectedAccountByChannel: deps.bridge.selectedAccountByChannel,
+        channelPrefRepo: deps.channelPrefRepo,
+        accountPrefRepo: deps.accountPrefRepo,
+        accounts: deps.antigravityAccounts,
+    });
 }
 
 export async function handleJoin(deps: TelegramJoinCommandDeps, message: PlatformMessage): Promise<void> {
-    const binding = deps.telegramBindingRepo?.findByChatId(message.channel.id);
+    const binding = deps.telegramBindingRepo?.findByChatIdWithParentFallback(message.channel.id);
     if (!binding) {
-        await message.reply({ text: '⚠️ No project is linked to this chat. Use /project first.' }).catch(logger.error);
+        await message.reply({ text: '⚠️ No project is linked to this chat. Use /project first, or /project_reopen if this is a previously used session.' }).catch(logger.error);
         return;
     }
 
@@ -125,9 +126,9 @@ export async function handleTelegramJoinSelect(deps: TelegramJoinCommandDeps, in
 }
 
 export async function handleMirror(deps: TelegramJoinCommandDeps, message: PlatformMessage): Promise<void> {
-    const binding = deps.telegramBindingRepo?.findByChatId(message.channel.id);
+    const binding = deps.telegramBindingRepo?.findByChatIdWithParentFallback(message.channel.id);
     if (!binding) {
-        await message.reply({ text: '⚠️ No project is linked to this chat. Use /project first.' }).catch(logger.error);
+        await message.reply({ text: '⚠️ No project is linked to this chat. Use /project first, or /project_reopen if this is a previously used session.' }).catch(logger.error);
         return;
     }
 

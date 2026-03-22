@@ -92,10 +92,19 @@ import { sendAccountUI } from '../ui/accountUi';
 import { sendOutputUI, OUTPUT_BTN_EMBED, OUTPUT_BTN_PLAIN } from '../ui/outputUi';
 import { handleScreenshot } from '../ui/screenshotUi';
 import { UserPreferenceRepository, OutputFormat } from '../database/userPreferenceRepository';
-import { listAccountNames, resolveValidAccountName } from '../utils/accountUtils';
+import { inferParentScopeChannelId, listAccountNames, resolveScopedAccountName } from '../utils/accountUtils';
 import { formatAsPlainText, splitPlainText } from '../utils/plainTextFormatter';
 import { createInteractionCreateHandler } from '../events/interactionCreateHandler';
 import { createMessageCreateHandler } from '../events/messageCreateHandler';
+import {
+    findTrajectoryEntriesByTitle,
+    findLatestTrajectoryEntryByTitle,
+    transferConversationByConversationId,
+    transferConversationByTitle,
+    waitForConversationPersistence,
+    waitForConversationPersistenceByConversationId,
+} from '../services/conversationTransferService';
+import { quitAntigravityProfile } from '../services/antigravityProcessService';
 
 // Telegram platform support
 import { Bot, InputFile } from 'grammy';
@@ -1007,8 +1016,63 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
     });
 
     // Initialize command handlers (joinHandler is created after client, see below)
-    const wsHandler = new WorkspaceCommandHandler(workspaceBindingRepo, chatSessionRepo, workspaceService, channelManager);
-    const chatHandler = new ChatCommandHandler(chatSessionService, chatSessionRepo, workspaceBindingRepo, channelManager, workspaceService, bridge.pool);
+    const wsHandler = new WorkspaceCommandHandler(
+        workspaceBindingRepo,
+        chatSessionRepo,
+        workspaceService,
+        channelManager,
+        async (workspaceName, newChannelId, sourceChannelId, userId) => {
+            const workspacePath = workspaceService.getWorkspacePath(workspaceName);
+            const selectedAccount = resolveScopedAccountName({
+                channelId: sourceChannelId,
+                userId,
+                sessionAccountName: chatSessionRepo.findByChannelId(sourceChannelId)?.activeAccountName ?? null,
+                parentChannelId: null,
+                selectedAccountByChannel: bridge.selectedAccountByChannel,
+                channelPrefRepo,
+                accountPrefRepo,
+                accounts: config.antigravityAccounts,
+            });
+
+            chatSessionRepo.setActiveAccountName(newChannelId, selectedAccount);
+            bridge.selectedAccountByChannel?.set(newChannelId, selectedAccount);
+            bridge.pool.setPreferredAccountForWorkspace(workspacePath, selectedAccount);
+
+            const cdp = new CdpService({
+                accountName: selectedAccount,
+                accountPorts,
+                accountUserDataDirs,
+                cdpCallTimeout: 15000,
+                maxReconnectAttempts: 0,
+            });
+
+            try {
+                await cdp.openWorkspace(workspacePath);
+            } finally {
+                await cdp.disconnect().catch(() => {});
+            }
+
+            await bridge.pool.getOrConnect(workspacePath, { name: selectedAccount });
+        },
+    );
+    const chatHandler = new ChatCommandHandler(
+        chatSessionService,
+        chatSessionRepo,
+        workspaceBindingRepo,
+        channelManager,
+        workspaceService,
+        bridge.pool,
+        (channelId, userId) => resolveScopedAccountName({
+            channelId,
+            userId,
+            sessionAccountName: chatSessionRepo.findByChannelId(channelId)?.activeAccountName ?? null,
+            parentChannelId: null,
+            selectedAccountByChannel: bridge.selectedAccountByChannel,
+            channelPrefRepo,
+            accountPrefRepo,
+            accounts: config.antigravityAccounts,
+        }),
+    );
     const cleanupHandler = new CleanupCommandHandler(chatSessionRepo, workspaceBindingRepo);
 
     const slashCommandHandler = new SlashCommandHandler(templateRepo);
@@ -1031,7 +1095,26 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         ]
     });
 
-    const joinHandler = new JoinCommandHandler(chatSessionService, chatSessionRepo, workspaceBindingRepo, channelManager, bridge.pool, workspaceService, client, config.extractionMode);
+    const joinHandler = new JoinCommandHandler(
+        chatSessionService,
+        chatSessionRepo,
+        workspaceBindingRepo,
+        channelManager,
+        bridge.pool,
+        workspaceService,
+        client,
+        config.extractionMode,
+        (channelId, userId) => resolveScopedAccountName({
+            channelId,
+            userId,
+            sessionAccountName: chatSessionRepo.findByChannelId(channelId)?.activeAccountName ?? null,
+            parentChannelId: null,
+            selectedAccountByChannel: bridge.selectedAccountByChannel,
+            channelPrefRepo,
+            accountPrefRepo,
+            accounts: config.antigravityAccounts,
+        }),
+    );
 
     client.once(Events.ClientReady, async (readyClient) => {
         logger.info(`Ready! Logged in as ${readyClient.user.tag} | extractionMode=${config.extractionMode}`);
@@ -1110,6 +1193,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         userPrefRepo,
         accountPrefRepo,
         channelPrefRepo,
+        chatSessionRepo,
         antigravityAccounts: config.antigravityAccounts,
         handleSlashInteraction: async (
             interaction,
@@ -1143,6 +1227,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             accountPrefRepoArg,
             channelPrefRepoArg,
             antigravityAccountsArg,
+            chatSessionRepo,
         ),
         handleTemplateUse: async (interaction, templateId) => {
             const template = templateRepo.findById(templateId);
@@ -1161,13 +1246,19 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             let cdp: CdpService | null = null;
             if (workspacePath) {
                 try {
-                    const selectedAccount = resolveValidAccountName(
-                        bridge.selectedAccountByChannel?.get(channelId)
-                            ?? channelPrefRepo.getAccountName(channelId)
-                            ?? accountPrefRepo.getAccountName(interaction.user.id)
-                            ?? 'default',
-                        config.antigravityAccounts,
-                    );
+                    const selectedAccount = resolveScopedAccountName({
+                        channelId,
+                        userId: interaction.user.id,
+                        sessionAccountName: chatSessionRepo.findByChannelId(channelId)?.activeAccountName ?? null,
+                        parentChannelId: inferParentScopeChannelId(
+                            channelId,
+                            (interaction.channel as any)?.parentId ?? null,
+                        ),
+                        selectedAccountByChannel: bridge.selectedAccountByChannel,
+                        channelPrefRepo,
+                        accountPrefRepo,
+                        accounts: config.antigravityAccounts,
+                    });
                     bridge.selectedAccountByChannel?.set(channelId, selectedAccount);
 
                     cdp = await bridge.pool.getOrConnect(workspacePath, { name: selectedAccount });
@@ -1192,13 +1283,19 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                     return;
                 }
             } else {
-                const selectedAccount = resolveValidAccountName(
-                    bridge.selectedAccountByChannel?.get(channelId)
-                        ?? channelPrefRepo.getAccountName(channelId)
-                        ?? accountPrefRepo.getAccountName(interaction.user.id)
-                        ?? 'default',
-                    config.antigravityAccounts,
-                );
+                const selectedAccount = resolveScopedAccountName({
+                    channelId,
+                    userId: interaction.user.id,
+                    sessionAccountName: chatSessionRepo.findByChannelId(channelId)?.activeAccountName ?? null,
+                    parentChannelId: inferParentScopeChannelId(
+                        channelId,
+                        (interaction.channel as any)?.parentId ?? null,
+                    ),
+                    selectedAccountByChannel: bridge.selectedAccountByChannel,
+                    channelPrefRepo,
+                    accountPrefRepo,
+                    accounts: config.antigravityAccounts,
+                });
                 cdp = bridge.lastActiveWorkspace
                     ? bridge.pool.getConnected(bridge.lastActiveWorkspace, selectedAccount)
                     : null;
@@ -1331,6 +1428,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                 bridge,
                 accountPrefRepo,
                 channelPrefRepo,
+                chatSessionRepo,
                 antigravityAccounts: config.antigravityAccounts,
                 getWorkspacePathForChannel: (channelId: string) => {
                     const binding = telegramBindingRepo.findByChatId(channelId);
@@ -1534,24 +1632,57 @@ export async function handleSlashInteraction(
     accountPrefRepo?: AccountPreferenceRepository,
     channelPrefRepo?: ChannelPreferenceRepository,
     antigravityAccounts: AntigravityAccountConfig[] = [{ name: 'default', cdpPort: 9222 }],
+    chatSessionRepo?: ChatSessionRepository,
 ): Promise<void> {
     const commandName = interaction.commandName;
     const getAccountPort = (accountName: string): number | null => {
         const match = antigravityAccounts.find((account) => account.name === accountName);
         return match ? match.cdpPort : null;
     };
+    const parentChannelId = inferParentScopeChannelId(
+        interaction.channelId,
+        (interaction.channel as any)?.parentId ?? null,
+    );
+    const getSessionAccountName = (): string | null =>
+        chatSessionRepo?.findByChannelId(interaction.channelId)?.activeAccountName ?? null;
     const resolveSelectedAccount = (): string =>
-        resolveValidAccountName(
-            bridge.selectedAccountByChannel?.get(interaction.channelId)
-                ?? channelPrefRepo?.getAccountName(interaction.channelId)
-                ?? accountPrefRepo?.getAccountName(interaction.user.id)
-                ?? 'default',
-            antigravityAccounts,
-        );
+        resolveScopedAccountName({
+            channelId: interaction.channelId,
+            userId: interaction.user.id,
+            sessionAccountName: getSessionAccountName(),
+            parentChannelId,
+            selectedAccountByChannel: bridge.selectedAccountByChannel,
+            channelPrefRepo,
+            accountPrefRepo,
+            accounts: antigravityAccounts,
+        });
+    const getChannelWorkspacePath = (): string | undefined =>
+        wsHandler.getWorkspaceForChannel(interaction.channelId);
     const getChannelCdp = (): CdpService | null =>
-        bridge.lastActiveWorkspace
-            ? bridge.pool.getConnected(bridge.lastActiveWorkspace, resolveSelectedAccount())
-            : null;
+        (() => {
+            const workspacePath = getChannelWorkspacePath();
+            if (workspacePath) {
+                const projectName = bridge.pool.extractProjectName(workspacePath);
+                return bridge.pool.getConnected(projectName, resolveSelectedAccount());
+            }
+
+            return bridge.lastActiveWorkspace
+                ? bridge.pool.getConnected(bridge.lastActiveWorkspace, resolveSelectedAccount())
+                : null;
+        })();
+    const ensureChannelCdp = async (): Promise<CdpService | null> => {
+        const existing = getChannelCdp();
+        if (existing) return existing;
+
+        const workspacePath = getChannelWorkspacePath();
+        if (!workspacePath) return null;
+
+        try {
+            return await bridge.pool.getOrConnect(workspacePath, { name: resolveSelectedAccount() });
+        } catch {
+            return null;
+        }
+    };
 
     switch (commandName) {
         case 'help': {
@@ -1639,12 +1770,17 @@ export async function handleSlashInteraction(
         case 'model': {
             const modelName = interaction.options.getString('name');
             if (!modelName) {
+                const cdp = await ensureChannelCdp();
+                if (!cdp) {
+                    await interaction.editReply({ content: 'Not connected to CDP.' });
+                    break;
+                }
                 await sendModelsUI(interaction, {
-                    getCurrentCdp: () => getChannelCdp(),
+                    getCurrentCdp: () => cdp,
                     fetchQuota: async () => bridge.quota.fetchQuota(),
                 });
             } else {
-                const cdp = getChannelCdp();
+                const cdp = await ensureChannelCdp();
                 if (!cdp) {
                     await interaction.editReply({ content: 'Not connected to CDP.' });
                     break;
@@ -1697,6 +1833,7 @@ export async function handleSlashInteraction(
                 return cdp ? 'CDP Connected' : 'Disconnected';
             })();
             const currentMode = modeService.getCurrentMode();
+            const session = chatSessionRepo?.findByChannelId(interaction.channelId);
 
             const mirroringWorkspaces = activeNames.filter(
                 (name) => bridge.pool.getUserMessageDetector(name)?.isActive(),
@@ -1704,20 +1841,18 @@ export async function handleSlashInteraction(
             const mirrorStatus = mirroringWorkspaces.length > 0
                 ? `📡 ON (${mirroringWorkspaces.join(', ')})`
                 : '⚪ OFF';
-            const currentAccount = resolveValidAccountName(
-                bridge.selectedAccountByChannel?.get(interaction.channelId)
-                    ?? channelPrefRepo?.getAccountName(interaction.channelId)
-                    ?? accountPrefRepo?.getAccountName(interaction.user.id)
-                    ?? 'default',
-                antigravityAccounts,
-            );
+            const currentAccount = resolveSelectedAccount();
+            const originalAccount = session?.originAccountName ?? '(unset)';
+            const conversationTitle = session?.displayName ?? '(New chat / no saved title)';
 
             const statusFields = [
                 { name: 'CDP Connection', value: activeNames.length > 0 ? `🟢 ${activeNames.length} project(s) connected` : '⚪ Disconnected', inline: true },
                 { name: 'Mode', value: MODE_DISPLAY_NAMES[currentMode] || currentMode, inline: true },
                 { name: 'Auto Approve', value: autoAcceptService.isEnabled() ? '🟢 ON' : '⚪ OFF', inline: true },
                 { name: 'Mirroring', value: mirrorStatus, inline: true },
-                { name: 'Account', value: currentAccount, inline: true },
+                { name: 'Active Account', value: currentAccount, inline: true },
+                { name: 'Original Account', value: originalAccount, inline: true },
+                { name: 'Conversation Title', value: conversationTitle, inline: false },
             ];
 
             let statusDescription = '';
@@ -1776,13 +1911,7 @@ export async function handleSlashInteraction(
 
             const requested = interaction.options.getString('name');
             if (!requested) {
-                const current = resolveValidAccountName(
-                    bridge.selectedAccountByChannel?.get(interaction.channelId)
-                        ?? channelPrefRepo?.getAccountName(interaction.channelId)
-                        ?? accountPrefRepo.getAccountName(interaction.user.id)
-                        ?? 'default',
-                    antigravityAccounts,
-                );
+                const current = resolveSelectedAccount();
                 const names = listAccountNames(antigravityAccounts);
                 await sendAccountUI(interaction, current, names);
                 break;
@@ -1793,9 +1922,14 @@ export async function handleSlashInteraction(
                 break;
             }
 
-            accountPrefRepo.setAccountName(interaction.user.id, requested);
-            channelPrefRepo?.setAccountName(interaction.channelId, requested);
             bridge.selectedAccountByChannel?.set(interaction.channelId, requested);
+            const currentSession = chatSessionRepo?.findByChannelId(interaction.channelId);
+            if (currentSession) {
+                chatSessionRepo?.setActiveAccountName(interaction.channelId, requested);
+            } else {
+                accountPrefRepo.setAccountName(interaction.user.id, requested);
+                channelPrefRepo?.setAccountName(interaction.channelId, requested);
+            }
 
             const channelWorkspace = wsHandler.getWorkspaceForChannel(interaction.channelId);
 
@@ -1805,7 +1939,7 @@ export async function handleSlashInteraction(
                 `workspace=${channelWorkspace ?? 'unbound'}`,
             );
 
-            await interaction.editReply({ content: `✅ Switched account to **${requested}**.` });
+            await interaction.editReply({ content: `✅ Switched session account to **${requested}**.` });
             break;
         }
 
@@ -1885,6 +2019,35 @@ export async function handleSlashInteraction(
                     break;
                 }
                 await wsHandler.handleCreate(interaction, interaction.guild);
+            } else if (wsSub === 'account') {
+                const requested = interaction.options.getString('name');
+                const names = listAccountNames(antigravityAccounts);
+                const currentProjectAccount = channelPrefRepo?.getAccountName(interaction.channelId) ?? null;
+
+                if (!requested) {
+                    await interaction.editReply({
+                        content: `Project channel account: **${currentProjectAccount ?? 'unset'}**\nAvailable: ${names.join(', ')}`,
+                    });
+                    break;
+                }
+
+                if (!names.includes(requested)) {
+                    await interaction.editReply({ content: `⚠️ Unknown account: **${requested}**` });
+                    break;
+                }
+
+                channelPrefRepo?.setAccountName(interaction.channelId, requested);
+                bridge.selectedAccountByChannel?.set(interaction.channelId, requested);
+
+                const channelWorkspace = wsHandler.getWorkspaceForChannel(interaction.channelId);
+                logger.info(
+                    `[ProjectAccountSwitch] source=slash channel=${interaction.channelId} user=${interaction.user.id} ` +
+                    `account=${requested} port=${getAccountPort(requested) ?? 'unknown'} ` +
+                    `workspace=${channelWorkspace ?? 'unbound'}`,
+                );
+
+                await interaction.editReply({ content: `✅ Bound this project channel to account **${requested}**.` });
+                break;
             } else if (wsSub === 'reopen') {
                 const workspacePath = wsHandler.getWorkspaceForChannel(interaction.channelId);
                 if (!workspacePath) {
@@ -1901,13 +2064,14 @@ export async function handleSlashInteraction(
                     break;
                 }
 
-                const selectedAccount = resolveValidAccountName(
-                    bridge.selectedAccountByChannel?.get(interaction.channelId)
-                        ?? channelPrefRepo?.getAccountName(interaction.channelId)
-                        ?? accountPrefRepo?.getAccountName(interaction.user.id)
-                        ?? 'default',
-                    antigravityAccounts,
-                );
+                const requestedReopenAccount = interaction.options.getString('account');
+                const availableAccountNames = listAccountNames(antigravityAccounts);
+                if (requestedReopenAccount && !availableAccountNames.includes(requestedReopenAccount)) {
+                    await interaction.editReply({ content: `⚠️ Unknown account: **${requestedReopenAccount}**` });
+                    break;
+                }
+
+                const selectedAccount = requestedReopenAccount || resolveSelectedAccount();
                 const port = getAccountPort(selectedAccount);
                 const accountPorts = Object.fromEntries(
                     antigravityAccounts.map((account) => [account.name, account.cdpPort]),
@@ -1918,6 +2082,11 @@ export async function handleSlashInteraction(
                         .map((account) => [account.name, account.userDataDir!.trim()]),
                 );
                 const projectName = bridge.pool.extractProjectName(workspacePath);
+                const previousPreferredAccount = bridge.pool.getPreferredAccountForWorkspace(workspacePath);
+                const session = chatSessionRepo?.findByChannelId(interaction.channelId);
+                const savedConversationTitle = session?.displayName?.trim() || '';
+                const savedConversationId = session?.conversationId?.trim() || '';
+                const originAccountName = session?.originAccountName?.trim() || '';
 
                 logger.info(
                     `[ProjectReopenCommand] channel=${interaction.channelId} user=${interaction.user.id} ` +
@@ -1926,6 +2095,140 @@ export async function handleSlashInteraction(
                 );
 
                 try {
+                    const inspectWorkspaceRuntime = async (
+                        accountName: string,
+                    ): Promise<{ isOpen: boolean; isGenerating: boolean; sessionTitle: string; hasActiveChat: boolean }> => {
+                        const cdp = new CdpService({
+                            accountName,
+                            accountPorts,
+                            accountUserDataDirs,
+                            cdpCallTimeout: 15000,
+                            maxReconnectAttempts: 0,
+                        });
+
+                        try {
+                            const connected = await cdp.discoverAndConnectForWorkspace(workspacePath).catch(() => false);
+                            if (!connected) {
+                                return {
+                                    isOpen: false,
+                                    isGenerating: false,
+                                    sessionTitle: '',
+                                    hasActiveChat: false,
+                                };
+                            }
+
+                            const runtimeState = await cdp.inspectWorkspaceRuntimeState();
+                            return {
+                                isOpen: true,
+                                isGenerating: runtimeState.isGenerating,
+                                sessionTitle: runtimeState.sessionTitle,
+                                hasActiveChat: runtimeState.hasActiveChat,
+                            };
+                        } finally {
+                            await cdp.disconnect().catch(() => {});
+                        }
+                    };
+
+                    const quitAccountInstanceGracefully = async (
+                        accountName: string,
+                        role: 'origin' | 'target',
+                    ): Promise<void> => {
+                        const closed = await quitAntigravityProfile(accountName).catch(() => false);
+                        if (!closed) {
+                            throw new Error(
+                                `Could not quit the ${role} account **${accountName}** cleanly. ` +
+                                `Use Cmd+Q on that Antigravity instance, then rerun \`/project reopen\`.`,
+                            );
+                        }
+
+                        logger.info(
+                            `[ProjectReopenCommand] Quit ${role} Antigravity account before reopen for channel=${interaction.channelId} ` +
+                            `account=${accountName} project=${projectName} closed=${closed}`,
+                        );
+                    };
+
+                    const accountsToInspect = Array.from(
+                        new Set([
+                            selectedAccount,
+                            ...(savedConversationTitle && originAccountName && originAccountName !== selectedAccount
+                                ? [originAccountName]
+                                : []),
+                        ]),
+                    );
+                    const busySessions: string[] = [];
+                    for (const accountName of accountsToInspect) {
+                        const runtime = await inspectWorkspaceRuntime(accountName);
+                        if (!runtime.isOpen || !runtime.isGenerating) {
+                            continue;
+                        }
+
+                        const sessionTitle = runtime.hasActiveChat
+                            ? runtime.sessionTitle
+                            : (savedConversationTitle || '(Untitled)');
+                        const role = accountName === selectedAccount ? 'target' : 'origin';
+                        busySessions.push(`${role} account **${accountName}** is still running session **${sessionTitle}**`);
+                    }
+
+                    if (busySessions.length > 0) {
+                        throw new Error(
+                            `${busySessions.join(' and ')}. Use \`/stop\` in that session, close the workspace, then rerun \`/project reopen\`.`,
+                        );
+                    }
+
+                    if (
+                        savedConversationTitle
+                        && originAccountName
+                        && originAccountName !== selectedAccount
+                    ) {
+                        let transferResult;
+                        let resolvedConversationId = savedConversationId;
+
+                        await quitAccountInstanceGracefully(originAccountName, 'origin');
+
+                        if (resolvedConversationId) {
+                            await waitForConversationPersistenceByConversationId(originAccountName, resolvedConversationId, {
+                                timeoutMs: 20000,
+                                pollIntervalMs: 500,
+                            });
+                        } else {
+                            const persistedEntry = await waitForConversationPersistence(originAccountName, savedConversationTitle, {
+                                timeoutMs: 20000,
+                                pollIntervalMs: 500,
+                            });
+                            const latestEntry = findLatestTrajectoryEntryByTitle(originAccountName, savedConversationTitle);
+                            resolvedConversationId = latestEntry?.conversationId ?? persistedEntry.conversationId;
+
+                            if (resolvedConversationId && chatSessionRepo) {
+                                chatSessionRepo.setConversationId(interaction.channelId, resolvedConversationId);
+                            }
+                        }
+
+                        await quitAccountInstanceGracefully(selectedAccount, 'target');
+
+                        transferResult = resolvedConversationId
+                            ? transferConversationByConversationId(
+                                originAccountName,
+                                selectedAccount,
+                                resolvedConversationId,
+                            )
+                            : transferConversationByTitle(
+                                originAccountName,
+                                selectedAccount,
+                                savedConversationTitle,
+                            );
+                        logger.info(
+                            `[ProjectReopenCommand] Imported conversation for channel=${interaction.channelId} ` +
+                            `title="${savedConversationTitle}" sourceAccount=${originAccountName} ` +
+                            `targetAccount=${selectedAccount} conversationId=${transferResult.conversationId}`,
+                        );
+
+                        if (chatSessionRepo && transferResult.conversationId) {
+                            chatSessionRepo.setConversationId(interaction.channelId, transferResult.conversationId);
+                        }
+                    } else {
+                        await quitAccountInstanceGracefully(selectedAccount, 'target');
+                    }
+
                     const cdp = new CdpService({
                         accountName: selectedAccount,
                         accountPorts,
@@ -1936,14 +2239,52 @@ export async function handleSlashInteraction(
 
                     try {
                         await cdp.openWorkspace(workspacePath);
+
+                        if (savedConversationTitle) {
+                            const reopenSessionService = new ChatSessionService();
+                            const activationResult = await reopenSessionService.activateSessionByTitle(
+                                cdp,
+                                savedConversationTitle,
+                                {
+                                    maxWaitMs: 15000,
+                                    retryIntervalMs: 500,
+                                    allowVisibilityWarmupMs: 4000,
+                                },
+                            );
+
+                            if (!activationResult.ok) {
+                                throw new Error(
+                                    `Workspace reopened in account "${selectedAccount}", but failed to activate session ` +
+                                    `"${savedConversationTitle}" in Antigravity: ${activationResult.error || 'unknown error'}`,
+                                );
+                            }
+                        }
                     } finally {
                         await cdp.disconnect().catch(() => {});
                     }
 
                     bridge.selectedAccountByChannel?.set(interaction.channelId, selectedAccount);
+                    bridge.pool.setPreferredAccountForWorkspace(workspacePath, selectedAccount);
 
+                    if (chatSessionRepo && session) {
+                        chatSessionRepo.setActiveAccountName(interaction.channelId, selectedAccount);
+                        logger.info(
+                            `[ProjectReopenCommand] Updated session routing for channel=${interaction.channelId} ` +
+                            `project=${projectName} oldAccount=${session.activeAccountName ?? previousPreferredAccount ?? 'unknown'} ` +
+                            `newAccount=${selectedAccount} title="${savedConversationTitle || '(unset)'}"`,
+                        );
+                    }
+
+                    const finalOriginAccount = chatSessionRepo?.findByChannelId(interaction.channelId)?.originAccountName
+                        ?? session?.originAccountName
+                        ?? '(unset)';
                     await interaction.editReply({
-                        content: `✅ Reopened **${projectName}** in account **${selectedAccount}**${port ? ` (CDP ${port})` : ''}.`,
+                        content: [
+                            `✅ Reopened **${projectName}** in account **${selectedAccount}**${port ? ` (CDP ${port})` : ''}.`,
+                            `Active Account: **${selectedAccount}**`,
+                            `Origin Account: **${finalOriginAccount}**`,
+                            `Conversation Title: **${savedConversationTitle || '(New chat / no saved title)'}**`,
+                        ].join('\n'),
                     });
                 } catch (error: any) {
                     logger.error('[ProjectReopenCommand] Failed to reopen workspace:', error);
