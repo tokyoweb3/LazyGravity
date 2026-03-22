@@ -14,7 +14,7 @@ import type { TelegramBindingRepository } from '../database/telegramBindingRepos
 import type { WorkspaceService } from '../services/workspaceService';
 import { CdpBridge, registerApprovalWorkspaceChannel, ensureApprovalDetector, ensureErrorPopupDetector, ensurePlanningDetector, ensureRunCommandDetector } from '../services/cdpBridgeManager';
 import { CdpService } from '../services/cdpService';
-import { ResponseMonitor } from '../services/responseMonitor';
+import { ResponseMonitor, captureResponseMonitorBaseline } from '../services/responseMonitor';
 import { ProcessLogBuffer } from '../utils/processLogBuffer';
 import { splitOutputAndLogs } from '../utils/discordFormatter';
 import { parseTelegramProjectCommand, handleTelegramProjectCommand } from './telegramProjectCommand';
@@ -211,6 +211,7 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
 
             // Determine the prompt text — use default for image-only messages
             const effectivePrompt = promptText || 'Please review the attached images and respond accordingly.';
+            const baseline = await captureResponseMonitorBaseline(cdp);
 
             // Inject prompt (with or without images) into Antigravity
             logger.prompt(effectivePrompt);
@@ -272,6 +273,8 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
                     maxDurationMs: TIMEOUT_MS,
                     stopGoneConfirmCount: 3,
                     extractionMode: deps.extractionMode,
+                    initialBaselineText: baseline.text,
+                    initialSeenProcessLogKeys: baseline.processLogKeys,
 
                     onProcessLog: (logText) => {
                         if (logText && logText.trim().length > 0) {

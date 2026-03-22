@@ -46,7 +46,7 @@ import { isSessionSelectId } from '../ui/sessionPickerUi';
 // CDP integration services
 import { CdpService } from '../services/cdpService';
 import { ChatSessionService } from '../services/chatSessionService';
-import { ResponseMonitor, RESPONSE_SELECTORS } from '../services/responseMonitor';
+import { ResponseMonitor, RESPONSE_SELECTORS, captureResponseMonitorBaseline } from '../services/responseMonitor';
 import { ensureAntigravityRunning } from '../services/antigravityLauncher';
 import { getAntigravityCdpHint } from '../utils/pathUtils';
 import { AutoAcceptService } from '../services/autoAcceptService';
@@ -206,6 +206,11 @@ async function sendPromptToAntigravity(
     const enqueueResponse = createSerialTaskQueueForTest('response', monitorTraceId);
     const enqueueActivity = createSerialTaskQueueForTest('activity', monitorTraceId);
 
+    const logDeliveryError = (scope: string, error: unknown): void => {
+        const messageText = error instanceof Error ? error.message : String(error);
+        logger.warn(`[DiscordDelivery:${monitorTraceId}] ${scope} failed: ${messageText}`);
+    };
+
     const sendEmbed = (
         title: string,
         description: string,
@@ -218,7 +223,9 @@ async function sendPromptToAntigravity(
         if (outputFormat === 'plain') {
             const chunks = formatAsPlainText({ title, description, fields, footerText });
             for (const chunk of chunks) {
-                await channel.send({ content: chunk }).catch(() => { });
+                await channel.send({ content: chunk }).catch((error: unknown) => {
+                    logDeliveryError('sendEmbed/plain/send', error);
+                });
             }
             return;
         }
@@ -234,7 +241,9 @@ async function sendPromptToAntigravity(
         if (footerText) {
             embed.setFooter({ text: footerText });
         }
-        await channel.send({ embeds: [embed] }).catch(() => { });
+        await channel.send({ embeds: [embed] }).catch((error: unknown) => {
+            logDeliveryError('sendEmbed/embed/send', error);
+        });
     }, 'send-embed');
 
     const shouldTryGeneratedImages = (inputPrompt: string, responseText: string): boolean => {
@@ -266,7 +275,9 @@ async function sendPromptToAntigravity(
             await channel.send({
                 content: t(`🖼️ Detected generated images (${files.length})`),
                 files,
-            }).catch(() => { });
+            }).catch((error: unknown) => {
+                logDeliveryError('sendGeneratedImages/send', error);
+            });
         }, 'send-generated-images');
     };
 
@@ -357,7 +368,9 @@ async function sendPromptToAntigravity(
     // Apply default model preference on CDP connect
     const defaultModelResult = await applyDefaultModel(cdp, modelService);
     if (defaultModelResult.stale && defaultModelResult.staleMessage && channel) {
-        await channel.send(defaultModelResult.staleMessage).catch(() => {});
+        await channel.send(defaultModelResult.staleMessage).catch((error: unknown) => {
+            logDeliveryError('defaultModelResult/send', error);
+        });
     }
 
     const localMode = modeService.getCurrentMode();
@@ -438,11 +451,18 @@ async function sendPromptToAntigravity(
 
             for (let i = 0; i < plainChunks.length; i++) {
                 if (!liveResponseMessages[i]) {
-                    liveResponseMessages[i] = await channel.send({ content: plainChunks[i] }).catch(() => null);
+                    liveResponseMessages[i] = await channel.send({ content: plainChunks[i] }).catch((error: unknown) => {
+                        logDeliveryError('liveResponse/plain/send', error);
+                        return null;
+                    });
                     continue;
                 }
-                await liveResponseMessages[i].edit({ content: plainChunks[i] }).catch(async () => {
-                    liveResponseMessages[i] = await channel.send({ content: plainChunks[i] }).catch(() => null);
+                await liveResponseMessages[i].edit({ content: plainChunks[i] }).catch(async (error: unknown) => {
+                    logDeliveryError('liveResponse/plain/edit', error);
+                    liveResponseMessages[i] = await channel.send({ content: plainChunks[i] }).catch((sendError: unknown) => {
+                        logDeliveryError('liveResponse/plain/resend', sendError);
+                        return null;
+                    });
                 });
             }
             while (liveResponseMessages.length > plainChunks.length) {
@@ -469,12 +489,19 @@ async function sendPromptToAntigravity(
                 .setTimestamp();
 
             if (!liveResponseMessages[i]) {
-                liveResponseMessages[i] = await channel.send({ embeds: [embed] }).catch(() => null);
+                liveResponseMessages[i] = await channel.send({ embeds: [embed] }).catch((error: unknown) => {
+                    logDeliveryError('liveResponse/embed/send', error);
+                    return null;
+                });
                 continue;
             }
 
-            await liveResponseMessages[i].edit({ embeds: [embed] }).catch(async () => {
-                liveResponseMessages[i] = await channel.send({ embeds: [embed] }).catch(() => null);
+            await liveResponseMessages[i].edit({ embeds: [embed] }).catch(async (error: unknown) => {
+                logDeliveryError('liveResponse/embed/edit', error);
+                liveResponseMessages[i] = await channel.send({ embeds: [embed] }).catch((sendError: unknown) => {
+                    logDeliveryError('liveResponse/embed/resend', sendError);
+                    return null;
+                });
             });
         }
 
@@ -511,11 +538,18 @@ async function sendPromptToAntigravity(
 
             for (let i = 0; i < plainChunks.length; i++) {
                 if (!liveActivityMessages[i]) {
-                    liveActivityMessages[i] = await channel.send({ content: plainChunks[i] }).catch(() => null);
+                    liveActivityMessages[i] = await channel.send({ content: plainChunks[i] }).catch((error: unknown) => {
+                        logDeliveryError('liveActivity/plain/send', error);
+                        return null;
+                    });
                     continue;
                 }
-                await liveActivityMessages[i].edit({ content: plainChunks[i] }).catch(async () => {
-                    liveActivityMessages[i] = await channel.send({ content: plainChunks[i] }).catch(() => null);
+                await liveActivityMessages[i].edit({ content: plainChunks[i] }).catch(async (error: unknown) => {
+                    logDeliveryError('liveActivity/plain/edit', error);
+                    liveActivityMessages[i] = await channel.send({ content: plainChunks[i] }).catch((sendError: unknown) => {
+                        logDeliveryError('liveActivity/plain/resend', sendError);
+                        return null;
+                    });
                 });
             }
             while (liveActivityMessages.length > plainChunks.length) {
@@ -542,12 +576,19 @@ async function sendPromptToAntigravity(
                 .setTimestamp();
 
             if (!liveActivityMessages[i]) {
-                liveActivityMessages[i] = await channel.send({ embeds: [embed] }).catch(() => null);
+                liveActivityMessages[i] = await channel.send({ embeds: [embed] }).catch((error: unknown) => {
+                    logDeliveryError('liveActivity/embed/send', error);
+                    return null;
+                });
                 continue;
             }
 
-            await liveActivityMessages[i].edit({ embeds: [embed] }).catch(async () => {
-                liveActivityMessages[i] = await channel.send({ embeds: [embed] }).catch(() => null);
+            await liveActivityMessages[i].edit({ embeds: [embed] }).catch(async (error: unknown) => {
+                logDeliveryError('liveActivity/embed/edit', error);
+                liveActivityMessages[i] = await channel.send({ embeds: [embed] }).catch((sendError: unknown) => {
+                    logDeliveryError('liveActivity/embed/resend', sendError);
+                    return null;
+                });
             });
         }
 
@@ -560,6 +601,7 @@ async function sendPromptToAntigravity(
 
 
     try {
+        const baseline = await captureResponseMonitorBaseline(cdp);
 
         logger.prompt(prompt);
 
@@ -610,6 +652,8 @@ async function sendPromptToAntigravity(
             maxDurationMs: options?.responseTimeoutMs,
             stopGoneConfirmCount: 3,
             extractionMode: options?.extractionMode,
+            initialBaselineText: baseline.text,
+            initialSeenProcessLogKeys: baseline.processLogKeys,
 
             onPhaseChange: (_phase, _text) => {
                 // Phase transitions are already logged inside ResponseMonitor.setPhase()
@@ -698,7 +742,9 @@ async function sendPromptToAntigravity(
                         try {
                             const modelsPayload = await buildModelsUI(cdp, () => bridge.quota.fetchQuota());
                             if (modelsPayload && channel) {
-                                await channel.send({ ...modelsPayload });
+                                await channel.send({ ...modelsPayload }).catch((error: unknown) => {
+                                    logDeliveryError('quota/modelsPayload/send', error);
+                                });
                             }
                         } catch (e) {
                             logger.error('[Quota] Failed to send model selection UI:', e);
