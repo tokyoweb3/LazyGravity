@@ -21,6 +21,8 @@ export interface AppConfig {
     telegramAllowedUserIds?: string[];
     /** Active platforms. Defaults to ['discord']. */
     platforms: PlatformType[];
+    /** Response monitor inactivity timeout in ms. 0 = disabled. Default: 900000 (15 min). */
+    responseTimeoutMs: number;
 }
 
 export type ResponseDeliveryMode = 'stream';

@@ -40,6 +40,7 @@ export class JoinCommandHandler {
     private readonly workspaceService: WorkspaceService;
     private readonly client: Client;
     private readonly extractionMode?: ExtractionMode;
+    private readonly responseTimeoutMs?: number;
 
     /** Active ResponseMonitors per workspace (for AI response mirroring) */
     private readonly activeResponseMonitors = new Map<string, ResponseMonitor>();
@@ -53,6 +54,7 @@ export class JoinCommandHandler {
         workspaceService: WorkspaceService,
         client: Client,
         extractionMode?: ExtractionMode,
+        responseTimeoutMs?: number,
     ) {
         this.chatSessionService = chatSessionService;
         this.chatSessionRepo = chatSessionRepo;
@@ -62,6 +64,7 @@ export class JoinCommandHandler {
         this.workspaceService = workspaceService;
         this.client = client;
         this.extractionMode = extractionMode;
+        this.responseTimeoutMs = responseTimeoutMs;
     }
 
     /**
@@ -370,7 +373,7 @@ export class JoinCommandHandler {
         const monitor = new ResponseMonitor({
             cdpService: cdp,
             pollIntervalMs: 2000,
-            maxDurationMs: 300000,
+            maxDurationMs: this.responseTimeoutMs,
             extractionMode: this.extractionMode,
             onComplete: (finalText: string) => {
                 this.activeResponseMonitors.delete(projectName);
