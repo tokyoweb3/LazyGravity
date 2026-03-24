@@ -30,6 +30,7 @@ export interface PersistedConfig {
     telegramToken?: string;
     telegramAllowedUserIds?: string[];
     platforms?: PlatformType[];
+    responseTimeoutMs?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -116,6 +117,12 @@ function mergeConfig(persisted: PersistedConfig): AppConfig {
         persisted.extractionMode,
     );
 
+    const responseTimeoutMs = resolvePositiveInt(
+        process.env.RESPONSE_TIMEOUT_MS,
+        persisted.responseTimeoutMs,
+        900000,
+    );
+
     // Telegram credentials — only required when Telegram is an active platform
     const telegramToken = process.env.TELEGRAM_BOT_TOKEN ?? persisted.telegramToken ?? undefined;
     const telegramAllowedUserIds = resolveTelegramAllowedUserIds(persisted);
@@ -135,6 +142,7 @@ function mergeConfig(persisted: PersistedConfig): AppConfig {
         autoApproveFileEdits,
         logLevel,
         extractionMode,
+        responseTimeoutMs,
         telegramToken,
         telegramAllowedUserIds,
         platforms,
@@ -220,6 +228,23 @@ function resolveBoolean(
 ): boolean {
     if (envValue !== undefined) return envValue.toLowerCase() === 'true';
     if (persistedValue !== undefined) return persistedValue;
+    return defaultValue;
+}
+
+/**
+ * Resolve a non-negative integer value from env var > persisted config > default.
+ * Returns the default if the env/persisted value is not a valid non-negative integer.
+ */
+function resolvePositiveInt(
+    envValue: string | undefined,
+    persistedValue: number | undefined,
+    defaultValue: number,
+): number {
+    if (envValue !== undefined) {
+        const parsed = parseInt(envValue, 10);
+        if (!isNaN(parsed) && parsed >= 0) return parsed;
+    }
+    if (persistedValue !== undefined && persistedValue >= 0) return persistedValue;
     return defaultValue;
 }
 

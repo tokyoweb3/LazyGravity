@@ -182,6 +182,7 @@ async function sendPromptToAntigravity(
         userPrefRepo?: UserPreferenceRepository;
         onFullCompletion?: () => void;
         extractionMode?: ExtractionMode;
+        responseTimeoutMs?: number;
     }
 ): Promise<void> {
     // Completion signal — called exactly once when the entire prompt lifecycle ends
@@ -606,7 +607,7 @@ async function sendPromptToAntigravity(
         const monitor = new ResponseMonitor({
             cdpService: cdp,
             pollIntervalMs: 2000,
-            maxDurationMs: 300000,
+            maxDurationMs: options?.responseTimeoutMs,
             stopGoneConfirmCount: 3,
             extractionMode: options?.extractionMode,
 
@@ -818,9 +819,10 @@ async function sendPromptToAntigravity(
                         : lastProgressText;
                     const separated = splitOutputAndLogs(timeoutText || '');
                     const sanitizedTimeoutLogs = lastActivityLogText || processLogBuffer.snapshot();
+                    const timeoutMinutes = Math.round((options?.responseTimeoutMs ?? 900000) / 60000);
                     const payload = separated.output && separated.output.trim().length > 0
-                        ? t(`${separated.output}\n\n[Monitor Ended] Timeout after 5 minutes.`)
-                        : 'Monitor ended after 5 minutes. No text was retrieved.';
+                        ? t(`${separated.output}\n\n[Monitor Ended] Timeout after ${timeoutMinutes} minutes of inactivity.`)
+                        : `Monitor ended after ${timeoutMinutes} minutes of inactivity. No text was retrieved.`;
 
                     liveResponseUpdateVersion += 1;
                     const responseVersion = liveResponseUpdateVersion;
@@ -965,7 +967,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         ]
     });
 
-    const joinHandler = new JoinCommandHandler(chatSessionService, chatSessionRepo, workspaceBindingRepo, channelManager, bridge.pool, workspaceService, client, config.extractionMode);
+    const joinHandler = new JoinCommandHandler(chatSessionService, chatSessionRepo, workspaceBindingRepo, channelManager, bridge.pool, workspaceService, client, config.extractionMode, config.responseTimeoutMs);
 
     client.once(Events.ClientReady, async (readyClient) => {
         logger.info(`Ready! Logged in as ${readyClient.user.tag} | extractionMode=${config.extractionMode}`);
@@ -1218,6 +1220,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                 botToken: config.telegramToken,
                 botApi: telegramBot.api as any,
                 chatSessionService,
+                responseTimeoutMs: config.responseTimeoutMs,
             });
 
             // Compose select handlers: project select + mode select

@@ -445,7 +445,7 @@ export interface ResponseMonitorOptions {
     cdpService: CdpService;
     /** Poll interval in ms (default: 2000) */
     pollIntervalMs?: number;
-    /** Max monitoring duration in ms (default: 300000) */
+    /** Max inactivity duration in ms (default: 900000 = 15 min). Set 0 to disable. */
     maxDurationMs?: number;
     /** Consecutive stop-gone confirmations needed (default: 3) */
     stopGoneConfirmCount?: number;
@@ -506,7 +506,7 @@ export class ResponseMonitor {
     constructor(options: ResponseMonitorOptions) {
         this.cdpService = options.cdpService;
         this.pollIntervalMs = options.pollIntervalMs ?? 2000;
-        this.maxDurationMs = options.maxDurationMs ?? 300000;
+        this.maxDurationMs = options.maxDurationMs ?? 900000;
         this.stopGoneConfirmCount = options.stopGoneConfirmCount ?? 3;
         this.extractionMode = options.extractionMode ?? 'structured';
         this.onProgress = options.onProgress;
@@ -958,7 +958,10 @@ export class ResponseMonitor {
             }
 
             // Activity-based inactivity timeout (#49)
-            if (this.maxDurationMs > 0 && Date.now() - this.lastActivityTime >= this.maxDurationMs) {
+            // Guard: never timeout while the stop button is visible — it means
+            // Antigravity is still actively generating (extended thinking, long
+            // shell commands, large file operations, etc.).
+            if (this.maxDurationMs > 0 && !isGenerating && Date.now() - this.lastActivityTime >= this.maxDurationMs) {
                 const lastText = this.lastText ?? '';
                 this.setPhase('timeout', lastText);
                 await this.stop();

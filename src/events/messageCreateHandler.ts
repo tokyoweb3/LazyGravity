@@ -33,7 +33,7 @@ import {
 import { logger } from '../utils/logger';
 
 export interface MessageCreateHandlerDeps {
-    config: { allowedUserIds: string[]; extractionMode?: import('../utils/config').ExtractionMode };
+    config: { allowedUserIds: string[]; extractionMode?: import('../utils/config').ExtractionMode; responseTimeoutMs?: number };
     bridge: CdpBridge;
     modeService: ModeService;
     modelService: ModelService;
@@ -201,6 +201,7 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                         titleGenerator: deps.titleGenerator,
                         userPrefRepo: deps.userPrefRepo,
                         extractionMode: deps.config.extractionMode,
+                        responseTimeoutMs: deps.config.responseTimeoutMs,
                     });
                 } else {
                     await message.reply('Not connected to CDP. Send a message first to connect to a project.');
@@ -377,6 +378,7 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                                     titleGenerator: deps.titleGenerator,
                                     userPrefRepo: deps.userPrefRepo,
                                     extractionMode: deps.config.extractionMode,
+                                    responseTimeoutMs: deps.config.responseTimeoutMs,
                                     onFullCompletion: settle,
                                 }).catch((err: any) => {
                                     // sendPromptToAntigravity rejected before onFullCompletion fired

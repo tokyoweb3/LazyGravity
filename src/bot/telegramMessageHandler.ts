@@ -47,6 +47,8 @@ export interface TelegramMessageHandlerDeps {
     /** Bot API object for getFile calls. */
     readonly botApi?: import('../platform/telegram/wrappers').TelegramBotLike['api'];
     readonly chatSessionService?: ChatSessionService;
+    /** Response monitor inactivity timeout in ms. Defaults to ResponseMonitor default (900000). */
+    readonly responseTimeoutMs?: number;
 }
 
 /**
@@ -253,7 +255,7 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
             statusMsg = await channel.send({ text: 'Processing...' }).catch(() => null);
 
             await new Promise<void>((resolve) => {
-                const TIMEOUT_MS = 300_000;
+                const TIMEOUT_MS = deps.responseTimeoutMs ?? 900_000;
 
                 let settled = false;
                 const settle = () => {
