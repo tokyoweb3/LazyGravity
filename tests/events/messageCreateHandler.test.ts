@@ -19,6 +19,8 @@ function buildDeps(overrides: Record<string, any> = {}) {
             pool: {
                 getOrConnect: jest.fn().mockResolvedValue({}),
                 extractProjectName: jest.fn().mockReturnValue('proj-a'),
+                getPreferredAccountForWorkspace: jest.fn().mockReturnValue(null),
+                setPreferredAccountForWorkspace: jest.fn(),
             },
         } as any,
         modeService: {} as any,
@@ -74,23 +76,66 @@ describe('messageCreateHandler', () => {
         expect(sendPromptToAntigravity).not.toHaveBeenCalled();
     });
 
+    it('shows active account, original account, and conversation title in text status', async () => {
+        const reply = jest.fn().mockResolvedValue(undefined);
+        const handler = createMessageCreateHandler(buildDeps({
+            modeService: { getCurrentMode: jest.fn().mockReturnValue('normal') },
+            antigravityAccounts: [
+                { name: 'default', cdpPort: 9222 },
+                { name: 'work4', cdpPort: 9444 },
+            ],
+            bridge: {
+                autoAccept: { handle: jest.fn(), isEnabled: jest.fn().mockReturnValue(false) },
+                selectedAccountByChannel: new Map<string, string>([['ch-1', 'work4']]),
+                pool: {
+                    getActiveWorkspaceNames: jest.fn().mockReturnValue([]),
+                    getConnected: jest.fn().mockReturnValue(null),
+                    getApprovalDetector: jest.fn().mockReturnValue(undefined),
+                    extractProjectName: jest.fn().mockReturnValue('proj-a'),
+                },
+            } as any,
+            chatSessionRepo: {
+                findByChannelId: jest.fn().mockReturnValue({
+                    channelId: 'ch-1',
+                    activeAccountName: 'work4',
+                    originAccountName: 'default',
+                    displayName: 'Imported Session',
+                }),
+            } as any,
+        }));
+
+        await handler(buildMessage({ content: '/status', reply }));
+
+        const payload = reply.mock.calls[0][0];
+        const embed = payload.embeds[0].data;
+        expect(embed.fields).toEqual(expect.arrayContaining([
+            expect.objectContaining({ name: 'Active Account', value: 'work4' }),
+            expect.objectContaining({ name: 'Original Account', value: 'default' }),
+            expect.objectContaining({ name: 'Conversation Title', value: 'Imported Session' }),
+        ]));
+    });
+
     it('re-registers session channel after autoRenameChannel sets displayName', async () => {
         const sendPromptToAntigravity = mockSendPromptImmediate();
         const registerApprovalSessionChannel = jest.fn();
         const findByChannelId = jest.fn()
-            .mockReturnValueOnce({ isRenamed: false, displayName: null })
+            .mockReturnValueOnce({ isRenamed: false, displayName: null, activeAccountName: null })
+            .mockReturnValueOnce({ isRenamed: false, displayName: null, activeAccountName: null })
             .mockReturnValueOnce({ isRenamed: true, displayName: 'New Session Title' });
 
         const handler = createMessageCreateHandler(buildDeps({
             sendPromptToAntigravity,
             registerApprovalSessionChannel,
             chatSessionRepo: { findByChannelId },
-            chatSessionService: { startNewChat: jest.fn().mockResolvedValue({ ok: true }) },
+            chatSessionService: {
+                startNewChat: jest.fn().mockResolvedValue({ ok: true }),
+                activateSessionByTitle: jest.fn().mockResolvedValue({ ok: true }),
+            },
         }));
 
         await handler(buildMessage());
 
-        expect(findByChannelId).toHaveBeenCalledTimes(2);
+        expect(findByChannelId).toHaveBeenCalledTimes(3);
         const sessionCalls = registerApprovalSessionChannel.mock.calls;
         const lastCall = sessionCalls[sessionCalls.length - 1];
         expect(lastCall[2]).toBe('New Session Title');
@@ -155,6 +200,75 @@ describe('messageCreateHandler', () => {
 
         expect(updateDisplayName).toHaveBeenCalledWith('ch-1', 'New Title');
         expect(activateSessionByTitle).toHaveBeenCalledTimes(2);
+        expect(sendPromptToAntigravity).toHaveBeenCalled();
+    });
+
+    it('resets stale renamed session state when the channel is reopened under a different account', async () => {
+        const sendPromptToAntigravity = mockSendPromptImmediate();
+        const activateSessionByTitle = jest.fn();
+        const startNewChat = jest.fn().mockResolvedValue({ ok: true });
+        const setActiveAccountName = jest.fn().mockReturnValue(true);
+        const initializeOriginAccountName = jest.fn().mockReturnValue(true);
+        const findByChannelId = jest.fn()
+            .mockReturnValueOnce({
+                isRenamed: true,
+                displayName: 'Legacy Session',
+                activeAccountName: 'default',
+                categoryId: 'cat-1',
+                channelId: 'ch-1',
+            })
+            .mockReturnValueOnce({
+                isRenamed: true,
+                displayName: 'Legacy Session',
+                activeAccountName: 'default',
+                categoryId: 'cat-1',
+                channelId: 'ch-1',
+            })
+            .mockReturnValueOnce({
+                isRenamed: false,
+                displayName: null,
+                activeAccountName: 'work4',
+                categoryId: 'cat-1',
+                channelId: 'ch-1',
+            })
+            .mockReturnValueOnce({
+                isRenamed: false,
+                displayName: null,
+                activeAccountName: 'work4',
+                categoryId: 'cat-1',
+                channelId: 'ch-1',
+            });
+
+        const handler = createMessageCreateHandler(buildDeps({
+            antigravityAccounts: [{ name: 'work4', cdpPort: 9321 }],
+            bridge: {
+                autoAccept: { handle: jest.fn(), isEnabled: jest.fn() },
+                selectedAccountByChannel: new Map<string, string>([['ch-1', 'work4']]),
+                pool: {
+                    getOrConnect: jest.fn().mockResolvedValue({}),
+                    extractProjectName: jest.fn().mockReturnValue('proj-a'),
+                    getPreferredAccountForWorkspace: jest.fn().mockReturnValue('default'),
+                    setPreferredAccountForWorkspace: jest.fn(),
+                },
+            } as any,
+            sendPromptToAntigravity,
+            chatSessionService: {
+                activateSessionByTitle,
+                startNewChat,
+            },
+            chatSessionRepo: {
+                findByChannelId,
+                setActiveAccountName,
+                initializeOriginAccountName,
+            },
+        }));
+
+        await handler(buildMessage());
+
+        expect(setActiveAccountName).toHaveBeenCalledWith('ch-1', 'work4');
+        expect(activateSessionByTitle).not.toHaveBeenCalled();
+        expect(startNewChat).toHaveBeenCalled();
+        expect(initializeOriginAccountName).toHaveBeenCalledWith('ch-1', 'work4');
         expect(sendPromptToAntigravity).toHaveBeenCalled();
     });
 
