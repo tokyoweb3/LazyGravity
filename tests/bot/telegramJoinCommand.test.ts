@@ -24,7 +24,7 @@ describe('telegramJoinCommand.handleMirror', () => {
             },
         } as any;
         const telegramBindingRepo = {
-            findByChatId: jest.fn().mockReturnValue({
+            findByChatIdWithParentFallback: jest.fn().mockReturnValue({
                 chatId: 'chat-123',
                 workspacePath: 'project-a',
             }),

@@ -93,6 +93,7 @@ describe('JoinCommandHandler', () => {
             mockWorkspaceService,
             mockClient,
             undefined,
+            undefined,
             resolveAccountForChannel,
         );
     });
