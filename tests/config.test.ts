@@ -114,6 +114,42 @@ describe('Config', () => {
         expect(config.autoApproveFileEdits).toBe(true);
     });
 
+    it('defaults antigravityAccounts to the default account', () => {
+        process.env.DISCORD_BOT_TOKEN = 'secret_token';
+        process.env.CLIENT_ID = 'client123';
+        process.env.ALLOWED_USER_IDS = 'user1';
+        delete process.env.ANTIGRAVITY_ACCOUNTS;
+
+        const config = loadConfig();
+        expect(config.antigravityAccounts).toEqual([{ name: 'default', cdpPort: 9222 }]);
+    });
+
+    it('parses ANTIGRAVITY_ACCOUNTS from env', () => {
+        process.env.DISCORD_BOT_TOKEN = 'secret_token';
+        process.env.CLIENT_ID = 'client123';
+        process.env.ALLOWED_USER_IDS = 'user1';
+        process.env.ANTIGRAVITY_ACCOUNTS = 'default:9222,work:9333';
+
+        const config = loadConfig();
+        expect(config.antigravityAccounts).toEqual([
+            { name: 'default', cdpPort: 9222 },
+            { name: 'work', cdpPort: 9333 },
+        ]);
+    });
+
+    it('parses ANTIGRAVITY_ACCOUNTS with optional user-data-dir from env', () => {
+        process.env.DISCORD_BOT_TOKEN = 'secret_token';
+        process.env.CLIENT_ID = 'client123';
+        process.env.ALLOWED_USER_IDS = 'user1';
+        process.env.ANTIGRAVITY_ACCOUNTS = 'default:9222,work:9333@/Users/test/work';
+
+        const config = loadConfig();
+        expect(config.antigravityAccounts).toEqual([
+            { name: 'default', cdpPort: 9222 },
+            { name: 'work', cdpPort: 9333, userDataDir: '/Users/test/work' },
+        ]);
+    });
+
     it('defaults platforms to ["discord"] when PLATFORMS is not set', () => {
         process.env.DISCORD_BOT_TOKEN = 'secret_token';
         process.env.CLIENT_ID = 'client123';

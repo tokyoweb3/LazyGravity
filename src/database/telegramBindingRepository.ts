@@ -78,6 +78,20 @@ export class TelegramBindingRepository {
     }
 
     /**
+     * Find binding by exact chat ID, or fall back to the base chat ID for topic-style IDs.
+     * Example: "12345_67" falls back to "12345" when the topic itself has no direct binding.
+     */
+    public findByChatIdWithParentFallback(chatId: string): TelegramBindingRecord | undefined {
+        const exact = this.findByChatId(chatId);
+        if (exact) return exact;
+
+        const underscoreIndex = chatId.indexOf('_');
+        if (underscoreIndex <= 0) return undefined;
+
+        return this.findByChatId(chatId.slice(0, underscoreIndex));
+    }
+
+    /**
      * Find bindings by workspace path
      */
     public findByWorkspacePath(workspacePath: string): TelegramBindingRecord[] {

@@ -7,6 +7,7 @@ import { startAction } from './commands/start';
 import { doctorAction } from './commands/doctor';
 import { setupAction } from './commands/setup';
 import { openAction } from './commands/open';
+import { exportConversationAction, importConversationAction } from './commands/conversationTransfer';
 import { ConfigLoader } from '../utils/configLoader';
 
 const program = new Command()
@@ -47,5 +48,20 @@ program
     .command('open')
     .description('Open Antigravity with CDP enabled (auto-selects available port)')
     .action(openAction);
+
+program
+    .command('conversation-export')
+    .description('Export a single Antigravity conversation bundle by profile and title')
+    .requiredOption('--profile <name>', 'Source Antigravity profile name')
+    .requiredOption('--title <title>', 'Conversation title as shown in Antigravity history')
+    .requiredOption('--out <dir>', 'Output directory for the exported bundle')
+    .action((opts) => exportConversationAction(opts.profile, opts.title, opts.out));
+
+program
+    .command('conversation-import')
+    .description('Import a previously exported conversation bundle into another Antigravity profile')
+    .requiredOption('--profile <name>', 'Target Antigravity profile name')
+    .requiredOption('--bundle <dir>', 'Conversation bundle directory created by conversation-export')
+    .action((opts) => importConversationAction(opts.profile, opts.bundle));
 
 program.parse();

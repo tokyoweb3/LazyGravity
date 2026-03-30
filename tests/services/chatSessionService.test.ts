@@ -18,7 +18,7 @@ describe('ChatSessionService', () => {
     });
 
     describe('startNewChat()', () => {
-        it('opens a new chat via coordinate click when the button is enabled', async () => {
+        it('opens a new chat via keyboard shortcut when the button is enabled', async () => {
             // 1st call: button enabled (cursor:pointer), 2nd call: button disabled (cursor:not-allowed)
             let callCount = 0;
             mockCdpService.call.mockImplementation(async (method: string) => {
@@ -39,8 +39,8 @@ describe('ChatSessionService', () => {
 
             expect(result.ok).toBe(true);
             expect(mockCdpService.call).toHaveBeenCalledWith(
-                'Input.dispatchMouseEvent',
-                expect.objectContaining({ type: 'mousePressed', x: 100, y: 50 })
+                'Input.dispatchKeyEvent',
+                expect.objectContaining({ type: 'keyDown', key: 'L', code: 'KeyL' })
             );
         });
 
@@ -101,7 +101,7 @@ describe('ChatSessionService', () => {
             const result = await service.startNewChat(mockCdpService);
 
             expect(result.ok).toBe(false);
-            expect(result.error).toContain('state did not change');
+            expect(result.error).toContain('did not change state');
         });
     });
 
@@ -179,8 +179,10 @@ describe('ChatSessionService', () => {
         });
 
         it('falls back to Past Conversations flow when direct side-panel search cannot find the chat', async () => {
+            const calls: Array<{ method: string; params?: any }> = [];
             let infoCallCount = 0;
-            mockCdpService.call.mockImplementation(async (_method: string, params: any) => {
+            mockCdpService.call.mockImplementation(async (method: string, params: any) => {
+                calls.push({ method, params });
                 const expression = String(params?.expression || '');
 
                 if (expression.includes('const header = panel.querySelector(\'div[class*="border-b"]\');')) {
@@ -204,6 +206,10 @@ describe('ChatSessionService', () => {
 
             const result = await service.activateSessionByTitle(mockCdpService, 'target-session');
             expect(result).toEqual({ ok: true });
+            const escapeCall = calls.find(
+                (c) => c.method === 'Input.dispatchKeyEvent' && c.params?.key === 'Escape',
+            );
+            expect(escapeCall).toBeDefined();
         });
 
         it('retries activation while UI is still loading and eventually succeeds', async () => {
@@ -250,6 +256,125 @@ describe('ChatSessionService', () => {
             expect(result.ok).toBe(false);
             expect(result.error).toContain('empty');
         });
+
+        it('refreshes a stuck loading session by opening a new conversation and reopening the target', async () => {
+            const stateSpy = jest.spyOn(service, 'getCurrentSessionViewState');
+            const startSpy = jest.spyOn(service, 'startNewChat').mockResolvedValue({ ok: true });
+            const activateSpy = jest.spyOn(service, 'activateSessionByTitle').mockResolvedValue({ ok: true });
+            const listSpy = jest.spyOn(service, 'listAllSessions');
+
+            stateSpy
+                .mockResolvedValueOnce({
+                    title: 'target-session',
+                    hasActiveChat: true,
+                    panelFound: true,
+                    hasLoadingIndicator: true,
+                    hasRenderableContent: false,
+                    renderablePreview: [],
+                })
+                .mockResolvedValueOnce({
+                    title: 'target-session',
+                    hasActiveChat: true,
+                    panelFound: true,
+                    hasLoadingIndicator: true,
+                    hasRenderableContent: false,
+                    renderablePreview: [],
+                })
+                .mockResolvedValueOnce({
+                    title: 'target-session',
+                    hasActiveChat: true,
+                    panelFound: true,
+                    hasLoadingIndicator: false,
+                    hasRenderableContent: true,
+                    renderablePreview: [{ tag: 'DIV', className: 'prose', text: 'Recovered content' }],
+                });
+
+            const result = await service.refreshSessionViewIfStuck(mockCdpService, 'target-session');
+
+            expect(result).toEqual({ ok: true });
+            expect(listSpy).not.toHaveBeenCalled();
+            expect(startSpy).toHaveBeenCalledTimes(1);
+            expect(activateSpy).toHaveBeenCalledTimes(1);
+            expect(activateSpy).toHaveBeenCalledWith(
+                mockCdpService,
+                'target-session',
+                expect.objectContaining({ maxWaitMs: 8000, retryIntervalMs: 300, allowVisibilityWarmupMs: 1000 }),
+            );
+        });
+
+        it('skips the refresh step when the session already has renderable content', async () => {
+            const stateSpy = jest.spyOn(service, 'getCurrentSessionViewState').mockResolvedValue({
+                title: 'target-session',
+                hasActiveChat: true,
+                panelFound: true,
+                hasLoadingIndicator: false,
+                hasRenderableContent: true,
+                renderablePreview: [{ tag: 'DIV', className: 'prose', text: 'Ready content' }],
+            });
+            const startSpy = jest.spyOn(service, 'startNewChat');
+            const activateSpy = jest.spyOn(service, 'activateSessionByTitle');
+            const listSpy = jest.spyOn(service, 'listAllSessions');
+
+            const result = await service.refreshSessionViewIfStuck(mockCdpService, 'target-session');
+
+            expect(result).toEqual({ ok: true });
+            expect(stateSpy).toHaveBeenCalledTimes(1);
+            expect(listSpy).not.toHaveBeenCalled();
+            expect(startSpy).not.toHaveBeenCalled();
+            expect(activateSpy).not.toHaveBeenCalled();
+        });
+
+        it('returns an error after bounded new-conversation retries stay stuck', async () => {
+            const stateSpy = jest.spyOn(service, 'getCurrentSessionViewState');
+            const startSpy = jest.spyOn(service, 'startNewChat').mockResolvedValue({ ok: true });
+            const activateSpy = jest.spyOn(service, 'activateSessionByTitle').mockResolvedValue({ ok: true });
+
+            stateSpy
+                .mockResolvedValueOnce({
+                    title: 'target-session',
+                    hasActiveChat: true,
+                    panelFound: true,
+                    hasLoadingIndicator: true,
+                    hasRenderableContent: false,
+                    renderablePreview: [],
+                })
+                .mockResolvedValueOnce({
+                    title: 'target-session',
+                    hasActiveChat: true,
+                    panelFound: true,
+                    hasLoadingIndicator: true,
+                    hasRenderableContent: false,
+                    renderablePreview: [],
+                })
+                .mockResolvedValueOnce({
+                    title: 'target-session',
+                    hasActiveChat: true,
+                    panelFound: true,
+                    hasLoadingIndicator: true,
+                    hasRenderableContent: false,
+                    renderablePreview: [],
+                })
+                .mockResolvedValueOnce({
+                    title: 'target-session',
+                    hasActiveChat: true,
+                    panelFound: true,
+                    hasLoadingIndicator: true,
+                    hasRenderableContent: false,
+                    renderablePreview: [],
+                });
+
+            const result = await service.recoverSessionViewWithNewConversationBounce(
+                mockCdpService,
+                'target-session',
+                { maxAttempts: 2, newChatDelayMs: 0, reopenDelayMs: 0 },
+            );
+
+            expect(result.ok).toBe(false);
+            expect(result.error).toContain('Attempt 2/2');
+            expect(startSpy).toHaveBeenCalledTimes(2);
+            expect(activateSpy).toHaveBeenCalledTimes(2);
+        });
+
         it('returns direct and past errors when both activation paths fail', async () => {
             mockCdpService.call.mockImplementation(async (_method: string, params: any) => {
                 const expression = String(params?.expression || '');

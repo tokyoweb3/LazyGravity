@@ -110,6 +110,29 @@ const projectCommand = new SlashCommandBuilder()
                     .setDescription(t('Name of the project to create'))
                     .setRequired(true)
             )
+    )
+    .addSubcommand((sub) =>
+        sub
+            .setName('reopen')
+            .setDescription(t('Reopen the bound project in the selected Antigravity account'))
+            .addStringOption((option) =>
+                option
+                    .setName('account')
+                    .setDescription(t('Account to reopen the project in'))
+                    .setRequired(false)
+                    .setAutocomplete(true)
+            )
+    )
+    .addSubcommand((sub) =>
+        sub
+            .setName('account')
+            .setDescription(t('Display or change the Antigravity account bound to this project channel'))
+            .addStringOption((option) =>
+                option
+                    .setName('name')
+                    .setDescription(t('Name of the account to bind to this project channel'))
+                    .setRequired(false)
+            )
     );
 
 /** /new command definition (formerly /chat new, made into a standalone command) */
@@ -161,6 +184,10 @@ const outputCommand = new SlashCommandBuilder()
             .setRequired(false)
     );
 
+/** /account command definition */
+const accountCommand = new SlashCommandBuilder()
+    .setName('account')
+    .setDescription(t('Select the Antigravity account for the current session'));
 
 /** /logs command definition */
 const logsCommand = new SlashCommandBuilder()
@@ -208,6 +235,7 @@ export const slashCommands = [
     cleanupCommand,
     joinCommand,
     mirrorCommand,
+    accountCommand,
     outputCommand,
     pingCommand,
     logsCommand,
