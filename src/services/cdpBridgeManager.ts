@@ -280,9 +280,11 @@ export function parseRunCommandCustomId(customId: string): { action: 'run' | 're
 export function initCdpBridge(
     autoApproveDefault: boolean,
     accountPorts: Record<string, number> = {},
+    accountUserDataDirs: Record<string, string> = {},
 ): CdpBridge {
     const pool = new CdpConnectionPool({
         accountPorts,
+        accountUserDataDirs,
         cdpCallTimeout: 15000,
         // Keep CDP reconnection lazy: do not reopen windows in background.
         // Reconnection is triggered when the next chat/template message is sent.
