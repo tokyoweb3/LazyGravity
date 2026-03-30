@@ -2,7 +2,7 @@ import { logger } from '../utils/logger';
 import { CDP_PORTS } from '../utils/cdpPorts';
 import { EventEmitter } from 'events';
 import * as http from 'http';
-import { spawn } from 'child_process';
+import { execFile, spawn } from 'child_process';
 import { getAntigravityCliPath, extractProjectNameFromPath } from '../utils/pathUtils';
 import WebSocket from 'ws';
 
@@ -13,6 +13,8 @@ export interface CdpServiceOptions {
     maxReconnectAttempts?: number;
     /** Delay between reconnect attempts (ms). Default: 2000 */
     reconnectDelayMs?: number;
+    accountName?: string;
+    accountPorts?: Record<string, number>;
 }
 
 export interface CdpContext {
@@ -57,6 +59,13 @@ const SELECTORS = {
     CONTEXT_URL_KEYWORD: 'cascade-panel',
 };
 
+const CHAT_READY_TIMEOUT_MS = 6000;
+const CHAT_READY_POLL_MS = 250;
+const INJECT_RETRY_READY_TIMEOUT_MS = 2500;
+const INJECT_RETRY_BACKOFF_MS = 500;
+const MODE_READY_TIMEOUT_MS = 4000;
+const MODE_RETRY_READY_TIMEOUT_MS = 2000;
+
 export class CdpService extends EventEmitter {
     private ports: number[];
     private isConnectedFlag: boolean = false;
@@ -80,13 +89,25 @@ export class CdpService extends EventEmitter {
     private currentWorkspacePath: string | null = null;
     /** Workspace switching flag (suppresses disconnected event) */
     private isSwitchingWorkspace: boolean = false;
+    private accountName: string;
+    private accountPorts: Record<string, number>;
 
     constructor(options: CdpServiceOptions = {}) {
         super();
-        this.ports = options.portsToScan || [...CDP_PORTS];
+        this.accountName = options.accountName || 'default';
+        this.accountPorts = options.accountPorts || {};
+        this.ports = options.portsToScan || this.resolveAccountPorts(this.accountName);
         if (options.cdpCallTimeout) this.cdpCallTimeout = options.cdpCallTimeout;
         this.maxReconnectAttempts = options.maxReconnectAttempts ?? 3;
         this.reconnectDelayMs = options.reconnectDelayMs ?? 2000;
+    }
+
+    private resolveAccountPorts(accountName: string): number[] {
+        const explicitPort = this.accountPorts[accountName];
+        if (Number.isInteger(explicitPort) && explicitPort > 0) {
+            return [explicitPort];
+        }
+        return [...CDP_PORTS];
     }
 
     private async getJson(url: string): Promise<any[]> {
@@ -322,6 +343,22 @@ export class CdpService extends EventEmitter {
             return await this._discoverAndConnectForWorkspaceImpl(workspacePath, projectName);
         } finally {
             this.isSwitchingWorkspace = false;
+        }
+    }
+
+    async openWorkspace(workspacePath: string): Promise<boolean> {
+        const projectName = extractProjectNameFromPath(workspacePath);
+        this.currentWorkspacePath = workspacePath;
+
+        try {
+            return await this.discoverAndConnectForWorkspace(workspacePath);
+        } catch (error: any) {
+            logger.info(
+                `[CdpService] Explicit open requested for workspace "${projectName}" ` +
+                `on account "${this.accountName}" — retrying with launch ` +
+                `(reason: ${error?.message || String(error)})`,
+            );
+            return this.launchAndConnectWorkspace(workspacePath, projectName, true);
         }
     }
 
@@ -576,20 +613,65 @@ export class CdpService extends EventEmitter {
     private async launchAndConnectWorkspace(
         workspacePath: string,
         projectName: string,
+        explicitOpen: boolean = false,
     ): Promise<boolean> {
+        const targetPort = this.ports[0] ?? null;
+        const resolvedUserDataDir = explicitOpen && targetPort !== null
+            ? await this.resolveRunningUserDataDirForPort(targetPort)
+            : null;
+
+        if (explicitOpen && this.accountName !== 'default' && targetPort !== null && !resolvedUserDataDir) {
+            throw new Error(
+                `Could not determine user-data-dir for running account "${this.accountName}" ` +
+                `(CDP port ${targetPort}). Make sure that Antigravity instance is already running with that port.`,
+            );
+        }
+
+        if (!explicitOpen && this.accountName !== 'default' && targetPort !== null) {
+            logger.warn(
+                `[CdpService] Workspace "${projectName}" not found on account "${this.accountName}" ` +
+                `(port=${targetPort}). Skipping auto-launch to avoid opening the wrong Antigravity instance.`,
+            );
+            throw new Error(
+                `Workspace "${projectName}" is not open in account "${this.accountName}" ` +
+                `(CDP port ${targetPort}). Open it with Antigravity Cockpit or use "/project reopen" ` +
+                `command (Telegram: /project_reopen).`,
+            );
+        }
+
         // Open as folder using Antigravity CLI (not as workspace mode).
         // `open -a Antigravity` may open as workspace, resulting in title "Untitled (Workspace)".
         // CLI --new-window opens as folder, immediately reflecting directory name in title.
         const antigravityCli = getAntigravityCliPath();
 
-        logger.debug(`[CdpService] Launching Antigravity: ${antigravityCli} --new-window ${workspacePath}`);
+        const launchArgs = [
+            ...(resolvedUserDataDir ? ['--user-data-dir', resolvedUserDataDir] : []),
+            ...(targetPort !== null ? [`--remote-debugging-port=${targetPort}`] : []),
+            '--new-window',
+            workspacePath,
+        ];
+
+        logger.debug(
+            `[CdpService] Launching Antigravity for account "${this.accountName}" ` +
+            `(port=${targetPort ?? 'unknown'}, userDataDir=${resolvedUserDataDir ?? 'default'}) ` +
+            `${antigravityCli} ${launchArgs.join(' ')}`,
+        );
         try {
-            await this.runCommand(antigravityCli, ['--new-window', workspacePath]);
+            await this.runCommand(antigravityCli, launchArgs);
         } catch (error: any) {
             // Fall back to open -a if CLI not found (macOS only)
             logger.warn(`[CdpService] CLI launch failed, falling back to open -a (if macOS): ${error?.message || String(error)}`);
             if (process.platform === 'darwin') {
-                await this.runCommand('open', ['-a', 'Antigravity', workspacePath]);
+                const openArgs = [
+                    '-n',
+                    '-a',
+                    'Antigravity',
+                    '--args',
+                    ...(resolvedUserDataDir ? ['--user-data-dir', resolvedUserDataDir] : []),
+                    ...(targetPort !== null ? [`--remote-debugging-port=${targetPort}`] : []),
+                    workspacePath,
+                ];
+                await this.runCommand('open', openArgs);
             } else {
                 throw error;
             }
@@ -782,6 +864,70 @@ export class CdpService extends EventEmitter {
                 reject(new Error(`${command} exited with code ${code ?? 'unknown'}`));
             });
         });
+    }
+
+    private async resolveRunningUserDataDirForPort(port: number): Promise<string | null> {
+        const commandLines = await this.getProcessCommandLines();
+        if (commandLines.length === 0) return null;
+
+        const portPattern = new RegExp(`--remote-debugging-port(?:=|\\s+)${port}(?:\\s|$)`);
+
+        for (const line of commandLines) {
+            const lowerLine = line.toLowerCase();
+            if (!lowerLine.includes('antigravity') || !portPattern.test(line) || !line.includes('--user-data-dir')) {
+                continue;
+            }
+
+            const match = line.match(/--user-data-dir(?:=|\s+)("([^"]+)"|'([^']+)'|([^\s]+))/);
+            const userDataDir = match?.[2] || match?.[3] || match?.[4];
+            if (userDataDir) {
+                logger.info(`[CdpService] Resolved user-data-dir for CDP port ${port}: ${userDataDir}`);
+                return userDataDir;
+            }
+        }
+
+        return null;
+    }
+
+    private async getProcessCommandLines(): Promise<string[]> {
+        const run = (command: string, args: string[]): Promise<string> =>
+            new Promise((resolve, reject) => {
+                execFile(command, args, { windowsHide: true, maxBuffer: 20 * 1024 * 1024 }, (error, stdout) => {
+                    if (error) {
+                        reject(error);
+                        return;
+                    }
+                    resolve(stdout);
+                });
+            });
+
+        const parseLines = (output: string): string[] =>
+            output
+                .split('\n')
+                .map((line) => line.trim())
+                .filter((line) => line.length > 0);
+
+        try {
+            if (process.platform === 'win32') {
+                try {
+                    const psOutput = await run('powershell.exe', [
+                        '-NoProfile',
+                        '-Command',
+                        'Get-CimInstance Win32_Process | Select-Object -ExpandProperty CommandLine | Where-Object { $_ }',
+                    ]);
+                    return parseLines(psOutput);
+                } catch {
+                    const wmicOutput = await run('wmic', ['process', 'get', 'CommandLine']);
+                    return parseLines(wmicOutput).filter((line) => line !== 'CommandLine');
+                }
+            }
+
+            const psOutput = await run('ps', ['-axo', 'command=']);
+            return parseLines(psOutput);
+        } catch (error) {
+            logger.warn(`[CdpService] Failed to inspect Antigravity processes: ${error instanceof Error ? error.message : String(error)}`);
+            return [];
+        }
     }
 
     /**
@@ -1010,6 +1156,130 @@ export class CdpService extends EventEmitter {
         return { ok: false, error: 'Chat input field not found' };
     }
 
+    private async waitForChatInputReady(timeoutMs = CHAT_READY_TIMEOUT_MS): Promise<{ ok: boolean; contextId?: number; error?: string }> {
+        const deadline = Date.now() + timeoutMs;
+        let lastError = 'Chat input field not found';
+
+        while (Date.now() < deadline) {
+            const focusResult = await this.focusChatInput();
+            if (focusResult.ok) {
+                return focusResult;
+            }
+            lastError = focusResult.error || lastError;
+            await new Promise((r) => setTimeout(r, CHAT_READY_POLL_MS));
+        }
+
+        return { ok: false, error: lastError };
+    }
+
+    private isTransientInjectError(error?: string): boolean {
+        const message = String(error || '');
+        return [
+            'No editor found',
+            'Chat input field not found',
+            'WebSocket is not connected',
+            'WebSocket disconnected',
+        ].some((fragment) => message.includes(fragment));
+    }
+
+    private async isModeToggleReady(): Promise<boolean> {
+        const expression = '(() => {'
+            + ' const uiNameMap = { fast: "Fast", plan: "Planning" };'
+            + ' const knownModes = Object.values(uiNameMap).map(n => n.toLowerCase());'
+            + ' const allBtns = Array.from(document.querySelectorAll("button"));'
+            + ' const visibleBtns = allBtns.filter(b => b.offsetParent !== null);'
+            + ' const modeToggleBtn = visibleBtns.find(b => {'
+            + '   const text = (b.textContent || "").trim().toLowerCase();'
+            + '   const hasChevron = b.querySelector("svg[class*=\\"chevron\\"]");'
+            + '   return knownModes.some(m => text === m) && hasChevron;'
+            + ' });'
+            + ' return !!modeToggleBtn;'
+            + '})()';
+        try {
+            const contextId = this.getPrimaryContextId();
+            const callParams: any = {
+                expression,
+                returnByValue: true,
+                awaitPromise: false,
+            };
+            if (contextId !== null) callParams.contextId = contextId;
+            const res = await this.call('Runtime.evaluate', callParams);
+            return Boolean(res?.result?.value);
+        } catch {
+            return false;
+        }
+    }
+
+    private async waitForModeToggleReady(timeoutMs = MODE_READY_TIMEOUT_MS): Promise<boolean> {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+            if (await this.isModeToggleReady()) {
+                return true;
+            }
+            await new Promise((r) => setTimeout(r, CHAT_READY_POLL_MS));
+        }
+        return false;
+    }
+
+    private isTransientModeError(error?: string): boolean {
+        const message = String(error || '');
+        return [
+            'Mode toggle button not found',
+            'WebSocket is not connected',
+            'WebSocket disconnected',
+        ].some((fragment) => message.includes(fragment));
+    }
+
+    private async injectMessageCore(text: string, imageFilePaths?: string[]): Promise<InjectResult> {
+        const focusResult = await this.waitForChatInputReady();
+        if (!focusResult.ok) {
+            return { ok: false, error: focusResult.error || 'Chat input field not found' };
+        }
+
+        // Clear any existing text in the input field before injecting.
+        await this.clearInputField();
+
+        if (imageFilePaths && imageFilePaths.length > 0) {
+            const attachResult = await this.attachImageFiles(imageFilePaths, focusResult.contextId);
+            if (!attachResult.ok) {
+                return { ok: false, error: attachResult.error || 'Failed to attach images' };
+            }
+        }
+
+        await this.call('Input.insertText', { text });
+        await new Promise(r => setTimeout(r, 200));
+        await this.pressEnterToSend();
+
+        return {
+            ok: true,
+            method: 'enter',
+            contextId: focusResult.contextId,
+        };
+    }
+
+    private async retryInjectOnce(
+        text: string,
+        firstError: string,
+        imageFilePaths?: string[],
+    ): Promise<InjectResult> {
+        logger.warn(`[CdpService] Initial message injection failed: ${firstError}. Retrying once after readiness check...`);
+
+        try {
+            await this.reconnectOnDemand(INJECT_RETRY_READY_TIMEOUT_MS);
+        } catch {
+            // Ignore reconnect failures here; readiness check below will produce the final error.
+        }
+
+        await new Promise((r) => setTimeout(r, INJECT_RETRY_BACKOFF_MS));
+
+        const ready = await this.waitForChatInputReady(INJECT_RETRY_READY_TIMEOUT_MS);
+        if (!ready.ok) {
+            return { ok: false, error: ready.error || firstError };
+        }
+
+        return this.injectMessageCore(text, imageFilePaths);
+    }
+
     /**
      * Select all text in the focused input and delete it to ensure a clean state.
      * Uses Meta+A (select all) then Backspace (delete) via CDP key events.
@@ -1207,22 +1477,12 @@ export class CdpService extends EventEmitter {
             throw new Error('Not connected to CDP. Call connect() first.');
         }
 
-        const focusResult = await this.focusChatInput();
-        if (!focusResult.ok) {
-            return { ok: false, error: focusResult.error || 'Chat input field not found' };
+        const result = await this.injectMessageCore(text);
+        if (result.ok || !this.isTransientInjectError(result.error)) {
+            return result;
         }
 
-        // Clear any existing text in the input field before injecting
-        await this.clearInputField();
-
-        // 1. Input text via CDP Input.insertText
-        await this.call('Input.insertText', { text });
-        await new Promise(r => setTimeout(r, 200));
-
-        // 2. Send via Enter key
-        await this.pressEnterToSend();
-
-        return { ok: true, method: 'enter', contextId: focusResult.contextId };
+        return this.retryInjectOnce(text, result.error || 'Message injection failed');
     }
 
     /**
@@ -1233,24 +1493,12 @@ export class CdpService extends EventEmitter {
             throw new Error('Not connected to CDP. Call connect() first.');
         }
 
-        const focusResult = await this.focusChatInput();
-        if (!focusResult.ok) {
-            return { ok: false, error: focusResult.error || 'Chat input field not found' };
+        const result = await this.injectMessageCore(text, imageFilePaths);
+        if (result.ok || !this.isTransientInjectError(result.error)) {
+            return result;
         }
 
-        // Clear any existing text in the input field before injecting
-        await this.clearInputField();
-
-        const attachResult = await this.attachImageFiles(imageFilePaths, focusResult.contextId);
-        if (!attachResult.ok) {
-            return { ok: false, error: attachResult.error || 'Failed to attach images' };
-        }
-
-        await this.call('Input.insertText', { text });
-        await new Promise(r => setTimeout(r, 200));
-        await this.pressEnterToSend();
-
-        return { ok: true, method: 'enter', contextId: focusResult.contextId };
+        return this.retryInjectOnce(text, result.error || 'Image message injection failed', imageFilePaths);
     }
 
     /**
@@ -1493,6 +1741,8 @@ export class CdpService extends EventEmitter {
             await this.reconnectOnDemand();
         }
 
+        await this.waitForModeToggleReady();
+
         const safeMode = JSON.stringify(modeName);
 
         // Internal mode name -> Antigravity UI display name mapping
@@ -1588,7 +1838,25 @@ export class CdpService extends EventEmitter {
             if (value?.ok) {
                 return { ok: true, mode: value.mode };
             }
-            return { ok: false, error: value?.error || 'UI operation failed (setUiMode)' };
+            const errorMessage = value?.error || 'UI operation failed (setUiMode)';
+            if (!this.isTransientModeError(errorMessage)) {
+                return { ok: false, error: errorMessage };
+            }
+
+            logger.warn(`[CdpService] setUiMode initial attempt failed: ${errorMessage}. Retrying once after readiness check...`);
+            try {
+                await this.reconnectOnDemand(MODE_RETRY_READY_TIMEOUT_MS);
+            } catch {
+                // Fall through to the readiness wait and retry below.
+            }
+            await this.waitForModeToggleReady(MODE_RETRY_READY_TIMEOUT_MS);
+
+            const retryRes = await this.call('Runtime.evaluate', callParams);
+            const retryValue = retryRes?.result?.value;
+            if (retryValue?.ok) {
+                return { ok: true, mode: retryValue.mode };
+            }
+            return { ok: false, error: retryValue?.error || errorMessage };
         } catch (error: any) {
             return { ok: false, error: error?.message || String(error) };
         }
