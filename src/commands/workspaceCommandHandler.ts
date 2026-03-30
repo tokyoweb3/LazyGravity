@@ -27,6 +27,12 @@ export class WorkspaceCommandHandler {
     private readonly chatSessionRepo: ChatSessionRepository;
     private readonly workspaceService: WorkspaceService;
     private readonly channelManager: ChannelManager;
+    private readonly onSessionChannelCreated?: (
+        workspacePath: string,
+        channelId: string,
+        sourceChannelId: string,
+        userId: string,
+    ) => Promise<void>;
 
     private processingWorkspaces: Set<string> = new Set();
 
@@ -69,11 +75,18 @@ export class WorkspaceCommandHandler {
         chatSessionRepo: ChatSessionRepository,
         workspaceService: WorkspaceService,
         channelManager: ChannelManager,
+        onSessionChannelCreated?: (
+            workspacePath: string,
+            channelId: string,
+            sourceChannelId: string,
+            userId: string,
+        ) => Promise<void>,
     ) {
         this.bindingRepo = bindingRepo;
         this.chatSessionRepo = chatSessionRepo;
         this.workspaceService = workspaceService;
         this.channelManager = channelManager;
+        this.onSessionChannelCreated = onSessionChannelCreated;
     }
 
     /**
@@ -107,10 +120,17 @@ export class WorkspaceCommandHandler {
         interaction: StringSelectMenuInteraction,
         guild: Guild,
     ): Promise<void> {
+        const respond = async (payload: Record<string, unknown>) => {
+            if (typeof interaction.editReply === 'function') {
+                await interaction.editReply(payload);
+                return;
+            }
+            await interaction.update(payload);
+        };
         const workspacePath = interaction.values[0];
 
         if (!this.workspaceService.exists(workspacePath)) {
-            await interaction.update({
+            await respond({
                 content: t(`❌ Project \`${workspacePath}\` not found.`),
                 embeds: [],
                 components: [],
@@ -136,7 +156,7 @@ export class WorkspaceCommandHandler {
                 .addFields({ name: t('Full Path'), value: `\`${fullPath}\`` })
                 .setTimestamp();
 
-            await interaction.update({
+            await respond({
                 embeds: [embed],
                 components: [],
             });
@@ -145,7 +165,7 @@ export class WorkspaceCommandHandler {
 
         // Lock project being processed (prevent rapid repeated clicks)
         if (this.processingWorkspaces.has(workspacePath)) {
-            await interaction.update({
+            await respond({
                 content: t(`⏳ **${workspacePath}** is being created. Please wait.`),
                 embeds: [],
                 components: [],
@@ -183,6 +203,13 @@ export class WorkspaceCommandHandler {
                 guildId: guild.id,
             });
 
+            await this.onSessionChannelCreated?.(
+                workspacePath,
+                channelId,
+                interaction.channelId,
+                interaction.user.id,
+            );
+
             const fullPath = this.workspaceService.getWorkspacePath(workspacePath);
 
             const embed = new EmbedBuilder()
@@ -195,7 +222,7 @@ export class WorkspaceCommandHandler {
                 .addFields({ name: t('Full Path'), value: `\`${fullPath}\`` })
                 .setTimestamp();
 
-            await interaction.update({
+            await respond({
                 embeds: [embed],
                 components: [],
             });
@@ -284,6 +311,13 @@ export class WorkspaceCommandHandler {
                 guildId: guild.id,
             });
 
+            await this.onSessionChannelCreated?.(
+                name,
+                channelId,
+                interaction.channelId,
+                interaction.user.id,
+            );
+
             const embed = new EmbedBuilder()
                 .setTitle('📁 Project Created')
                 .setColor(0x00AA00)
@@ -305,7 +339,13 @@ export class WorkspaceCommandHandler {
      */
     public getWorkspaceForChannel(channelId: string): string | undefined {
         const binding = this.bindingRepo.findByChannelId(channelId);
-        if (!binding) return undefined;
-        return this.workspaceService.getWorkspacePath(binding.workspacePath);
+        if (binding) {
+            return this.workspaceService.getWorkspacePath(binding.workspacePath);
+        }
+
+        const session = this.chatSessionRepo.findByChannelId(channelId);
+        if (!session) return undefined;
+
+        return this.workspaceService.getWorkspacePath(session.workspacePath);
     }
 }

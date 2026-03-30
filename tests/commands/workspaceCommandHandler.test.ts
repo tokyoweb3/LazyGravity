@@ -72,6 +72,8 @@ describe('WorkspaceCommandHandler', () => {
     describe('handleSelectMenu', () => {
         it('creates a category and session-1 for the selected workspace and binds them', async () => {
             fs.mkdirSync(path.join(tmpDir, 'selected-project'));
+            const onSessionChannelCreated = jest.fn().mockResolvedValue(undefined);
+            handler = new WorkspaceCommandHandler(bindingRepo, chatSessionRepo, service, channelManager, onSessionChannelCreated);
 
             const mockGuild = {
                 id: 'guild-1',
@@ -92,6 +94,7 @@ describe('WorkspaceCommandHandler', () => {
                 values: ['selected-project'],
                 channelId: 'ch-1',
                 guildId: 'guild-1',
+                user: { id: 'user-1' },
                 update: jest.fn().mockResolvedValue(undefined),
             };
 
@@ -108,6 +111,7 @@ describe('WorkspaceCommandHandler', () => {
             expect(session?.categoryId).toBe('cat-1');
             expect(session?.sessionNumber).toBe(1);
             expect(session?.workspacePath).toBe('selected-project');
+            expect(onSessionChannelCreated).toHaveBeenCalledWith('selected-project', 'new-ch-1', 'ch-1', 'user-1');
         });
 
         it('displays an error for a non-existent workspace', async () => {
@@ -234,6 +238,19 @@ describe('WorkspaceCommandHandler', () => {
             bindingRepo.create({ channelId: 'ch-1', workspacePath: 'my-proj', guildId: 'guild-1' });
             const result = handler.getWorkspaceForChannel('ch-1');
             expect(result).toBe(path.join(tmpDir, 'my-proj'));
+        });
+
+        it('falls back to the chat session workspace when the channel binding is missing', () => {
+            chatSessionRepo.create({
+                channelId: 'ch-session-1',
+                categoryId: 'cat-1',
+                workspacePath: 'session-proj',
+                sessionNumber: 1,
+                guildId: 'guild-1',
+            });
+
+            const result = handler.getWorkspaceForChannel('ch-session-1');
+            expect(result).toBe(path.join(tmpDir, 'session-proj'));
         });
 
         it('returns undefined when the channel is not bound', () => {

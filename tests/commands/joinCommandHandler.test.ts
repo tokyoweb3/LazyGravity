@@ -6,6 +6,7 @@ import { ChannelManager } from '../../src/services/channelManager';
 import { CdpConnectionPool } from '../../src/services/cdpConnectionPool';
 import { WorkspaceService } from '../../src/services/workspaceService';
 import Database from 'better-sqlite3';
+import { ensureUserMessageDetector } from '../../src/services/cdpBridgeManager';
 
 // Mock ensureUserMessageDetector and getCurrentChatTitle to prevent real polling in tests
 jest.mock('../../src/services/cdpBridgeManager', () => ({
@@ -33,11 +34,13 @@ describe('JoinCommandHandler', () => {
     let chatSessionRepo: ChatSessionRepository;
     let bindingRepo: WorkspaceBindingRepository;
     let channelManager: ChannelManager;
+    let resolveAccountForChannel: jest.Mock;
 
     const makeMockInteraction = (overrides: Record<string, any> = {}) => ({
         guild: { id: 'guild-1' },
         channel: { type: 0, parentId: 'cat-1', id: 'ch-1' },
         channelId: 'ch-1',
+        user: { id: 'user-1' },
         editReply: jest.fn().mockResolvedValue(undefined),
         ...overrides,
     });
@@ -79,6 +82,7 @@ describe('JoinCommandHandler', () => {
         chatSessionRepo = new ChatSessionRepository(db);
         bindingRepo = new WorkspaceBindingRepository(db);
         channelManager = new ChannelManager();
+        resolveAccountForChannel = jest.fn().mockReturnValue('work4');
 
         handler = new JoinCommandHandler(
             mockService,
@@ -88,6 +92,8 @@ describe('JoinCommandHandler', () => {
             mockPool,
             mockWorkspaceService,
             mockClient,
+            undefined,
+            resolveAccountForChannel,
         );
     });
 
@@ -141,6 +147,8 @@ describe('JoinCommandHandler', () => {
             const bridge = { pool: mockPool, lastActiveWorkspace: null } as any;
 
             await handler.handleJoin(interaction as any, bridge);
+
+            expect(mockPool.getOrConnect).toHaveBeenCalledWith('/workspace/base/my-project', { name: 'work4' });
 
             expect(interaction.editReply).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -200,6 +208,7 @@ describe('JoinCommandHandler', () => {
             const interaction = {
                 guild: mockGuild,
                 channelId: 'ch-1',
+                user: { id: 'user-1' },
                 values: ['My Session'],
                 editReply: jest.fn().mockResolvedValue(undefined),
             };
@@ -265,6 +274,7 @@ describe('JoinCommandHandler', () => {
             const interaction = {
                 guild: guildWithCreate,
                 channelId: 'ch-1',
+                user: { id: 'user-1' },
                 values: ['Lost Session'],
                 editReply: jest.fn().mockResolvedValue(undefined),
             };
@@ -281,6 +291,7 @@ describe('JoinCommandHandler', () => {
             expect(guildWithCreate.channels.create).toHaveBeenCalled();
             expect(bindingRepo.findByChannelId('new-ch-43')?.workspacePath).toBe('my-project');
             expect(chatSessionRepo.findByChannelId('new-ch-43')?.displayName).toBe('Lost Session');
+            expect(chatSessionRepo.findByChannelId('new-ch-43')?.activeAccountName).toBe('work4');
         });
 
         it('creates new channel and binds session when no channel exists', async () => {
@@ -301,6 +312,7 @@ describe('JoinCommandHandler', () => {
             const interaction = {
                 guild: guildWithCreate,
                 channelId: 'ch-1',
+                user: { id: 'user-1' },
                 values: ['Brand New Session'],
                 editReply: jest.fn().mockResolvedValue(undefined),
             };
@@ -308,6 +320,7 @@ describe('JoinCommandHandler', () => {
 
             await handler.handleJoinSelect(interaction as any, bridge);
 
+            expect(mockPool.getOrConnect).toHaveBeenCalledWith('/workspace/base/my-project', { name: 'work4' });
             expect(mockService.activateSessionByTitle).toHaveBeenCalledWith(mockCdp, 'Brand New Session');
             // Verify channel was created
             expect(guildWithCreate.channels.create).toHaveBeenCalled();
@@ -318,6 +331,7 @@ describe('JoinCommandHandler', () => {
             const session = chatSessionRepo.findByChannelId('new-ch-42');
             expect(session?.displayName).toBe('Brand New Session');
             expect(session?.isRenamed).toBe(true);
+            expect(session?.activeAccountName).toBe('work4');
         });
 
         it('stops existing detector before starting mirroring (force re-prime)', async () => {
@@ -341,6 +355,7 @@ describe('JoinCommandHandler', () => {
             const interaction = {
                 guild: guildWithCreate,
                 channelId: 'ch-1',
+                user: { id: 'user-1' },
                 values: ['Session After Switch'],
                 editReply: jest.fn().mockResolvedValue(undefined),
             };
@@ -361,6 +376,7 @@ describe('JoinCommandHandler', () => {
             const interaction = {
                 guild: mockGuild,
                 channelId: 'ch-1',
+                user: { id: 'user-1' },
                 values: ['Missing Session'],
                 editReply: jest.fn().mockResolvedValue(undefined),
             };
@@ -387,6 +403,7 @@ describe('JoinCommandHandler', () => {
 
             await handler.handleMirror(interaction as any, bridge);
 
+            expect(mockPool.getUserMessageDetector).toHaveBeenCalledWith('my-project', 'work4');
             expect(mockDetector.stop).toHaveBeenCalled();
             expect(interaction.editReply).toHaveBeenCalledWith(
                 expect.objectContaining({
@@ -412,6 +429,14 @@ describe('JoinCommandHandler', () => {
 
             await handler.handleMirror(interaction as any, bridge);
 
+            expect(mockPool.getOrConnect).toHaveBeenCalledWith('/workspace/base/my-project', { name: 'work4' });
+            expect(ensureUserMessageDetector).toHaveBeenCalledWith(
+                bridge,
+                mockCdp,
+                'my-project',
+                expect.any(Function),
+                'work4',
+            );
             expect(interaction.editReply).toHaveBeenCalledWith(
                 expect.objectContaining({
                     embeds: expect.arrayContaining([
