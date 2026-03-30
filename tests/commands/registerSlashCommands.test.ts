@@ -92,6 +92,16 @@ describe('registerSlashCommands', () => {
         expect(names).toContain('output');
     });
 
+    it('includes the account command in registration targets', () => {
+        const names = slashCommands.map((cmd) => cmd.toJSON().name);
+        expect(names).toContain('account');
+    });
+
+    it('includes the open command in registration targets', () => {
+        const names = slashCommands.map((cmd) => cmd.toJSON().name);
+        expect(names).toContain('open');
+    });
+
     beforeEach(() => {
         jest.clearAllMocks();
     });

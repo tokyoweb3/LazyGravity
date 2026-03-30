@@ -4,6 +4,7 @@ import {
     handleTelegramProjectSelect,
     createTelegramSelectHandler,
     TG_PROJECT_SELECT_ID,
+    tryCreateTopicAndBind,
 } from '../../src/bot/telegramProjectCommand';
 import type { PlatformMessage, PlatformSelectInteraction } from '../../src/platform/types';
 
@@ -355,6 +356,38 @@ describe('handleTelegramProjectSelect', () => {
 
         expect(deps.telegramBindingRepo.upsert).not.toHaveBeenCalled();
         expect(interaction.reply).not.toHaveBeenCalled();
+    });
+});
+
+describe('tryCreateTopicAndBind', () => {
+    beforeEach(() => jest.clearAllMocks());
+
+    it('reuses the current forum topic when the command is already inside one', async () => {
+        const telegramBindingRepo = createMockBindingRepo();
+        const botApi = {
+            getChat: jest.fn(),
+            createForumTopic: jest.fn(),
+            sendMessage: jest.fn(),
+        };
+        const pool = {
+            extractProjectName: jest.fn().mockReturnValue('proj-a'),
+        };
+
+        const result = await tryCreateTopicAndBind(
+            botApi,
+            'chat-100_42',
+            'proj-a',
+            telegramBindingRepo,
+            pool,
+        );
+
+        expect(result).toBe('chat-100_42');
+        expect(telegramBindingRepo.upsert).toHaveBeenCalledWith({
+            chatId: 'chat-100_42',
+            workspacePath: 'proj-a',
+        });
+        expect(botApi.getChat).not.toHaveBeenCalled();
+        expect(botApi.createForumTopic).not.toHaveBeenCalled();
     });
 });
 

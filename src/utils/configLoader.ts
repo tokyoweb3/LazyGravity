@@ -5,6 +5,10 @@ import * as dotenv from 'dotenv';
 import type { AppConfig, ExtractionMode } from './config';
 import type { LogLevel } from './logger';
 import type { PlatformType } from '../platform/types';
+import {
+    normalizeAntigravityAccounts,
+    parseAntigravityAccounts,
+} from './cdpPorts';
 
 // Load .env at module init time (same as the original config.ts behavior).
 // dotenv will NOT override already-set env vars by default.
@@ -31,6 +35,13 @@ export interface PersistedConfig {
     telegramAllowedUserIds?: string[];
     platforms?: PlatformType[];
     responseTimeoutMs?: number;
+    antigravityAccounts?: string | AntigravityAccountConfig[];
+}
+
+export interface AntigravityAccountConfig {
+    name: string;
+    cdpPort: number;
+    userDataDir?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -122,6 +133,10 @@ function mergeConfig(persisted: PersistedConfig): AppConfig {
         persisted.responseTimeoutMs,
         900000,
     );
+    const antigravityAccounts = resolveAntigravityAccounts(
+        process.env.ANTIGRAVITY_ACCOUNTS,
+        persisted.antigravityAccounts,
+    );
 
     // Telegram credentials — only required when Telegram is an active platform
     const telegramToken = process.env.TELEGRAM_BOT_TOKEN ?? persisted.telegramToken ?? undefined;
@@ -143,6 +158,7 @@ function mergeConfig(persisted: PersistedConfig): AppConfig {
         logLevel,
         extractionMode,
         responseTimeoutMs,
+        antigravityAccounts,
         telegramToken,
         telegramAllowedUserIds,
         platforms,
@@ -197,6 +213,23 @@ function resolveTelegramAllowedUserIds(persisted: PersistedConfig): string[] | u
         return [...persisted.telegramAllowedUserIds];
     }
     return undefined;
+}
+
+function resolveAntigravityAccounts(
+    envValue: string | undefined,
+    persistedValue: string | AntigravityAccountConfig[] | undefined,
+): AntigravityAccountConfig[] {
+    if (envValue && envValue.trim().length > 0) {
+        return parseAntigravityAccounts(envValue);
+    }
+
+    if (typeof persistedValue === 'string' && persistedValue.trim().length > 0) {
+        return parseAntigravityAccounts(persistedValue);
+    }
+
+    return Array.isArray(persistedValue)
+        ? normalizeAntigravityAccounts(persistedValue)
+        : normalizeAntigravityAccounts(undefined);
 }
 
 const VALID_PLATFORMS: readonly PlatformType[] = ['discord', 'telegram'];

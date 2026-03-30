@@ -1,3 +1,4 @@
+import { handleJoin, handleMirror } from './telegramJoinCommand';
 /**
  * Telegram command parser and handlers.
  *
@@ -33,15 +34,21 @@ import { buildModelsPayload } from '../ui/modelsUi';
 import { buildAutoAcceptPayload } from '../ui/autoAcceptUi';
 import { buildTemplatePayload } from '../ui/templateUi';
 import { buildScreenshotPayload } from '../ui/screenshotUi';
+import { buildAccountPayload } from '../ui/accountUi';
 import { logBuffer } from '../utils/logBuffer';
 import { escapeHtml } from '../platform/telegram/telegramFormatter';
 import { logger } from '../utils/logger';
+import { tryCreateTopicAndBind } from './telegramProjectCommand';
+import { listAccountNames, resolveValidAccountName } from '../utils/accountUtils';
+import type { AccountPreferenceRepository } from '../database/accountPreferenceRepository';
+import type { ChannelPreferenceRepository } from '../database/channelPreferenceRepository';
+import type { AntigravityAccountConfig } from '../utils/configLoader';
 
 // ---------------------------------------------------------------------------
 // Known commands (used by both parser and /help output)
 // ---------------------------------------------------------------------------
 
-const KNOWN_COMMANDS = ['start', 'help', 'status', 'stop', 'ping', 'mode', 'model', 'screenshot', 'autoaccept', 'template', 'template_add', 'template_delete', 'project_create', 'logs', 'new'] as const;
+const KNOWN_COMMANDS = ['start', 'help', 'status', 'stop', 'ping', 'mode', 'model', 'screenshot', 'autoaccept', 'account', 'open', 'template', 'template_add', 'template_delete', 'project_create', 'logs', 'new', 'join', 'mirror'] as const;
 type KnownCommand = typeof KNOWN_COMMANDS[number];
 
 // ---------------------------------------------------------------------------
@@ -85,6 +92,7 @@ export function parseTelegramCommand(text: string): ParsedTelegramCommand | null
 
 export interface TelegramCommandDeps {
     readonly bridge: CdpBridge;
+    readonly botApi?: any;
     readonly modeService?: ModeService;
     readonly modelService?: ModelService;
     readonly telegramBindingRepo?: TelegramBindingRepository;
@@ -95,6 +103,9 @@ export interface TelegramCommandDeps {
     /** Shared map of active ResponseMonitors keyed by project name.
      *  Used by /stop to halt monitoring and prevent stale re-sends. */
     readonly activeMonitors?: Map<string, ResponseMonitor>;
+    readonly accountPrefRepo?: AccountPreferenceRepository;
+    readonly channelPrefRepo?: ChannelPreferenceRepository;
+    readonly antigravityAccounts?: AntigravityAccountConfig[];
 }
 
 // ---------------------------------------------------------------------------
@@ -141,6 +152,12 @@ export async function handleTelegramCommand(
         case 'autoaccept':
             await handleAutoAccept(deps, message, parsed.args);
             break;
+        case 'account':
+            await handleAccount(deps, message, parsed.args);
+            break;
+        case 'open':
+            await handleOpen(deps, message);
+            break;
         case 'template':
             await handleTemplate(deps, message);
             break;
@@ -158,6 +175,12 @@ export async function handleTelegramCommand(
             break;
         case 'new':
             await handleNew(deps, message);
+            break;
+        case 'join':
+            await handleJoin(deps, message);
+            break;
+        case 'mirror':
+            await handleMirror(deps, message);
             break;
         default:
             // Should not happen — parser filters unknowns
@@ -195,11 +218,15 @@ async function handleHelp(message: PlatformMessage): Promise<void> {
         '/model — Switch LLM model',
         '/screenshot — Capture Antigravity screenshot',
         '/autoaccept — Toggle auto-accept mode',
+        '/account — Show and switch Antigravity account',
+        '/open — Open the bound project in the selected Antigravity account',
         '/template — List prompt templates',
         '/template_add — Add a prompt template',
         '/template_delete — Delete a prompt template',
         '/project_create — Create a new workspace',
         '/new — Start a new chat session',
+        '/join — Take over an existing Antigravity session',
+        '/mirror — Toggle PC-to-Telegram message mirroring',
         '/logs — Show recent log entries',
         '/stop — Interrupt active LLM generation',
         '/ping — Check bot latency',
@@ -351,6 +378,62 @@ async function handleAutoAccept(deps: TelegramCommandDeps, message: PlatformMess
     await message.reply(payload).catch(logger.error);
 }
 
+async function handleAccount(deps: TelegramCommandDeps, message: PlatformMessage, args: string): Promise<void> {
+    if (!deps.accountPrefRepo) {
+        await message.reply({ text: 'Account preference service not available.' }).catch(logger.error);
+        return;
+    }
+
+    const names = listAccountNames(deps.antigravityAccounts);
+    const chatId = message.channel.id;
+    const userId = message.author.id;
+
+    const applySelection = (selectedAccount: string): void => {
+        deps.accountPrefRepo?.setAccountName(userId, selectedAccount);
+        deps.channelPrefRepo?.setAccountName(chatId, selectedAccount);
+        deps.bridge.selectedAccountByChannel?.set(chatId, selectedAccount);
+
+        const channelBinding = deps.telegramBindingRepo?.findByChatId(chatId);
+        const workspacePath = channelBinding
+            ? (deps.workspaceService
+                ? deps.workspaceService.getWorkspacePath(channelBinding.workspacePath)
+                : channelBinding.workspacePath)
+            : null;
+
+        const selectedPort = deps.antigravityAccounts?.find((a) => a.name === selectedAccount)?.cdpPort;
+        logger.info(
+            `[AccountSwitch] source=telegram_command channel=${chatId} user=${userId} ` +
+            `account=${selectedAccount} port=${selectedPort ?? 'unknown'} ` +
+            `workspace=${workspacePath ?? 'unbound'}`,
+        );
+    };
+
+    const requested = args.trim();
+    if (requested) {
+        if (!names.includes(requested)) {
+            await message.reply({
+                text: `⚠️ Unknown account: <b>${escapeHtml(requested)}</b>\nAvailable: ${names.map(escapeHtml).join(', ')}`,
+            }).catch(logger.error);
+            return;
+        }
+
+        applySelection(requested);
+        await message.reply({ text: `✅ Switched account to <b>${escapeHtml(requested)}</b>.` }).catch(logger.error);
+        return;
+    }
+
+    const current = resolveValidAccountName(
+        deps.bridge.selectedAccountByChannel?.get(chatId)
+            ?? deps.channelPrefRepo?.getAccountName(chatId)
+            ?? deps.accountPrefRepo.getAccountName(userId)
+            ?? 'default',
+        deps.antigravityAccounts,
+    );
+
+    const payload = buildAccountPayload(current, names);
+    await message.reply(payload).catch(logger.error);
+}
+
 async function handleTemplate(deps: TelegramCommandDeps, message: PlatformMessage): Promise<void> {
     if (!deps.templateRepo) {
         await message.reply({ text: 'Template service not available.' }).catch(logger.error);
@@ -467,48 +550,61 @@ async function handleLogs(message: PlatformMessage, args: string): Promise<void>
 }
 
 async function handleNew(deps: TelegramCommandDeps, message: PlatformMessage): Promise<void> {
-    if (!deps.chatSessionService) {
-        await message.reply({ text: 'Chat session service not available.' }).catch(logger.error);
-        return;
-    }
+    const originalChannelId = message.channel.id;
+    const binding = deps.telegramBindingRepo?.findByChatId(originalChannelId);
 
-    // Resolve workspace binding for this chat
-    const chatId = message.channel.id;
-    const binding = deps.telegramBindingRepo?.findByChatId(chatId);
     if (!binding) {
-        await message.reply({
-            text: 'No project is linked to this chat. Use /project to bind a workspace first.',
-        }).catch(logger.error);
+        await message.reply({ text: '⚠️ No project is linked to this chat. Use /project first.' }).catch(logger.error);
         return;
     }
 
-    // Resolve workspace path and connect to CDP
-    let cdp;
-    try {
-        const workspacePath = deps.workspaceService
-            ? deps.workspaceService.getWorkspacePath(binding.workspacePath)
-            : binding.workspacePath;
-        cdp = await deps.bridge.pool.getOrConnect(workspacePath);
-    } catch (err: any) {
-        logger.error('[TelegramCommand:new] CDP connection failed:', err?.message || err);
-        await message.reply({ text: 'Failed to connect to Antigravity.' }).catch(logger.error);
-        return;
+    const resolvedWorkspacePath = deps.workspaceService
+        ? deps.workspaceService.getWorkspacePath(binding.workspacePath)
+        : binding.workspacePath;
+
+    let targetChannelId = originalChannelId;
+    if (deps.botApi && deps.bridge && deps.telegramBindingRepo) {
+        targetChannelId = await tryCreateTopicAndBind(
+            deps.botApi,
+            originalChannelId,
+            binding.workspacePath,
+            deps.telegramBindingRepo,
+            deps.bridge.pool
+        );
     }
 
-    // Start a new chat session
+    if (targetChannelId !== originalChannelId) {
+        await message.reply({ text: `✅ Created a new topic for the session.` }).catch(() => {});
+    }
+
+    const selectedAccount = resolveValidAccountName(
+        deps.bridge.selectedAccountByChannel?.get(originalChannelId)
+            ?? deps.channelPrefRepo?.getAccountName(originalChannelId)
+            ?? deps.accountPrefRepo?.getAccountName(message.author.id)
+            ?? 'default',
+        deps.antigravityAccounts,
+    );
+
     try {
+        const cdp = await deps.bridge.pool.getOrConnect(resolvedWorkspacePath, { name: selectedAccount });
+
+        if (!deps.chatSessionService) {
+            await message.reply({ text: 'Chat session service not available.' }).catch(logger.error);
+            return;
+        }
+
         const result = await deps.chatSessionService.startNewChat(cdp);
         if (result.ok) {
-            await message.reply({ text: 'New chat session started.' }).catch(logger.error);
+            if (targetChannelId === originalChannelId) {
+                await message.reply({ text: '✅ New chat session started.' }).catch(logger.error);
+            }
         } else {
             logger.warn('[TelegramCommand:new] startNewChat failed:', result.error);
-            await message.reply({
-                text: `Failed to start new chat: ${escapeHtml(result.error || 'unknown error')}`,
-            }).catch(logger.error);
+            await message.reply({ text: `❌ Failed to start new chat: ${result.error}` }).catch(logger.error);
         }
     } catch (err: any) {
         logger.error('[TelegramCommand:new] startNewChat threw:', err?.message || err);
-        await message.reply({ text: 'Failed to start new chat.' }).catch(logger.error);
+        await message.reply({ text: '❌ Failed to connect to Antigravity. Is it running?' }).catch(logger.error);
     }
 }
 
@@ -527,5 +623,73 @@ async function sendFilePayload(message: PlatformMessage, payload: MessagePayload
     } catch (err: unknown) {
         logger.warn('[TelegramCommand:screenshot] File sending failed:', err instanceof Error ? err.message : err);
         await message.reply({ text: 'Screenshot captured but file sending failed.' }).catch(logger.error);
+    }
+}
+
+
+async function handleOpen(deps: TelegramCommandDeps, message: PlatformMessage): Promise<void> {
+    const chatId = message.channel.id;
+    const channelBinding = deps.telegramBindingRepo?.findByChatId(chatId);
+    
+    if (!channelBinding) {
+        await message.reply({ text: '⚠️ No project is bound to this chat. Use /project first.' }).catch(logger.error);
+        return;
+    }
+
+    const workspacePath = deps.workspaceService
+        ? deps.workspaceService.getWorkspacePath(channelBinding.workspacePath)
+        : channelBinding.workspacePath;
+
+    if (!fs.existsSync(workspacePath) || !fs.statSync(workspacePath).isDirectory()) {
+        await message.reply({ text: `❌ Project folder does not exist: <code>${escapeHtml(workspacePath)}</code>` }).catch(logger.error);
+        return;
+    }
+
+    const selectedAccount = resolveValidAccountName(
+        deps.bridge.selectedAccountByChannel?.get(chatId)
+            ?? deps.channelPrefRepo?.getAccountName(chatId)
+            ?? deps.accountPrefRepo?.getAccountName(message.author.id)
+            ?? 'default',
+        deps.antigravityAccounts,
+    );
+    
+    const accountPorts = Object.fromEntries(
+        (deps.antigravityAccounts ?? []).map((account) => [account.name, account.cdpPort]),
+    );
+    
+    const port = accountPorts[selectedAccount] ?? null;
+    const projectName = deps.bridge.pool.extractProjectName(workspacePath);
+
+    logger.info(
+        `[OpenCommand] channel=${chatId} user=${message.author.id} ` +
+        `project=${projectName} account=${selectedAccount} ` +
+        `port=${port ?? 'unknown'} workspacePath=${workspacePath}`,
+    );
+
+    try {
+        const { CdpService } = await import('../services/cdpService');
+        const cdp = new CdpService({
+            accountName: selectedAccount,
+            accountPorts,
+            cdpCallTimeout: 15000,
+            maxReconnectAttempts: 0,
+        });
+
+        try {
+            await cdp.openWorkspace(workspacePath);
+        } finally {
+            await cdp.disconnect().catch(() => {});
+        }
+
+        deps.bridge.selectedAccountByChannel?.set(chatId, selectedAccount);
+
+        await message.reply({
+            text: `✅ Opened <b>${escapeHtml(projectName)}</b> in account <b>${escapeHtml(selectedAccount)}</b>${port ? ` (CDP ${port})` : ''}.`,
+        }).catch(logger.error);
+    } catch (error: any) {
+        logger.error('[OpenCommand] Failed to open workspace:', error);
+        await message.reply({
+            text: `❌ Failed to open project in account <b>${escapeHtml(selectedAccount)}</b>: ${escapeHtml(error?.message || String(error))}`,
+        }).catch(logger.error);
     }
 }

@@ -120,13 +120,16 @@ describe('CdpService - UI sync (Step 9)', () => {
             (cdpService as any).isConnectedFlag = true;
             (cdpService as any).ws = mockWsInstance;
 
-            callSpy.mockResolvedValue({
-                result: { value: { ok: true, mode: 'Planning' } }
-            });
+            callSpy
+                .mockResolvedValueOnce({ result: { value: true } })
+                .mockResolvedValueOnce({ result: { value: { ok: true, mode: 'Planning' } } });
 
             await cdpService.setUiMode('plan');
 
-            const callArgs = callSpy.mock.calls[0][1];
+            const runtimeEvaluateCalls = callSpy.mock.calls.filter(
+                (call) => call[0] === 'Runtime.evaluate' && String(call[1]?.expression || '').includes('role=\\"dialog\\"'),
+            );
+            const callArgs = runtimeEvaluateCalls[0][1];
             // Verify dialog-based search is used
             expect(callArgs.expression).toContain('role=\\"dialog\\"');
             expect(callArgs.expression).toContain('.font-medium');
@@ -145,6 +148,23 @@ describe('CdpService - UI sync (Step 9)', () => {
 
             expect(result.ok).toBe(false);
             expect(result.error).toBeDefined();
+        });
+
+        it('retries once when the mode toggle is not ready yet', async () => {
+            (cdpService as any).isConnectedFlag = true;
+            (cdpService as any).ws = mockWsInstance;
+
+            callSpy
+                .mockResolvedValueOnce({ result: { value: true } })
+                .mockResolvedValueOnce({ result: { value: { ok: false, error: 'Mode toggle button not found' } } })
+                .mockResolvedValueOnce({ result: { value: true } })
+                .mockResolvedValueOnce({ result: { value: { ok: true, mode: 'Planning' } } });
+
+            const result = await cdpService.setUiMode('plan');
+
+            expect(result.ok).toBe(true);
+            expect(result.mode).toBe('Planning');
+            expect(callSpy).toHaveBeenCalledTimes(4);
         });
 
         it('returns ok: false without crashing when a CDP error occurs', async () => {
@@ -251,6 +271,28 @@ describe('CdpService - UI sync (Step 9)', () => {
                     contextId: 42,
                 })
             );
+        });
+
+        it('uses semantic menu and option selectors instead of only exact class matching', async () => {
+            (cdpService as any).isConnectedFlag = true;
+            (cdpService as any).ws = mockWsInstance;
+
+            callSpy.mockResolvedValue({
+                result: { value: { ok: true, model: 'Claude Opus 4.6 (Thinking)' } }
+            });
+
+            await cdpService.setUiModel('Claude Opus 4.6 (Thinking)');
+
+            const callArgs = callSpy.mock.calls[0][1];
+            expect(callArgs.expression).toContain('[role="option"]');
+            expect(callArgs.expression).toContain('[role="listbox"]');
+            expect(callArgs.expression).toContain('Model click did not update selected state.');
+            expect(callArgs.expression).toContain('diagnostics');
+            expect(callArgs.expression).toContain('open in terminal');
+            expect(callArgs.expression).toContain('claude code');
+            expect(callArgs.expression).toContain('select model|current:');
+            expect(callArgs.expression).toContain('ariaHaspopup');
+            expect(callArgs.expression).toContain('openPicker');
         });
     });
 });

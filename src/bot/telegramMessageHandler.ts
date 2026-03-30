@@ -29,6 +29,10 @@ import { cleanupInboundImageAttachments } from '../utils/imageHandler';
 import type { InboundImageAttachment } from '../utils/imageHandler';
 import type { ExtractionMode } from '../utils/config';
 import type { ChatSessionService } from '../services/chatSessionService';
+import type { AccountPreferenceRepository } from '../database/accountPreferenceRepository';
+import type { ChannelPreferenceRepository } from '../database/channelPreferenceRepository';
+import type { AntigravityAccountConfig } from '../utils/configLoader';
+import { resolveValidAccountName } from '../utils/accountUtils';
 
 export interface TelegramMessageHandlerDeps {
     readonly bridge: CdpBridge;
@@ -49,6 +53,9 @@ export interface TelegramMessageHandlerDeps {
     readonly chatSessionService?: ChatSessionService;
     /** Response monitor inactivity timeout in ms. Defaults to ResponseMonitor default (900000). */
     readonly responseTimeoutMs?: number;
+    readonly accountPrefRepo?: AccountPreferenceRepository;
+    readonly channelPrefRepo?: ChannelPreferenceRepository;
+    readonly antigravityAccounts?: AntigravityAccountConfig[];
 }
 
 /**
@@ -58,6 +65,16 @@ export interface TelegramMessageHandlerDeps {
 export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
     // Per-workspace prompt queue to serialize messages
     const workspaceQueues = new Map<string, Promise<void>>();
+
+    function resolveAccount(chatId: string, userId: string): string {
+        return resolveValidAccountName(
+            deps.bridge.selectedAccountByChannel?.get(chatId)
+                ?? deps.channelPrefRepo?.getAccountName(chatId)
+                ?? deps.accountPrefRepo?.getAccountName(userId)
+                ?? 'default',
+            deps.antigravityAccounts,
+        );
+    }
 
     function enqueueForWorkspace(
         workspacePath: string,
@@ -101,6 +118,10 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
                     fetchQuota: deps.fetchQuota,
                     activeMonitors: deps.activeMonitors,
                     chatSessionService: deps.chatSessionService,
+                    accountPrefRepo: deps.accountPrefRepo,
+                    channelPrefRepo: deps.channelPrefRepo,
+                    antigravityAccounts: deps.antigravityAccounts,
+                    botApi: deps.botApi,
                 },
                 message,
                 cmd,
@@ -138,11 +159,14 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
             : binding.workspacePath;
 
         await enqueueForWorkspace(workspacePath, async () => {
+            const selectedAccount = resolveAccount(chatId, message.author.id);
+            deps.bridge.selectedAccountByChannel?.set(chatId, selectedAccount);
+
             const cdpStartTime = Date.now();
             logger.debug(`[TelegramHandler] getOrConnect start (elapsed=${cdpStartTime - handlerEntryTime}ms)`);
             let cdp: CdpService;
             try {
-                cdp = await deps.bridge.pool.getOrConnect(workspacePath);
+                cdp = await deps.bridge.pool.getOrConnect(workspacePath, { name: selectedAccount });
             } catch (e: any) {
                 await message.reply({
                     text: `Failed to connect to workspace: ${e.message}`,
@@ -180,10 +204,10 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
             }
 
             // Start detectors (platform-agnostic now)
-            ensureApprovalDetector(deps.bridge, cdp, projectName);
-            ensureErrorPopupDetector(deps.bridge, cdp, projectName);
-            ensurePlanningDetector(deps.bridge, cdp, projectName);
-            ensureRunCommandDetector(deps.bridge, cdp, projectName);
+            ensureApprovalDetector(deps.bridge, cdp, projectName, selectedAccount);
+            ensureErrorPopupDetector(deps.bridge, cdp, projectName, selectedAccount);
+            ensurePlanningDetector(deps.bridge, cdp, projectName, selectedAccount);
+            ensureRunCommandDetector(deps.bridge, cdp, projectName, selectedAccount);
 
             // Acknowledge receipt
             await message.react('\u{1F440}').catch(() => {});
