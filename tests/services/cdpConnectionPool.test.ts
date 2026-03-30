@@ -96,6 +96,55 @@ describe('CdpConnectionPool', () => {
             expect(pool.getActiveWorkspaceNames()).toEqual(expect.arrayContaining(['ProjectA', 'ProjectB']));
         });
 
+        it('creates separate instances for the same workspace on different accounts', async () => {
+            (CdpService as jest.MockedClass<typeof CdpService>).mockReset();
+            let callCount = 0;
+            (CdpService as jest.MockedClass<typeof CdpService>).mockImplementation(() => {
+                callCount += 1;
+                return {
+                    isConnected: jest.fn().mockReturnValue(true),
+                    discoverAndConnectForWorkspace: jest.fn().mockResolvedValue(true),
+                    on: jest.fn(),
+                    disconnect: jest.fn().mockResolvedValue(undefined),
+                    _id: callCount,
+                } as any;
+            });
+
+            const cdpDefault = await pool.getOrConnect('/path/to/ProjectA', { name: 'default' });
+            const cdpWork = await pool.getOrConnect('/path/to/ProjectA', { name: 'work' });
+
+            expect(cdpDefault).not.toBe(cdpWork);
+            expect(CdpService).toHaveBeenCalledTimes(2);
+            expect(pool.getConnected('ProjectA', 'work')).toBe(cdpWork);
+
+            pool.setPreferredAccountForWorkspace('/path/to/ProjectA', 'default');
+            expect(pool.getConnected('ProjectA')).toBe(cdpDefault);
+        });
+
+        it('honors an explicit switch back to default even when a preferred workspace account exists', async () => {
+            (CdpService as jest.MockedClass<typeof CdpService>).mockReset();
+            let callCount = 0;
+            (CdpService as jest.MockedClass<typeof CdpService>).mockImplementation(() => {
+                callCount += 1;
+                return {
+                    isConnected: jest.fn().mockReturnValue(true),
+                    discoverAndConnectForWorkspace: jest.fn().mockResolvedValue(true),
+                    on: jest.fn(),
+                    disconnect: jest.fn().mockResolvedValue(undefined),
+                    _id: callCount,
+                } as any;
+            });
+
+            const cdpWork4 = await pool.getOrConnect('/path/to/VPN', { name: 'work4' });
+            expect(CdpService).toHaveBeenLastCalledWith(expect.objectContaining({ accountName: 'work4' }));
+
+            const cdpDefault = await pool.getOrConnect('/path/to/VPN', { name: 'default' });
+
+            expect(cdpDefault).not.toBe(cdpWork4);
+            expect(CdpService).toHaveBeenLastCalledWith(expect.objectContaining({ accountName: 'default' }));
+            expect(pool.getConnected('VPN', 'default')).toBe(cdpDefault);
+        });
+
         it('prevents concurrent connections with a Promise lock', async () => {
             // Reset mock counter for this test
             (CdpService as jest.MockedClass<typeof CdpService>).mockReset();
@@ -151,6 +200,21 @@ describe('CdpConnectionPool', () => {
         it('returns null when not connected', () => {
             const result = pool.getConnected('NonExistent');
             expect(result).toBeNull();
+        });
+
+        it('uses the preferred workspace account when resolving default lookups', async () => {
+            const mockCdp = {
+                isConnected: jest.fn().mockReturnValue(true),
+                discoverAndConnectForWorkspace: jest.fn().mockResolvedValue(true),
+                on: jest.fn(),
+                disconnect: jest.fn().mockResolvedValue(undefined),
+            };
+            (CdpService as jest.MockedClass<typeof CdpService>).mockImplementation(() => mockCdp as any);
+
+            pool.setPreferredAccountForWorkspace('/path/to/ProjectA', 'work');
+            await pool.getOrConnect('/path/to/ProjectA', { name: 'work' });
+
+            expect(pool.getConnected('ProjectA')).toBe(mockCdp);
         });
     });
 
