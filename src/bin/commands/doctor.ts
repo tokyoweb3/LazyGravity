@@ -1,7 +1,7 @@
 import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
-import { getConfiguredCdpPorts } from '../../utils/cdpPorts';
+import { CDP_PORTS } from '../../utils/cdpPorts';
 import { ConfigLoader } from '../../utils/configLoader';
 import { getAntigravityCdpHint } from '../../utils/pathUtils';
 import { COLORS } from '../../utils/logger';
@@ -69,7 +69,6 @@ function checkRequiredEnvVars(): { name: string; set: boolean }[] {
 export async function doctorAction(): Promise<void> {
     console.log(`\n${COLORS.cyan}lazy-gravity doctor${COLORS.reset}\n`);
     let allOk = true;
-    const cdpPorts = getConfiguredCdpPorts(process.env.ANTIGRAVITY_ACCOUNTS);
 
     // 1. Config directory check
     const configDir = ConfigLoader.getConfigDir();
@@ -119,7 +118,7 @@ export async function doctorAction(): Promise<void> {
     // 5. CDP port check
     console.log(`\n  ${COLORS.dim}Checking CDP ports...${COLORS.reset}`);
     let cdpOk = false;
-    for (const port of cdpPorts) {
+    for (const port of CDP_PORTS) {
         const alive = await checkPort(port);
         if (alive) {
             ok(`CDP port ${port} is responding`);
@@ -128,7 +127,7 @@ export async function doctorAction(): Promise<void> {
     }
     if (!cdpOk) {
         fail('No CDP ports responding');
-        hint(`Run: ${getAntigravityCdpHint(cdpPorts[0] ?? 9222)}`);
+        hint(`Run: ${getAntigravityCdpHint(9222)}`);
         allOk = false;
     }
 
