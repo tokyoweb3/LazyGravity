@@ -16,6 +16,17 @@ export interface ChatSessionInfo {
     hasActiveChat: boolean;
 }
 
+interface SessionViewState extends ChatSessionInfo {
+    panelFound?: boolean;
+    hasLoadingIndicator: boolean;
+    hasRenderableContent: boolean;
+    renderablePreview?: Array<{
+        tag: string;
+        className: string;
+        text: string;
+    }>;
+}
+
 /** Script to get the state of the new chat button */
 const GET_NEW_CHAT_BUTTON_SCRIPT = `(() => {
     const btn = document.querySelector('[data-tooltip-id="new-conversation-tooltip"]');
@@ -45,6 +56,57 @@ const GET_CHAT_TITLE_SCRIPT = `(() => {
     // "Agent" is the default empty chat title
     const hasActiveChat = title.length > 0 && title !== 'Agent';
     return { title: title || '(Untitled)', hasActiveChat };
+})()`;
+
+const GET_SESSION_VIEW_STATE_SCRIPT = `(() => {
+    const panel = document.querySelector('.antigravity-agent-side-panel');
+    if (!panel) {
+        return {
+            panelFound: false,
+            title: '',
+            hasActiveChat: false,
+            hasLoadingIndicator: false,
+            hasRenderableContent: false,
+            renderablePreview: [],
+        };
+    }
+    const header = panel.querySelector('div[class*="border-b"]');
+    const titleEl = header?.querySelector('div[class*="text-ellipsis"]');
+    const title = titleEl ? (titleEl.textContent || '').trim() : '';
+    const hasActiveChat = title.length > 0 && title !== 'Agent';
+
+    const bodyCandidates = Array.from(panel.querySelectorAll(
+        '[data-message-author-role], [data-message-role], .rendered-markdown, .prose'
+    ));
+    const renderablePreview = bodyCandidates.filter((el) => {
+        if (!(el instanceof HTMLElement)) return false;
+        const text = (el.textContent || '').trim();
+        if (el.offsetParent === null || text.length === 0) return false;
+        if (/^\\/\\*\\s*Copied from /i.test(text)) return false;
+        return true;
+    }).slice(0, 5).map((el) => ({
+        tag: el.tagName,
+        className: el.className || '',
+        text: ((el.textContent || '').trim()).slice(0, 160),
+    }));
+    const hasRenderableContent = renderablePreview.length > 0;
+
+    const hasLoadingIndicator = Boolean(
+        panel.querySelector(
+            '[role="progressbar"], ' +
+            'svg[class*="animate-spin"], div[class*="animate-spin"], ' +
+            'svg[class*="spinner"], div[class*="spinner"], div[class*="loading"]'
+        )
+    );
+
+    return {
+        panelFound: true,
+        title: title || '(Untitled)',
+        hasActiveChat,
+        hasLoadingIndicator,
+        hasRenderableContent,
+        renderablePreview,
+    };
 })()`;
 
 /**
@@ -454,6 +516,10 @@ export class ChatSessionService {
     private static readonly ACTIVATE_SESSION_MAX_WAIT_MS = 30000;
     private static readonly ACTIVATE_SESSION_RETRY_INTERVAL_MS = 800;
     private static readonly LIST_SESSIONS_TARGET = 20;
+    private static readonly HYDRATE_RETRY_DELAY_MS = 700;
+    private static readonly REOPEN_RETRY_ATTEMPTS = 4;
+    private static readonly REOPEN_NEW_CHAT_DELAY_MS = 400;
+    private static readonly REOPEN_HISTORY_DELAY_MS = 1000;
 
     /**
      * List recent sessions by opening the Past Conversations panel.
@@ -597,6 +663,26 @@ export class ChatSessionService {
         });
     }
 
+    private async dispatchNewConversationShortcut(cdpService: CdpService): Promise<void> {
+        const modifiers = process.platform === 'darwin' ? 8 : 10;
+        await cdpService.call('Input.dispatchKeyEvent', {
+            type: 'keyDown',
+            key: 'L',
+            code: 'KeyL',
+            modifiers,
+            windowsVirtualKeyCode: 76,
+            nativeVirtualKeyCode: 76,
+        });
+        await cdpService.call('Input.dispatchKeyEvent', {
+            type: 'keyUp',
+            key: 'L',
+            code: 'KeyL',
+            modifiers,
+            windowsVirtualKeyCode: 76,
+            nativeVirtualKeyCode: 76,
+        });
+    }
+
     /**
      * Start a new chat session in the Antigravity UI.
      *
@@ -643,20 +729,10 @@ export class ChatSessionService {
                 return { ok: true };
             }
 
-            // cursor: pointer -> click via CDP Input API coordinates
-            await cdpService.call('Input.dispatchMouseEvent', {
-                type: 'mouseMoved', x: btnState.x, y: btnState.y,
-            });
-            await cdpService.call('Input.dispatchMouseEvent', {
-                type: 'mousePressed', x: btnState.x, y: btnState.y,
-                button: 'left', clickCount: 1,
-            });
-            await cdpService.call('Input.dispatchMouseEvent', {
-                type: 'mouseReleased', x: btnState.x, y: btnState.y,
-                button: 'left', clickCount: 1,
-            });
+            // Prefer the keyboard shortcut because some Antigravity builds bind hover tips to the button target.
+            await this.dispatchNewConversationShortcut(cdpService);
 
-            // Wait for UI to update after click
+            // Wait for UI to update after shortcut
             await new Promise(r => setTimeout(r, 1500));
 
             // Check if button changed to not-allowed (evidence that a new chat was opened)
@@ -665,8 +741,16 @@ export class ChatSessionService {
                 return { ok: true };
             }
 
-            // Button still enabled -> click may not have worked
-            return { ok: false, error: 'Clicked new chat button but state did not change' };
+            // Fallback for older builds where the shortcut is not wired.
+            await this.cdpMouseClick(cdpService, btnState.x, btnState.y);
+            await new Promise(r => setTimeout(r, 1500));
+
+            const afterFallback = await this.getNewChatButtonState(cdpService, contexts);
+            if (afterFallback.found && !afterFallback.enabled) {
+                return { ok: true };
+            }
+
+            return { ok: false, error: 'New conversation shortcut and button click did not change state' };
         } catch (error: unknown) {
             const message = error instanceof Error ? error.message : String(error);
             return { ok: false, error: message };
@@ -703,6 +787,129 @@ export class ChatSessionService {
         }
     }
 
+    async getCurrentSessionViewState(cdpService: CdpService): Promise<SessionViewState> {
+        try {
+            const contexts = cdpService.getContexts();
+            for (const ctx of contexts) {
+                try {
+                    const result = await cdpService.call('Runtime.evaluate', {
+                        expression: GET_SESSION_VIEW_STATE_SCRIPT,
+                        returnByValue: true,
+                        contextId: ctx.id,
+                    });
+                    const value = result?.result?.value;
+                    const hasPanel = value?.panelFound === true;
+                    const looksUseful = Boolean(
+                        hasPanel ||
+                        value?.hasLoadingIndicator ||
+                        value?.hasRenderableContent ||
+                        (typeof value?.title === 'string' && value.title.trim().length > 0),
+                    );
+                    if (value && looksUseful) {
+                        return {
+                            title: value.title,
+                            hasActiveChat: value.hasActiveChat ?? false,
+                            panelFound: value.panelFound ?? false,
+                            hasLoadingIndicator: value.hasLoadingIndicator ?? false,
+                            hasRenderableContent: value.hasRenderableContent ?? false,
+                            renderablePreview: Array.isArray(value.renderablePreview) ? value.renderablePreview : [],
+                        };
+                    }
+                } catch (_) { /* try next context */ }
+            }
+        } catch (_) { /* fall through */ }
+
+        return {
+            title: '(Failed to retrieve)',
+            hasActiveChat: false,
+            panelFound: false,
+            hasLoadingIndicator: false,
+            hasRenderableContent: false,
+            renderablePreview: [],
+        };
+    }
+
+    async refreshSessionViewIfStuck(
+        cdpService: CdpService,
+        title: string,
+    ): Promise<{ ok: boolean; error?: string }> {
+        const state = await this.getCurrentSessionViewState(cdpService);
+        if (state.title.trim() !== title.trim()) {
+            return { ok: false, error: `Current title mismatch before refresh (expected="${title}", actual="${state.title}")` };
+        }
+        if (!state.hasLoadingIndicator && state.hasRenderableContent) {
+            return { ok: true };
+        }
+        const bounce = await this.recoverSessionViewWithNewConversationBounce(cdpService, title);
+        if (bounce.ok) {
+            return bounce;
+        }
+
+        return {
+            ok: false,
+            error:
+                `Session "${title}" still appears stuck after new-conversation recovery ` +
+                `(${bounce.error || 'unknown'})`,
+        };
+    }
+
+    async recoverSessionViewWithNewConversationBounce(
+        cdpService: CdpService,
+        title: string,
+        options?: {
+            maxAttempts?: number;
+            newChatDelayMs?: number;
+            reopenDelayMs?: number;
+        },
+    ): Promise<{ ok: boolean; error?: string }> {
+        const state = await this.getCurrentSessionViewState(cdpService);
+        if (state.title.trim() === title.trim() && !state.hasLoadingIndicator && state.hasRenderableContent) {
+            return { ok: true };
+        }
+
+        const maxAttempts = options?.maxAttempts ?? ChatSessionService.REOPEN_RETRY_ATTEMPTS;
+        const newChatDelayMs = options?.newChatDelayMs ?? ChatSessionService.REOPEN_NEW_CHAT_DELAY_MS;
+        const reopenDelayMs = options?.reopenDelayMs ?? ChatSessionService.REOPEN_HISTORY_DELAY_MS;
+        let lastError = `Session "${title}" still appears stuck before recovery`;
+
+        for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+            const newChat = await this.startNewChat(cdpService);
+            if (!newChat.ok) {
+                lastError =
+                    `Attempt ${attempt}/${maxAttempts}: failed to open a fresh new conversation before reopening "${title}": ` +
+                    `${newChat.error || 'unknown'}`;
+                continue;
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, newChatDelayMs));
+
+            const reopened = await this.activateSessionByTitle(cdpService, title, {
+                maxWaitMs: 8000,
+                retryIntervalMs: 300,
+                allowVisibilityWarmupMs: 1000,
+            });
+            if (!reopened.ok) {
+                lastError =
+                    `Attempt ${attempt}/${maxAttempts}: failed to reopen "${title}" after new conversation: ` +
+                    `${reopened.error || 'unknown'}`;
+                continue;
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, reopenDelayMs));
+
+            const after = await this.getCurrentSessionViewState(cdpService);
+            if (after.title.trim() === title.trim() && (!after.hasLoadingIndicator || after.hasRenderableContent)) {
+                return { ok: true };
+            }
+
+            lastError =
+                `Attempt ${attempt}/${maxAttempts}: session "${title}" still appears stuck after reopening ` +
+                `(loading=${after.hasLoadingIndicator}, content=${after.hasRenderableContent}, actual="${after.title}")`;
+        }
+
+        return { ok: false, error: lastError };
+    }
+
     /**
      * Activate an existing chat by title.
      * Returns ok:false if the target chat cannot be located or verified.
@@ -713,6 +920,7 @@ export class ChatSessionService {
         options?: {
             maxWaitMs?: number;
             retryIntervalMs?: number;
+            allowVisibilityWarmupMs?: number;
         },
     ): Promise<{ ok: boolean; error?: string }> {
         if (!title || title.trim().length === 0) {
@@ -726,13 +934,15 @@ export class ChatSessionService {
 
         const maxWaitMs = options?.maxWaitMs ?? ChatSessionService.ACTIVATE_SESSION_MAX_WAIT_MS;
         const retryIntervalMs = options?.retryIntervalMs ?? ChatSessionService.ACTIVATE_SESSION_RETRY_INTERVAL_MS;
+        const allowVisibilityWarmupMs = options?.allowVisibilityWarmupMs ?? 0;
 
         let usedPastConversations = false;
         let directResult: { ok: boolean; error?: string } = { ok: false, error: 'not attempted' };
         let pastResult: { ok: boolean; error?: string } | null = null;
         let clicked = false;
-        const startedAt = Date.now();
+        let startedAt = Date.now();
         let attempts = 0;
+        let warmupConsumed = false;
 
         while (Date.now() - startedAt <= maxWaitMs) {
             attempts += 1;
@@ -769,7 +979,21 @@ export class ChatSessionService {
         await new Promise((resolve) => setTimeout(resolve, 500));
         const after = await this.getCurrentSessionInfo(cdpService);
         if (after.title.trim() === title.trim()) {
+            if (usedPastConversations) {
+                await this.closePanelWithEscape(cdpService);
+            }
             return { ok: true };
+        }
+
+        if (!warmupConsumed && allowVisibilityWarmupMs > 0 && after.title.trim() === 'Agent') {
+            warmupConsumed = true;
+            startedAt = Date.now();
+            await new Promise((resolve) => setTimeout(resolve, allowVisibilityWarmupMs));
+            return this.activateSessionByTitle(cdpService, title, {
+                maxWaitMs,
+                retryIntervalMs,
+                allowVisibilityWarmupMs: 0,
+            });
         }
 
         // If direct side-panel activation hit the wrong row, try the explicit Past Conversations flow.
@@ -779,6 +1003,7 @@ export class ChatSessionService {
                 await new Promise((resolve) => setTimeout(resolve, 500));
                 const afterPast = await this.getCurrentSessionInfo(cdpService);
                 if (afterPast.title.trim() === title.trim()) {
+                    await this.closePanelWithEscape(cdpService);
                     return { ok: true };
                 }
                 return {

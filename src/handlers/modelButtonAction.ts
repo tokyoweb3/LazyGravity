@@ -19,6 +19,7 @@ export interface ModelButtonActionDeps {
     readonly fetchQuota: () => Promise<any[]>;
     readonly modelService?: ModelService;
     readonly userPrefRepo?: UserPreferenceRepository;
+    readonly ensureSessionActivated?: (channelId: string, userId: string, cdp: NonNullable<ReturnType<typeof getCurrentCdp>>) => Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
 export function createModelButtonAction(deps: ModelButtonActionDeps): ButtonAction {
@@ -44,8 +45,16 @@ export function createModelButtonAction(deps: ModelButtonActionDeps): ButtonActi
 
             const cdp = getCurrentCdp(deps.bridge);
             if (!cdp) {
+                logger.warn(`[ModelCommand] source=button user=${interaction.user.id} action=${params.action} cdp=unavailable`);
                 await interaction.followUp({ text: 'Not connected to CDP.' }).catch(() => {});
                 return;
+            }
+            if (deps.ensureSessionActivated) {
+                const sessionReady = await deps.ensureSessionActivated(interaction.channel.id, interaction.user.id, cdp);
+                if (!sessionReady.ok) {
+                    await interaction.followUp({ text: sessionReady.error }).catch(() => {});
+                    return;
+                }
             }
 
             if (params.action === 'set_default') {
@@ -76,7 +85,14 @@ export function createModelButtonAction(deps: ModelButtonActionDeps): ButtonActi
                     text: 'Default model cleared.',
                 }).catch(() => {});
             } else if (params.action === 'select') {
+                logger.info(`[ModelCommand] source=button user=${interaction.user.id} target="${params.modelName}"`);
                 const res = await cdp.setUiModel(params.modelName);
+                logger.info(
+                    `[ModelCommand] source=button user=${interaction.user.id} target="${params.modelName}" ` +
+                    `ok=${res.ok} applied=${res.model ? `"${res.model}"` : 'null'} ` +
+                    `verified=${res.verified === true} alreadySelected=${res.alreadySelected === true} ` +
+                    `error=${res.error ? `"${res.error}"` : 'null'}`,
+                );
                 if (!res.ok) {
                     await interaction.followUp({
                         text: res.error || 'Failed to change model.',

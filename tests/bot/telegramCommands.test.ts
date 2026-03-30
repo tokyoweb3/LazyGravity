@@ -141,6 +141,8 @@ describe('parseTelegramCommand', () => {
         ['/project_create', 'project_create', ''],
         ['/logs', 'logs', ''],
         ['/new', 'new', ''],
+        ['/join', 'join', ''],
+        ['/mirror', 'mirror', ''],
     ])('parses %s as command=%s args=%s', (input, command, args) => {
         expect(parseTelegramCommand(input)).toEqual({ command, args });
     });
@@ -982,8 +984,12 @@ describe('handleTelegramCommand — /new', () => {
     it('returns error when chatSessionService is not available', async () => {
         const message = createMockMessage();
         const bridge = createMockBridge();
+        bridge.pool.getOrConnect = jest.fn().mockResolvedValue({});
+        const telegramBindingRepo = {
+            findByChatIdWithParentFallback: jest.fn().mockReturnValue({ workspacePath: 'TestProject' }),
+        } as any;
 
-        await handleTelegramCommand({ bridge }, message as any, { command: 'new', args: '' });
+        await handleTelegramCommand({ bridge, telegramBindingRepo }, message as any, { command: 'new', args: '' });
 
         expect(message.reply).toHaveBeenCalledWith({ text: 'Chat session service not available.' });
     });
@@ -992,7 +998,7 @@ describe('handleTelegramCommand — /new', () => {
         const message = createMockMessage();
         const bridge = createMockBridge();
         const chatSessionService = { startNewChat: jest.fn() } as any;
-        const telegramBindingRepo = { findByChatId: jest.fn().mockReturnValue(undefined) } as any;
+        const telegramBindingRepo = { findByChatIdWithParentFallback: jest.fn().mockReturnValue(undefined) } as any;
 
         await handleTelegramCommand(
             { bridge, chatSessionService, telegramBindingRepo },
@@ -1012,7 +1018,7 @@ describe('handleTelegramCommand — /new', () => {
         bridge.pool.getOrConnect = jest.fn().mockRejectedValue(new Error('Connection timeout'));
         const chatSessionService = { startNewChat: jest.fn() } as any;
         const telegramBindingRepo = {
-            findByChatId: jest.fn().mockReturnValue({ chatId: 'chat-123', workspacePath: 'TestProject' }),
+            findByChatIdWithParentFallback: jest.fn().mockReturnValue({ chatId: 'chat-123', workspacePath: 'TestProject' }),
         } as any;
 
         await handleTelegramCommand(
@@ -1036,7 +1042,7 @@ describe('handleTelegramCommand — /new', () => {
             startNewChat: jest.fn().mockResolvedValue({ ok: true }),
         } as any;
         const telegramBindingRepo = {
-            findByChatId: jest.fn().mockReturnValue({ chatId: 'chat-123', workspacePath: 'TestProject' }),
+            findByChatIdWithParentFallback: jest.fn().mockReturnValue({ chatId: 'chat-123', workspacePath: 'TestProject' }),
         } as any;
 
         await handleTelegramCommand(
@@ -1060,7 +1066,7 @@ describe('handleTelegramCommand — /new', () => {
             startNewChat: jest.fn().mockResolvedValue({ ok: false, error: 'New chat button not found' }),
         } as any;
         const telegramBindingRepo = {
-            findByChatId: jest.fn().mockReturnValue({ chatId: 'chat-123', workspacePath: 'TestProject' }),
+            findByChatIdWithParentFallback: jest.fn().mockReturnValue({ chatId: 'chat-123', workspacePath: 'TestProject' }),
         } as any;
 
         await handleTelegramCommand(
@@ -1084,7 +1090,7 @@ describe('handleTelegramCommand — /new', () => {
             startNewChat: jest.fn().mockResolvedValue({ ok: true }),
         } as any;
         const telegramBindingRepo = {
-            findByChatId: jest.fn().mockReturnValue({ chatId: 'chat-123', workspacePath: 'TestProject' }),
+            findByChatIdWithParentFallback: jest.fn().mockReturnValue({ chatId: 'chat-123', workspacePath: 'TestProject' }),
         } as any;
         const workspaceService = {
             getWorkspacePath: jest.fn().mockReturnValue('/full/path/TestProject'),
@@ -1097,7 +1103,7 @@ describe('handleTelegramCommand — /new', () => {
         );
 
         expect(workspaceService.getWorkspacePath).toHaveBeenCalledWith('TestProject');
-        expect(bridge.pool.getOrConnect).toHaveBeenCalledWith('/full/path/TestProject');
+        expect(bridge.pool.getOrConnect).toHaveBeenCalledWith('/full/path/TestProject', { name: 'default' });
     });
 
     it('handles unexpected startNewChat exceptions', async () => {
@@ -1109,7 +1115,7 @@ describe('handleTelegramCommand — /new', () => {
             startNewChat: jest.fn().mockRejectedValue(new Error('unexpected failure')),
         } as any;
         const telegramBindingRepo = {
-            findByChatId: jest.fn().mockReturnValue({ chatId: 'chat-123', workspacePath: 'TestProject' }),
+            findByChatIdWithParentFallback: jest.fn().mockReturnValue({ chatId: 'chat-123', workspacePath: 'TestProject' }),
         } as any;
 
         await handleTelegramCommand(
@@ -1120,6 +1126,6 @@ describe('handleTelegramCommand — /new', () => {
 
         expect(chatSessionService.startNewChat).toHaveBeenCalledWith(mockCdp);
         expect(message.reply).toHaveBeenCalledTimes(1);
-        expect(message.reply).toHaveBeenCalledWith({ text: 'Failed to start new chat.' });
+        expect(message.reply).toHaveBeenCalledWith({ text: '❌ Failed to connect to Antigravity. Is it running?' });
     });
 });

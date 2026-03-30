@@ -9,6 +9,9 @@ export interface ChatSessionRecord {
     categoryId: string;
     workspacePath: string;
     sessionNumber: number;
+    conversationId: string | null;
+    activeAccountName: string | null;
+    originAccountName: string | null;
     displayName: string | null;
     isRenamed: boolean;
     guildId: string;
@@ -23,6 +26,7 @@ export interface CreateChatSessionInput {
     categoryId: string;
     workspacePath: string;
     sessionNumber: number;
+    activeAccountName?: string | null;
     guildId: string;
 }
 
@@ -46,18 +50,56 @@ export class ChatSessionRepository {
                 category_id TEXT NOT NULL,
                 workspace_path TEXT NOT NULL,
                 session_number INTEGER NOT NULL,
+                conversation_id TEXT,
+                active_account_name TEXT,
+                origin_account_name TEXT,
                 display_name TEXT,
                 is_renamed INTEGER NOT NULL DEFAULT 0,
                 guild_id TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
         `);
+
+        const columns = this.db.prepare('PRAGMA table_info(chat_sessions)').all() as Array<{ name: string }>;
+        const hasActiveAccountName = columns.some((column) => column.name === 'active_account_name');
+        const hasConversationId = columns.some((column) => column.name === 'conversation_id');
+        if (!hasConversationId) {
+            this.db.exec('ALTER TABLE chat_sessions ADD COLUMN conversation_id TEXT');
+        }
+        if (!hasActiveAccountName) {
+            this.db.exec('ALTER TABLE chat_sessions ADD COLUMN active_account_name TEXT');
+        }
+        const hasOriginAccountName = columns.some((column) => column.name === 'origin_account_name');
+        if (!hasOriginAccountName) {
+            this.db.exec('ALTER TABLE chat_sessions ADD COLUMN origin_account_name TEXT');
+        }
+
+        const hasLegacyAccountName = columns.some((column) => column.name === 'account_name');
+        if (hasLegacyAccountName) {
+            this.db.exec(`
+                UPDATE chat_sessions
+                SET origin_account_name = account_name
+                WHERE origin_account_name IS NULL AND account_name IS NOT NULL
+            `);
+            this.db.exec(`
+                UPDATE chat_sessions
+                SET active_account_name = COALESCE(active_account_name, origin_account_name, account_name)
+                WHERE active_account_name IS NULL
+            `);
+        } else {
+            this.db.exec(`
+                UPDATE chat_sessions
+                SET active_account_name = origin_account_name
+                WHERE active_account_name IS NULL AND origin_account_name IS NOT NULL
+            `);
+        }
     }
 
     public create(input: CreateChatSessionInput): ChatSessionRecord {
+        const activeAccountName = input.activeAccountName ?? null;
         const stmt = this.db.prepare(`
-            INSERT INTO chat_sessions (channel_id, category_id, workspace_path, session_number, guild_id)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO chat_sessions (channel_id, category_id, workspace_path, session_number, active_account_name, origin_account_name, guild_id)
+            VALUES (?, ?, ?, ?, ?, NULL, ?)
         `);
 
         const result = stmt.run(
@@ -65,6 +107,7 @@ export class ChatSessionRepository {
             input.categoryId,
             input.workspacePath,
             input.sessionNumber,
+            activeAccountName,
             input.guildId,
         );
 
@@ -74,6 +117,9 @@ export class ChatSessionRepository {
             categoryId: input.categoryId,
             workspacePath: input.workspacePath,
             sessionNumber: input.sessionNumber,
+            conversationId: null,
+            activeAccountName,
+            originAccountName: null,
             displayName: null,
             isRenamed: false,
             guildId: input.guildId,
@@ -116,6 +162,41 @@ export class ChatSessionRepository {
         return result.changes > 0;
     }
 
+    public setActiveAccountName(channelId: string, accountName: string): boolean {
+        const result = this.db.prepare(
+            'UPDATE chat_sessions SET active_account_name = ? WHERE channel_id = ?'
+        ).run(accountName, channelId);
+        return result.changes > 0;
+    }
+
+    public setOriginAccountName(channelId: string, accountName: string): boolean {
+        const result = this.db.prepare(
+            'UPDATE chat_sessions SET origin_account_name = ? WHERE channel_id = ?'
+        ).run(accountName, channelId);
+        return result.changes > 0;
+    }
+
+    public setConversationId(channelId: string, conversationId: string): boolean {
+        const result = this.db.prepare(
+            'UPDATE chat_sessions SET conversation_id = ? WHERE channel_id = ?'
+        ).run(conversationId, channelId);
+        return result.changes > 0;
+    }
+
+    public initializeConversationId(channelId: string, conversationId: string): boolean {
+        const result = this.db.prepare(
+            'UPDATE chat_sessions SET conversation_id = ? WHERE channel_id = ? AND conversation_id IS NULL'
+        ).run(conversationId, channelId);
+        return result.changes > 0;
+    }
+
+    public initializeOriginAccountName(channelId: string, accountName: string): boolean {
+        const result = this.db.prepare(
+            'UPDATE chat_sessions SET origin_account_name = ? WHERE channel_id = ? AND origin_account_name IS NULL'
+        ).run(accountName, channelId);
+        return result.changes > 0;
+    }
+
     /**
      * Find a session by display name within a workspace.
      * Returns the first match (most recent).
@@ -142,6 +223,9 @@ export class ChatSessionRepository {
             categoryId: row.category_id,
             workspacePath: row.workspace_path,
             sessionNumber: row.session_number,
+            conversationId: row.conversation_id ?? null,
+            activeAccountName: row.active_account_name ?? row.account_name ?? null,
+            originAccountName: row.origin_account_name ?? null,
             displayName: row.display_name,
             isRenamed: row.is_renamed === 1,
             guildId: row.guild_id,

@@ -30,6 +30,7 @@ describe('ChatSessionRepository', () => {
                 categoryId: 'cat-1',
                 workspacePath: 'my-project',
                 sessionNumber: 1,
+                activeAccountName: 'work4',
                 guildId: 'guild-1',
             });
             expect(result.id).toBeDefined();
@@ -37,6 +38,9 @@ describe('ChatSessionRepository', () => {
             expect(result.categoryId).toBe('cat-1');
             expect(result.workspacePath).toBe('my-project');
             expect(result.sessionNumber).toBe(1);
+            expect(result.conversationId).toBeNull();
+            expect(result.activeAccountName).toBe('work4');
+            expect(result.originAccountName).toBeNull();
             expect(result.displayName).toBeNull();
             expect(result.isRenamed).toBe(false);
             expect(result.guildId).toBe('guild-1');
@@ -56,6 +60,9 @@ describe('ChatSessionRepository', () => {
             const found = repo.findByChannelId('ch-1');
             expect(found).toBeDefined();
             expect(found?.workspacePath).toBe('proj');
+            expect(found?.conversationId).toBeNull();
+            expect(found?.activeAccountName).toBeNull();
+            expect(found?.originAccountName).toBeNull();
             expect(found?.isRenamed).toBe(false);
         });
 
@@ -112,6 +119,55 @@ describe('ChatSessionRepository', () => {
 
         it('returns false for a non-existent channel ID', () => {
             expect(repo.updateDisplayName('nonexistent', 'title')).toBe(false);
+        });
+    });
+
+    describe('accountName helpers', () => {
+        it('updates the account name for an existing session', () => {
+            repo.create({ channelId: 'ch-1', categoryId: 'cat-1', workspacePath: 'proj', sessionNumber: 1, guildId: 'guild-1' });
+
+            const updated = repo.setActiveAccountName('ch-1', 'work4');
+            expect(updated).toBe(true);
+
+            const found = repo.findByChannelId('ch-1');
+            expect(found?.activeAccountName).toBe('work4');
+            expect(found?.originAccountName).toBeNull();
+        });
+
+        it('initializes original account provenance only once', () => {
+            repo.create({ channelId: 'ch-1', categoryId: 'cat-1', workspacePath: 'proj', sessionNumber: 1, activeAccountName: 'default', guildId: 'guild-1' });
+
+            const initialized = repo.initializeOriginAccountName('ch-1', 'default');
+            expect(initialized).toBe(true);
+
+            const secondAttempt = repo.initializeOriginAccountName('ch-1', 'work4');
+            expect(secondAttempt).toBe(false);
+
+            repo.setActiveAccountName('ch-1', 'work4');
+
+            const found = repo.findByChannelId('ch-1');
+            expect(found?.activeAccountName).toBe('work4');
+            expect(found?.originAccountName).toBe('default');
+        });
+    });
+
+    describe('conversationId helpers', () => {
+        it('updates the conversation id for an existing session', () => {
+            repo.create({ channelId: 'ch-1', categoryId: 'cat-1', workspacePath: 'proj', sessionNumber: 1, guildId: 'guild-1' });
+
+            const updated = repo.setConversationId('ch-1', 'conv-123');
+            expect(updated).toBe(true);
+
+            const found = repo.findByChannelId('ch-1');
+            expect(found?.conversationId).toBe('conv-123');
+        });
+
+        it('initializes conversation id only once', () => {
+            repo.create({ channelId: 'ch-1', categoryId: 'cat-1', workspacePath: 'proj', sessionNumber: 1, guildId: 'guild-1' });
+
+            expect(repo.initializeConversationId('ch-1', 'conv-123')).toBe(true);
+            expect(repo.initializeConversationId('ch-1', 'conv-456')).toBe(false);
+            expect(repo.findByChannelId('ch-1')?.conversationId).toBe('conv-123');
         });
     });
 

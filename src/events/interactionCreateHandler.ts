@@ -23,7 +23,10 @@ import {
     OUTPUT_BTN_PLAIN,
     sendOutputUI,
 } from '../ui/outputUi';
+import { AccountPreferenceRepository } from '../database/accountPreferenceRepository';
+import { ChannelPreferenceRepository } from '../database/channelPreferenceRepository';
 import { UserPreferenceRepository, OutputFormat } from '../database/userPreferenceRepository';
+import { ChatSessionRepository } from '../database/chatSessionRepository';
 import { ChatCommandHandler } from '../commands/chatCommandHandler';
 import {
     CleanupCommandHandler,
@@ -39,8 +42,12 @@ import { CdpService } from '../services/cdpService';
 import { MODE_DISPLAY_NAMES, ModeService } from '../services/modeService';
 import { ModelService } from '../services/modelService';
 import { AutoAcceptService } from '../services/autoAcceptService';
+import { ChatSessionService } from '../services/chatSessionService';
 import { JoinCommandHandler } from '../commands/joinCommandHandler';
 import { isSessionSelectId } from '../ui/sessionPickerUi';
+import type { AntigravityAccountConfig } from '../utils/configLoader';
+import { inferParentScopeChannelId, listAccountNames, resolveScopedAccountName } from '../utils/accountUtils';
+import { ACCOUNT_SELECT_ID, sendAccountUI } from '../ui/accountUi';
 
 export interface InteractionCreateHandlerDeps {
     config: { allowedUserIds: string[] };
@@ -78,14 +85,139 @@ export interface InteractionCreateHandlerDeps {
         modelService: ModelService,
         autoAcceptService: AutoAcceptService,
         client: any,
+        accountPrefRepo?: AccountPreferenceRepository,
+        channelPrefRepo?: ChannelPreferenceRepository,
+        antigravityAccounts?: AntigravityAccountConfig[],
+        chatSessionRepo?: ChatSessionRepository,
     ) => Promise<void>;
     handleTemplateUse?: (interaction: ButtonInteraction, templateId: number) => Promise<void>;
     joinHandler?: JoinCommandHandler;
     userPrefRepo?: UserPreferenceRepository;
+    accountPrefRepo?: AccountPreferenceRepository;
+    channelPrefRepo?: ChannelPreferenceRepository;
+    antigravityAccounts?: AntigravityAccountConfig[];
+    chatSessionRepo?: ChatSessionRepository;
+    chatSessionService?: ChatSessionService;
 }
 
 export function createInteractionCreateHandler(deps: InteractionCreateHandlerDeps) {
+    const getParentChannelId = (interaction: Interaction): string | null =>
+        inferParentScopeChannelId(
+            (interaction as any).channelId,
+            (interaction as any).channel?.parentId ?? null,
+        );
+    const getSessionAccountName = (channelId: string): string | null =>
+        deps.chatSessionRepo?.findByChannelId(channelId)?.activeAccountName ?? null;
+    const resolveSelectedAccount = (channelId: string, userId: string, parentChannelId?: string | null): string =>
+        resolveScopedAccountName({
+            channelId,
+            userId,
+            sessionAccountName: getSessionAccountName(channelId),
+            parentChannelId,
+            selectedAccountByChannel: deps.bridge.selectedAccountByChannel,
+            channelPrefRepo: deps.channelPrefRepo,
+            accountPrefRepo: deps.accountPrefRepo,
+            accounts: deps.antigravityAccounts,
+        });
+    const getChannelCdp = (channelId: string, userId: string): CdpService | null =>
+        (() => {
+            const workspacePath = deps.wsHandler.getWorkspaceForChannel(channelId);
+            if (workspacePath) {
+                const projectName = deps.bridge.pool.extractProjectName(workspacePath);
+                return deps.bridge.pool.getConnected(
+                    projectName,
+                    resolveSelectedAccount(channelId, userId),
+                );
+            }
+
+            return deps.bridge.lastActiveWorkspace
+                ? deps.bridge.pool.getConnected(
+                    deps.bridge.lastActiveWorkspace,
+                    resolveSelectedAccount(channelId, userId),
+                )
+                : null;
+        })();
+    const ensureBoundSessionActive = async (
+        channelId: string,
+        userId: string,
+        cdp: CdpService,
+    ): Promise<{ ok: true } | { ok: false; error: string }> => {
+        const savedTitle = deps.chatSessionRepo?.findByChannelId(channelId)?.displayName?.trim() || '';
+        if (!savedTitle || savedTitle === t('(Untitled)') || !deps.chatSessionService) {
+            return { ok: true };
+        }
+
+        const current = await deps.chatSessionService.getCurrentSessionInfo(cdp);
+        if (current.title.trim() === savedTitle) {
+            return { ok: true };
+        }
+
+        logger.info(
+            `[ModelCommand] source=button channel=${channelId} user=${userId} ` +
+            `restoringSession target="${savedTitle}" current="${current.title.trim() || '(unknown)'}"`,
+        );
+        const activation = await deps.chatSessionService.activateSessionByTitle(cdp, savedTitle, {
+            maxWaitMs: 8000,
+            retryIntervalMs: 300,
+            allowVisibilityWarmupMs: 1000,
+        });
+        if (!activation.ok) {
+            return {
+                ok: false,
+                error: `Failed to activate saved session "${savedTitle}" before model action: ${activation.error || 'unknown'}`,
+            };
+        }
+
+        const refresh = await deps.chatSessionService.refreshSessionViewIfStuck(cdp, savedTitle);
+        if (!refresh.ok) {
+            logger.warn(
+                `[ModelCommand] source=button channel=${channelId} user=${userId} ` +
+                `sessionRefreshWarning target="${savedTitle}" error="${refresh.error || 'unknown'}"`,
+            );
+        }
+        return { ok: true };
+    };
+
     return async (interaction: Interaction): Promise<void> => {
+        if (interaction.isAutocomplete()) {
+            if (!deps.config.allowedUserIds.includes(interaction.user.id)) {
+                await interaction.respond([]).catch(logger.error);
+                return;
+            }
+
+            try {
+                if (interaction.commandName === 'project') {
+                    const subcommand = interaction.options.getSubcommand(false);
+                    const focused = interaction.options.getFocused(true);
+
+                    if (subcommand === 'account' && focused.name === 'name') {
+                        const names = listAccountNames(deps.antigravityAccounts);
+                        const currentAccount = resolveSelectedAccount(
+                            interaction.channelId,
+                            interaction.user.id,
+                            getParentChannelId(interaction),
+                        );
+                        const needle = String(focused.value || '').trim().toLowerCase();
+                        const choices = names
+                            .filter((name) => !needle || name.toLowerCase().includes(needle))
+                            .slice(0, 25)
+                            .map((name) => ({
+                                name: name === currentAccount ? `${name} (current)` : name,
+                                value: name,
+                            }));
+
+                        await interaction.respond(choices);
+                        return;
+                    }
+                }
+            } catch (error) {
+                logger.error('Autocomplete handling error:', error);
+            }
+
+            await interaction.respond([]).catch(logger.error);
+            return;
+        }
+
         if (interaction.isButton()) {
             if (!deps.config.allowedUserIds.includes(interaction.user.id)) {
                 await interaction.reply({ content: t('You do not have permission.'), flags: MessageFlags.Ephemeral }).catch(logger.error);
@@ -105,7 +237,14 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
 
                     const projectName = approvalAction.projectName ?? deps.bridge.lastActiveWorkspace;
                     const detector = projectName
-                        ? deps.bridge.pool.getApprovalDetector(projectName)
+                        ? deps.bridge.pool.getApprovalDetector(
+                            projectName,
+                            resolveSelectedAccount(
+                                interaction.channelId,
+                                interaction.user.id,
+                                getParentChannelId(interaction),
+                            ),
+                        )
                         : undefined;
 
                     if (!detector) {
@@ -175,7 +314,14 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
 
                     const planWorkspaceDirName = planningAction.projectName ?? deps.bridge.lastActiveWorkspace;
                     const planDetector = planWorkspaceDirName
-                        ? deps.bridge.pool.getPlanningDetector(planWorkspaceDirName)
+                        ? deps.bridge.pool.getPlanningDetector(
+                            planWorkspaceDirName,
+                            resolveSelectedAccount(
+                                interaction.channelId,
+                                interaction.user.id,
+                                getParentChannelId(interaction),
+                            ),
+                        )
                         : undefined;
 
                     if (!planDetector) {
@@ -305,7 +451,10 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
 
                     const errorWorkspaceDirName = errorPopupAction.projectName ?? deps.bridge.lastActiveWorkspace;
                     const errorDetector = errorWorkspaceDirName
-                        ? deps.bridge.pool.getErrorPopupDetector(errorWorkspaceDirName)
+                        ? deps.bridge.pool.getErrorPopupDetector(
+                            errorWorkspaceDirName,
+                            resolveSelectedAccount(interaction.channelId, interaction.user.id, getParentChannelId(interaction)),
+                        )
                         : undefined;
 
                     if (!errorDetector) {
@@ -459,7 +608,10 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
 
                     const runCmdWorkspace = runCommandAction.projectName ?? deps.bridge.lastActiveWorkspace;
                     const runCmdDetector = runCmdWorkspace
-                        ? deps.bridge.pool.getRunCommandDetector(runCmdWorkspace)
+                        ? deps.bridge.pool.getRunCommandDetector(
+                            runCmdWorkspace,
+                            resolveSelectedAccount(interaction.channelId, interaction.user.id, getParentChannelId(interaction)),
+                        )
                         : undefined;
 
                     if (!runCmdDetector) {
@@ -529,9 +681,14 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
 
                 if (interaction.customId === 'model_set_default_btn') {
                     await interaction.deferUpdate();
-                    const cdp = deps.getCurrentCdp(deps.bridge);
+                    const cdp = getChannelCdp(interaction.channelId, interaction.user.id);
                     if (!cdp) {
                         await interaction.followUp({ content: 'Not connected to CDP.', flags: MessageFlags.Ephemeral });
+                        return;
+                    }
+                    const sessionReady = await ensureBoundSessionActive(interaction.channelId, interaction.user.id, cdp);
+                    if (!sessionReady.ok) {
+                        await interaction.followUp({ content: sessionReady.error, flags: MessageFlags.Ephemeral });
                         return;
                     }
                     const currentModel = await cdp.getCurrentModel();
@@ -546,7 +703,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                     await deps.sendModelsUI(
                         { editReply: async (data: any) => await interaction.editReply(data) },
                         {
-                            getCurrentCdp: () => deps.getCurrentCdp(deps.bridge),
+                            getCurrentCdp: () => getChannelCdp(interaction.channelId, interaction.user.id),
                             fetchQuota: async () => deps.bridge.quota.fetchQuota(),
                         },
                     );
@@ -556,6 +713,14 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
 
                 if (interaction.customId === 'model_clear_default_btn') {
                     await interaction.deferUpdate();
+                    const cdp = getChannelCdp(interaction.channelId, interaction.user.id);
+                    if (cdp) {
+                        const sessionReady = await ensureBoundSessionActive(interaction.channelId, interaction.user.id, cdp);
+                        if (!sessionReady.ok) {
+                            await interaction.followUp({ content: sessionReady.error, flags: MessageFlags.Ephemeral });
+                            return;
+                        }
+                    }
                     deps.modelService.setDefaultModel(null);
                     if (deps.userPrefRepo) {
                         deps.userPrefRepo.setDefaultModel(interaction.user.id, null);
@@ -563,7 +728,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                     await deps.sendModelsUI(
                         { editReply: async (data: any) => await interaction.editReply(data) },
                         {
-                            getCurrentCdp: () => deps.getCurrentCdp(deps.bridge),
+                            getCurrentCdp: () => getChannelCdp(interaction.channelId, interaction.user.id),
                             fetchQuota: async () => deps.bridge.quota.fetchQuota(),
                         },
                     );
@@ -573,10 +738,18 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
 
                 if (interaction.customId === 'model_refresh_btn') {
                     await interaction.deferUpdate();
+                    const cdp = getChannelCdp(interaction.channelId, interaction.user.id);
+                    if (cdp) {
+                        const sessionReady = await ensureBoundSessionActive(interaction.channelId, interaction.user.id, cdp);
+                        if (!sessionReady.ok) {
+                            await interaction.followUp({ content: sessionReady.error, flags: MessageFlags.Ephemeral });
+                            return;
+                        }
+                    }
                     await deps.sendModelsUI(
                         { editReply: async (data: any) => await interaction.editReply(data) },
                         {
-                            getCurrentCdp: () => deps.getCurrentCdp(deps.bridge),
+                            getCurrentCdp: () => getChannelCdp(interaction.channelId, interaction.user.id),
                             fetchQuota: async () => deps.bridge.quota.fetchQuota(),
                         },
                     );
@@ -587,10 +760,15 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                     await interaction.deferUpdate();
 
                     const modelName = interaction.customId.replace('model_btn_', '');
-                    const cdp = deps.getCurrentCdp(deps.bridge);
+                    const cdp = getChannelCdp(interaction.channelId, interaction.user.id);
 
                     if (!cdp) {
                         await interaction.followUp({ content: 'Not connected to CDP.', flags: MessageFlags.Ephemeral });
+                        return;
+                    }
+                    const sessionReady = await ensureBoundSessionActive(interaction.channelId, interaction.user.id, cdp);
+                    if (!sessionReady.ok) {
+                        await interaction.followUp({ content: sessionReady.error, flags: MessageFlags.Ephemeral });
                         return;
                     }
 
@@ -602,7 +780,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                         await deps.sendModelsUI(
                             { editReply: async (data: any) => await interaction.editReply(data) },
                             {
-                                getCurrentCdp: () => deps.getCurrentCdp(deps.bridge),
+                                getCurrentCdp: () => getChannelCdp(interaction.channelId, interaction.user.id),
                                 fetchQuota: async () => deps.bridge.quota.fetchQuota(),
                             },
                         );
@@ -712,7 +890,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
 
                 deps.modeService.setMode(selectedMode);
 
-                const cdp = deps.getCurrentCdp(deps.bridge);
+                const cdp = getChannelCdp(interaction.channelId, interaction.user.id);
                 if (cdp) {
                     const res = await cdp.setUiMode(selectedMode);
                     if (!res.ok) {
@@ -727,6 +905,87 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                 try {
                     if (interaction.deferred || interaction.replied) {
                         await interaction.followUp({ content: 'An error occurred while changing the mode.', flags: MessageFlags.Ephemeral }).catch(logger.error);
+                    }
+                } catch (e) {
+                    logger.error('Failed to send error message:', e);
+                }
+            }
+            return;
+        }
+
+        if (interaction.isStringSelectMenu() && interaction.customId === ACCOUNT_SELECT_ID) {
+            if (!deps.config.allowedUserIds.includes(interaction.user.id)) {
+                await interaction.reply({ content: t('You do not have permission.'), flags: MessageFlags.Ephemeral }).catch(logger.error);
+                return;
+            }
+
+            try {
+                await interaction.deferUpdate();
+            } catch (deferError: any) {
+                if (deferError?.code === 10062 || deferError?.code === 40060) {
+                    logger.warn('[Account] deferUpdate expired. Skipping.');
+                    return;
+                }
+                logger.error('[Account] deferUpdate failed:', deferError);
+                return;
+            }
+
+            try {
+                if (!deps.accountPrefRepo) {
+                    await interaction.followUp({
+                        content: 'Account preference service not available.',
+                        flags: MessageFlags.Ephemeral,
+                    }).catch(logger.error);
+                    return;
+                }
+
+                const selectedAccount = interaction.values[0];
+                const names = listAccountNames(deps.antigravityAccounts);
+
+                if (!selectedAccount || !names.includes(selectedAccount)) {
+                    await interaction.followUp({
+                        content: `⚠️ Unknown account: **${selectedAccount || 'N/A'}**`,
+                        flags: MessageFlags.Ephemeral,
+                    }).catch(logger.error);
+                    return;
+                }
+
+                deps.bridge.selectedAccountByChannel?.set(interaction.channelId, selectedAccount);
+                const currentSession = deps.chatSessionRepo?.findByChannelId(interaction.channelId);
+                if (currentSession) {
+                    deps.chatSessionRepo?.setActiveAccountName(interaction.channelId, selectedAccount);
+                } else {
+                    deps.accountPrefRepo.setAccountName(interaction.user.id, selectedAccount);
+                    deps.channelPrefRepo?.setAccountName(interaction.channelId, selectedAccount);
+                }
+
+                const channelWorkspace = deps.wsHandler.getWorkspaceForChannel(interaction.channelId);
+
+                const selectedPort = deps.antigravityAccounts?.find((a) => a.name === selectedAccount)?.cdpPort;
+                logger.info(
+                    `[AccountSwitch] source=select channel=${interaction.channelId} user=${interaction.user.id} ` +
+                    `account=${selectedAccount} port=${selectedPort ?? 'unknown'} ` +
+                    `workspace=${channelWorkspace ?? 'unbound'}`,
+                );
+
+                await sendAccountUI(
+                    { editReply: async (data: any) => await interaction.editReply(data) },
+                    selectedAccount,
+                    names,
+                );
+
+                await interaction.followUp({
+                    content: `✅ Switched session account to **${selectedAccount}**.`,
+                    flags: MessageFlags.Ephemeral,
+                }).catch(logger.error);
+            } catch (error: any) {
+                logger.error('Error during account dropdown handling:', error);
+                try {
+                    if (interaction.deferred || interaction.replied) {
+                        await interaction.followUp({
+                            content: 'An error occurred while switching account.',
+                            flags: MessageFlags.Ephemeral,
+                        }).catch(logger.error);
                     }
                 } catch (e) {
                     logger.error('Failed to send error message:', e);
@@ -774,6 +1033,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
             }
 
             try {
+                await interaction.deferUpdate();
                 await deps.wsHandler.handleSelectMenu(interaction, interaction.guild);
             } catch (error) {
                 logger.error('Workspace selection error:', error);
@@ -819,9 +1079,17 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                 deps.modelService,
                 deps.bridge.autoAccept,
                 deps.client,
+                deps.accountPrefRepo,
+                deps.channelPrefRepo,
+                deps.antigravityAccounts,
+                deps.chatSessionRepo,
             );
         } catch (error) {
-            logger.error('Error during slash command handling:', error);
+            logger.error(
+                `[SlashCommand] command=${commandInteraction.commandName} channel=${commandInteraction.channelId} ` +
+                `user=${commandInteraction.user.id} failed:`,
+                error,
+            );
             try {
                 await commandInteraction.editReply({ content: 'An error occurred while processing the command.' });
             } catch (replyError) {
