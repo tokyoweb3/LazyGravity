@@ -30,7 +30,7 @@ export interface CreateSessionChannelResult {
 /** Category name prefix emoji */
 const CATEGORY_PREFIX = '🗂️-';
 /** Default channel name under the category */
-const DEFAULT_CHANNEL_NAME = 'general';
+export const DEFAULT_CHANNEL_NAME = 'general';
 
 /**
  * Class that manages Discord categories and channels corresponding to workspace paths.
