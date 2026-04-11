@@ -106,6 +106,22 @@ import { createModelButtonAction } from '../handlers/modelButtonAction';
 import { createAutoAcceptButtonAction } from '../handlers/autoAcceptButtonAction';
 import { createTemplateButtonAction } from '../handlers/templateButtonAction';
 import { createModeSelectAction } from '../handlers/modeSelectAction';
+import { DEFAULT_CHANNEL_NAME } from '../services/channelManager';
+
+/**
+ * Normalize a candidate startup channel name for preference checks.
+ */
+function normalizeStartupChannelName(name: string): string {
+    return name.trim().replace(/^#/, '').toLowerCase();
+}
+
+/**
+ * Prefer the shared default channel name plus the localized 常规 variant.
+ */
+function isPreferredDiscordStartupChannel(name: string): boolean {
+    const normalized = normalizeStartupChannelName(name);
+    return normalized === DEFAULT_CHANNEL_NAME || normalized === '常规';
+}
 
 // =============================================================================
 // Embed color palette (color-coded by phase)
@@ -1007,12 +1023,17 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                 .setFooter({ text: `Started at ${new Date().toLocaleString()}` })
                 .setTimestamp();
 
-            // Send to the first available text channel in the guild
+            // Prefer the guild's general text channel, then fall back to the first sendable text channel.
             const guild = readyClient.guilds.cache.first();
             if (guild) {
-                const channel = guild.channels.cache.find(
-                    (ch) => ch.isTextBased() && !ch.isVoiceBased() && ch.permissionsFor(readyClient.user)?.has('SendMessages'),
+                const sendableTextChannels = guild.channels.cache.filter(
+                    (ch) =>
+                        ch.isTextBased()
+                        && !ch.isVoiceBased()
+                        && ch.permissionsFor(readyClient.user)?.has('SendMessages'),
                 );
+                const channel = sendableTextChannels.find((ch) => isPreferredDiscordStartupChannel(ch.name))
+                    ?? sendableTextChannels.first();
                 if (channel && channel.isTextBased()) {
                     await channel.send({ embeds: [dashboardEmbed] });
                     logger.info('Startup dashboard embed sent.');
