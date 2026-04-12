@@ -1,8 +1,10 @@
 import { logger } from './logger';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 
-const LOCK_FILE = path.resolve(process.cwd(), '.bot.lock');
+const LOCK_DIR = process.env.XDG_RUNTIME_DIR || path.join(os.tmpdir(), `lazygravity-${process.getuid ? process.getuid() : 'user'}`);
+const LOCK_FILE = path.join(LOCK_DIR, '.bot.lock');
 
 /**
  * Check if a process with the given PID is running
@@ -17,63 +19,51 @@ function isProcessRunning(pid: number): boolean {
 }
 
 /**
- * Stop an existing process and wait for it to exit
- */
-function killExistingProcess(pid: number): void {
-    logger.warn(`🔄 Stopping existing Bot process (PID: ${pid})...`);
-    try {
-        process.kill(pid, 'SIGTERM');
-    } catch {
-        // Ignore if already terminated
-        return;
-    }
-
-    // Wait up to 5 seconds for process to exit
-    const deadline = Date.now() + 5000;
-    while (Date.now() < deadline) {
-        if (!isProcessRunning(pid)) {
-            logger.info(`✅ Existing process (PID: ${pid}) stopped`);
-            return;
-        }
-        // Wait 50ms (busy wait)
-        const waitUntil = Date.now() + 50;
-        while (Date.now() < waitUntil) { /* spin */ }
-    }
-
-    // Timeout: force kill with SIGKILL
-    logger.warn(`⚠️  Process did not exit with SIGTERM, force killing (SIGKILL)`);
-    try {
-        process.kill(pid, 'SIGKILL');
-    } catch {
-        // ignore
-    }
-}
-
-/**
  * Acquire a lockfile to prevent duplicate bot instances.
- * If another process is already running, stop it before starting.
  *
  * @returns A function to release the lock
  */
 export function acquireLock(): () => void {
+    fs.mkdirSync(LOCK_DIR, { recursive: true, mode: 0o700 });
+
+    const dirStat = fs.lstatSync(LOCK_DIR);
+    if (!dirStat.isDirectory()) {
+        throw new Error(`Lock path is not a directory: ${LOCK_DIR}`);
+    }
+    if (typeof process.getuid === 'function' && dirStat.uid !== process.getuid()) {
+        throw new Error(`Lock directory is not owned by current user: ${LOCK_DIR}`);
+    }
+    if ((dirStat.mode & 0o077) !== 0) {
+        throw new Error(`Lock directory has overly permissive permissions: ${LOCK_DIR}`);
+    }
+
     // Check existing lock file
     if (fs.existsSync(LOCK_FILE)) {
         const content = fs.readFileSync(LOCK_FILE, 'utf-8').trim();
         const existingPid = parseInt(content, 10);
 
         if (!isNaN(existingPid) && existingPid !== process.pid && isProcessRunning(existingPid)) {
-            // Stop existing process and restart
-            killExistingProcess(existingPid);
+            throw new Error(`Another Bot process is already running (PID: ${existingPid})`);
         } else if (!isNaN(existingPid) && !isProcessRunning(existingPid)) {
             logger.warn(`⚠️  Stale lock file detected (PID: ${existingPid} has exited). Cleaning up.`);
+            try { fs.unlinkSync(LOCK_FILE); } catch { /* ignore */ }
         }
-
-        // Remove stale lock file
-        try { fs.unlinkSync(LOCK_FILE); } catch { /* ignore */ }
     }
 
-    // Create new lock file
-    fs.writeFileSync(LOCK_FILE, String(process.pid), 'utf-8');
+    // Create new lock file atomically
+    try {
+        const fd = fs.openSync(LOCK_FILE, 'wx', 0o600);
+        try {
+            fs.writeFileSync(fd, String(process.pid), { encoding: 'utf-8' });
+        } finally {
+            fs.closeSync(fd);
+        }
+    } catch (err: any) {
+        if (err?.code === 'EEXIST') {
+            throw new Error('Another Bot process is already running');
+        }
+        throw err;
+    }
     logger.info(`🔒 Lock acquired (PID: ${process.pid})`);
 
     // Cleanup function
