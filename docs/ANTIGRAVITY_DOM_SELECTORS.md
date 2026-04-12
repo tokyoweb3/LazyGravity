@@ -2,7 +2,7 @@
 
 Central reference for all CSS selectors and DOM structures used to interact with the Antigravity (Windsurf/Cascade) UI via CDP.
 
-> **Last verified**: 2025-02 (against live Antigravity DOM)
+> **Last verified**: 2026-04 (model picker updated for Antigravity v1.107.0+; other selectors verified 2025-02)
 
 ---
 
@@ -324,6 +324,89 @@ Terminal command execution confirmation dialog (Run/Reject).
 The `<pre>` element contains: `<working-directory> $ <command>`. Split on ` $ ` to extract:
 - `workingDirectory`: e.g. `~/Code/login`
 - `commandText`: e.g. `python3 -m http.server 8000`
+
+---
+
+## 13. Model Picker (Dropdown)
+
+Model list retrieval, current model detection, and model switching.
+
+> **Last verified**: 2026-04 (reported by user in [#120](https://github.com/tokyoweb3/LazyGravity/issues/120))
+
+### DOM Structure (v1.107.0+)
+
+```html
+<!-- Model trigger (shows current model) -->
+<span class="select-none overflow-hidden text-ellipsis text-xs">
+  gemini-2.5-pro
+</span>
+
+<!-- Model list items (inside dropdown) -->
+<div class="text-xs font-medium">
+  <span>gemini-2.5-pro</span>
+  <span>claude-3-opus</span>
+  <span>gpt-4o</span>
+</div>
+```
+
+### Legacy DOM Structure (pre-v1.107)
+
+```html
+<div class="cursor-pointer px-2 py-1 flex items-center justify-between">
+  model-name
+</div>
+<!-- Selected item has class: bg-gray-500/20 -->
+```
+
+### Item Selectors (ordered by priority)
+
+| Selector | Purpose | Version | File |
+|----------|---------|---------|------|
+| `[role="option"]` | ARIA option element | Universal | `cdpService.ts` |
+| `[role="menuitem"]` | ARIA menu item | Universal | `cdpService.ts` |
+| `[aria-selected]` | ARIA selected attribute | Universal | `cdpService.ts` |
+| `[aria-checked]` | ARIA checked attribute | Universal | `cdpService.ts` |
+| `button` | Button elements | Universal | `cdpService.ts` |
+| `[role="button"]` | ARIA button role | Universal | `cdpService.ts` |
+| `div.cursor-pointer` | Legacy clickable div | Pre-v1.107 | `cdpService.ts` |
+| `span[class*="select-none"]` | Span model display | v1.107+ | `cdpService.ts` |
+| `span[class*="text-xs"]` | Span model item | v1.107+ | `cdpService.ts` |
+
+### Selection Detection (scoring-based)
+
+| Signal | Score | Version |
+|--------|-------|---------|
+| `aria-selected="true"` | +5 | Universal |
+| `aria-checked="true"` | +5 | Universal |
+| `aria-current="true"` | +4 | Universal |
+| `data-state` matches `checked\|active\|selected\|on\|open` | +4 | Universal |
+| `className` includes `bg-gray-500/20` | +3 | Pre-v1.107 |
+| `className` includes `selected` | +3 | Universal |
+| `className` includes `active` | +2 | Universal |
+
+### Trigger Selectors (to open dropdown)
+
+| Selector | Purpose | File |
+|----------|---------|------|
+| `[role="combobox"]` | ARIA combobox | `cdpService.ts` |
+| `[aria-haspopup="listbox"]` | ARIA popup hint | `cdpService.ts` |
+| `[aria-expanded]` | Expandable element | `cdpService.ts` |
+| `span[class*="select-none"]` | v1.107+ model display | `cdpService.ts` |
+| `span[class*="overflow-hidden"]` | v1.107+ ellipsis model | `cdpService.ts` |
+
+### Scope Selectors (dropdown container)
+
+| Selector | Purpose |
+|----------|---------|
+| `[role="dialog"]` | Dialog container |
+| `[role="listbox"]` | Listbox container |
+| `[role="menu"]` | Menu container |
+| `[data-radix-popper-content-wrapper]` | Radix popover |
+| `[data-state="open"]` | Open state container |
+
+> **Note**: All candidates are filtered by `looksLikeModel()` regex (`/gemini|gpt|claude/i`) to avoid false positives. Adding broad selectors like `span` is safe because the model name filter provides specificity.
+
+**Used by**: `cdpService.ts` (`getUiModels()`, `getCurrentModel()`, `setUiModel()`)
 
 ---
 

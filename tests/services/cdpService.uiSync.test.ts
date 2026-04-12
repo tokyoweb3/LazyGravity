@@ -294,5 +294,147 @@ describe('CdpService - UI sync (Step 9)', () => {
             expect(callArgs.expression).toContain('ariaHaspopup');
             expect(callArgs.expression).toContain('openPicker');
         });
+
+        it('includes span-based selectors for Antigravity v1.107+ DOM', async () => {
+            (cdpService as any).isConnectedFlag = true;
+            (cdpService as any).ws = mockWsInstance;
+
+            callSpy.mockResolvedValue({
+                result: { value: { ok: true, model: 'gemini-2.5-pro' } }
+            });
+
+            await cdpService.setUiModel('gemini-2.5-pro');
+
+            const callArgs = callSpy.mock.calls[0][1];
+            // v1.107+ uses span elements instead of div.cursor-pointer
+            expect(callArgs.expression).toContain('span[class*="select-none"]');
+            expect(callArgs.expression).toContain('span[class*="text-xs"]');
+            expect(callArgs.expression).toContain('span[class*="overflow-hidden"]');
+        });
+    });
+
+    // ========== getUiModels tests ==========
+
+    describe('getUiModels - model list retrieval', () => {
+
+        it('throws when not connected', async () => {
+            await expect(cdpService.getUiModels()).rejects.toThrow('Not connected to CDP.');
+        });
+
+        it('returns model list from CDP evaluation', async () => {
+            (cdpService as any).isConnectedFlag = true;
+            (cdpService as any).ws = mockWsInstance;
+
+            callSpy.mockResolvedValue({
+                result: { value: ['gemini-2.5-pro', 'claude-3-opus', 'gpt-4o'] }
+            });
+
+            const models = await cdpService.getUiModels();
+
+            expect(models).toEqual(['gemini-2.5-pro', 'claude-3-opus', 'gpt-4o']);
+            expect(callSpy).toHaveBeenCalledWith(
+                'Runtime.evaluate',
+                expect.objectContaining({
+                    returnByValue: true,
+                    awaitPromise: true,
+                })
+            );
+        });
+
+        it('returns empty array when no models found', async () => {
+            (cdpService as any).isConnectedFlag = true;
+            (cdpService as any).ws = mockWsInstance;
+
+            callSpy.mockResolvedValue({
+                result: { value: [] }
+            });
+
+            const models = await cdpService.getUiModels();
+            expect(models).toEqual([]);
+        });
+
+        it('includes span-based selectors for Antigravity v1.107+ DOM', async () => {
+            (cdpService as any).isConnectedFlag = true;
+            (cdpService as any).ws = mockWsInstance;
+
+            callSpy.mockResolvedValue({
+                result: { value: ['gemini-2.5-pro'] }
+            });
+
+            await cdpService.getUiModels();
+
+            const callArgs = callSpy.mock.calls[0][1];
+            expect(callArgs.expression).toContain('span[class*="select-none"]');
+            expect(callArgs.expression).toContain('span[class*="text-xs"]');
+        });
+
+        it('returns empty array on CDP error', async () => {
+            (cdpService as any).isConnectedFlag = true;
+            (cdpService as any).ws = mockWsInstance;
+
+            callSpy.mockRejectedValue(new Error('CDP timeout'));
+
+            const models = await cdpService.getUiModels();
+            expect(models).toEqual([]);
+        });
+    });
+
+    // ========== getCurrentModel tests ==========
+
+    describe('getCurrentModel - selected model detection', () => {
+
+        it('returns null when not connected', async () => {
+            const model = await cdpService.getCurrentModel();
+            expect(model).toBeNull();
+        });
+
+        it('returns model name when found', async () => {
+            (cdpService as any).isConnectedFlag = true;
+            (cdpService as any).ws = mockWsInstance;
+
+            callSpy.mockResolvedValue({
+                result: { value: 'claude-3-opus' }
+            });
+
+            const model = await cdpService.getCurrentModel();
+            expect(model).toBe('claude-3-opus');
+        });
+
+        it('returns null when no model is selected', async () => {
+            (cdpService as any).isConnectedFlag = true;
+            (cdpService as any).ws = mockWsInstance;
+
+            callSpy.mockResolvedValue({
+                result: { value: null }
+            });
+
+            const model = await cdpService.getCurrentModel();
+            expect(model).toBeNull();
+        });
+
+        it('includes span-based selectors for Antigravity v1.107+ DOM', async () => {
+            (cdpService as any).isConnectedFlag = true;
+            (cdpService as any).ws = mockWsInstance;
+
+            callSpy.mockResolvedValue({
+                result: { value: 'gemini-2.5-pro' }
+            });
+
+            await cdpService.getCurrentModel();
+
+            const callArgs = callSpy.mock.calls[0][1];
+            expect(callArgs.expression).toContain('span[class*="select-none"]');
+            expect(callArgs.expression).toContain('span[class*="text-xs"]');
+        });
+
+        it('returns null on CDP error', async () => {
+            (cdpService as any).isConnectedFlag = true;
+            (cdpService as any).ws = mockWsInstance;
+
+            callSpy.mockRejectedValue(new Error('CDP error'));
+
+            const model = await cdpService.getCurrentModel();
+            expect(model).toBeNull();
+        });
     });
 });

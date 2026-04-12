@@ -2132,6 +2132,8 @@ export class CdpService extends EventEmitter {
                 '[role="button"]',
                 'div.cursor-pointer',
                 'div[class*="cursor-pointer"]',
+                'span[class*="select-none"]',
+                'span[class*="text-xs"]',
             ];
             const getScopes = () => {
                 const scopes = [document];
@@ -2176,6 +2178,8 @@ export class CdpService extends EventEmitter {
                 '[role="button"]',
                 'div.cursor-pointer',
                 'div[class*="cursor-pointer"]',
+                'span[class*="select-none"]',
+                'span[class*="overflow-hidden"]',
             ];
 
             let models = collectModels();
@@ -2292,7 +2296,8 @@ export class CdpService extends EventEmitter {
             };
             const candidates = Array.from(document.querySelectorAll(
                 '[role="option"], [role="menuitem"], [role="combobox"], [aria-selected], [aria-checked], ' +
-                '[aria-current], button, [role="button"], div.cursor-pointer, div[class*="cursor-pointer"]'
+                '[aria-current], button, [role="button"], div.cursor-pointer, div[class*="cursor-pointer"], ' +
+                'span[class*="select-none"], span[class*="text-xs"]'
             ))
                 .filter(isVisible)
                 .map((el) => ({ el, label: getLabel(el), score: getScore(el) }))
@@ -2341,10 +2346,10 @@ export class CdpService extends EventEmitter {
             await this.reconnectOnDemand();
         }
 
-        // DOM manipulation script: based on actual Antigravity UI DOM structure
-        // Model list uses div.cursor-pointer elements with class 'px-2 py-1 flex items-center justify-between'
-        // Currently selected has 'bg-gray-500/20', others have 'hover:bg-gray-500/10'
-        // textContent may have "New" suffix
+        // DOM manipulation script: adaptive Antigravity UI model picker
+        // Legacy (<v1.107): div.cursor-pointer with class 'px-2 py-1 flex items-center justify-between'
+        // v1.107+: span elements with classes 'select-none', 'text-xs', 'overflow-hidden'
+        // Selection detected via ARIA attributes, data-state, or bg-gray-500/20 class
         const safeModel = JSON.stringify(modelName);
         const expression = `(async () => {
             const targetModel = ${safeModel};
@@ -2383,6 +2388,8 @@ export class CdpService extends EventEmitter {
                 '[role="button"]',
                 'div.cursor-pointer',
                 'div[class*="cursor-pointer"]',
+                'span[class*="select-none"]',
+                'span[class*="text-xs"]',
             ];
             const triggerSelectors = [
                 '[role="combobox"]',
@@ -2393,6 +2400,8 @@ export class CdpService extends EventEmitter {
                 '[role="button"]',
                 'div.cursor-pointer',
                 'div[class*="cursor-pointer"]',
+                'span[class*="select-none"]',
+                'span[class*="overflow-hidden"]',
             ];
             const scopeSelectors = [
                 '[role="dialog"]',
