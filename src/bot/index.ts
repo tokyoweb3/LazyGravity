@@ -115,14 +115,21 @@ import { createTemplateButtonAction } from '../handlers/templateButtonAction';
 import { createModeSelectAction } from '../handlers/modeSelectAction';
 import { createAccountSelectAction } from '../handlers/accountSelectAction';
 import { selectTelegramStartupChatId } from './telegramStartupTarget';
+import { DEFAULT_CHANNEL_NAME } from '../services/channelManager';
 
+/**
+ * Normalize a candidate startup channel name for preference checks.
+ */
 function normalizeStartupChannelName(name: string): string {
     return name.trim().replace(/^#/, '').toLowerCase();
 }
 
+/**
+ * Prefer the shared default channel name plus the localized 常规 variant.
+ */
 function isPreferredDiscordStartupChannel(name: string): boolean {
     const normalized = normalizeStartupChannelName(name);
-    return normalized === 'general' || normalized === '常规';
+    return normalized === DEFAULT_CHANNEL_NAME || normalized === '常规';
 }
 
 // =============================================================================

@@ -395,6 +395,35 @@ describe('Lean ResponseMonitor (new API)', () => {
     });
 
     // ---------------------------------------------------------------
+    // Test 7c: Caller-provided baseline handles fast replies that appear before first poll
+    // ---------------------------------------------------------------
+    it('uses a pre-injection baseline so a fast reply is not suppressed as old text', async () => {
+        let completedText: string | null = null;
+        const progressTexts: string[] = [];
+        const monitor = createMonitor({
+            initialBaselineText: 'old response',
+            initialSeenProcessLogKeys: [],
+            onProgress: (text: string) => { progressTexts.push(text); },
+            onComplete: (text: string) => { completedText = text; },
+        } as any);
+
+        await monitor.start();
+
+        expect(cdpService.call).toHaveBeenCalledTimes(0);
+
+        for (let i = 0; i < 3; i++) {
+            cdpService.call
+                .mockResolvedValueOnce(cdpResult({ isGenerating: false }))
+                .mockResolvedValueOnce(cdpResult(false))
+                .mockResolvedValueOnce(cdpResult('new fast reply'));
+            await jest.advanceTimersByTimeAsync(2000);
+        }
+
+        expect(progressTexts).toContain('new fast reply');
+        expect(completedText).toBe('new fast reply');
+    });
+
+    // ---------------------------------------------------------------
     // Test 8: Timeout triggers onTimeout after maxDurationMs
     // ---------------------------------------------------------------
     it('timeout triggers onTimeout after maxDurationMs', async () => {
