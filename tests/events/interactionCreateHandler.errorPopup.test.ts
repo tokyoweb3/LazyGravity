@@ -45,6 +45,7 @@ describe('interactionCreateHandler - error popup buttons', () => {
         const reply = jest.fn().mockResolvedValue(undefined);
 
         const interaction = {
+            isAutocomplete: () => false,
             isButton: () => true,
             user: { id: 'allowed' },
             customId: 'error_popup_dismiss_action:ws-a:channel-a',
@@ -70,6 +71,7 @@ describe('interactionCreateHandler - error popup buttons', () => {
         const reply = jest.fn().mockResolvedValue(undefined);
 
         const interaction = {
+            isAutocomplete: () => false,
             isButton: () => true,
             user: { id: 'allowed' },
             customId: 'error_popup_dismiss_action:ws-a:channel-a',
@@ -112,6 +114,7 @@ describe('interactionCreateHandler - error popup buttons', () => {
         };
 
         const interaction = {
+            isAutocomplete: () => false,
             isButton: () => true,
             user: { id: 'allowed' },
             customId: 'error_popup_dismiss_action:ws-a:channel-a',
@@ -205,6 +208,7 @@ describe('interactionCreateHandler - error popup buttons', () => {
         };
 
         const interaction = {
+            isAutocomplete: () => false,
             isButton: () => true,
             user: { id: 'allowed' },
             customId: 'error_popup_copy_debug_action:ws-a:channel-a',
@@ -267,6 +271,7 @@ describe('interactionCreateHandler - error popup buttons', () => {
         };
 
         const interaction = {
+            isAutocomplete: () => false,
             isButton: () => true,
             user: { id: 'allowed' },
             customId: 'error_popup_copy_debug_action:ws-a:channel-a',
@@ -314,6 +319,7 @@ describe('interactionCreateHandler - error popup buttons', () => {
         };
 
         const interaction = {
+            isAutocomplete: () => false,
             isButton: () => true,
             user: { id: 'allowed' },
             customId: 'error_popup_copy_debug_action:ws-a:channel-a',
@@ -365,6 +371,7 @@ describe('interactionCreateHandler - error popup buttons', () => {
         };
 
         const interaction = {
+            isAutocomplete: () => false,
             isButton: () => true,
             user: { id: 'allowed' },
             customId: 'error_popup_retry_action:ws-a:channel-a',

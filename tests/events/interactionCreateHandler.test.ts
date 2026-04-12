@@ -4,6 +4,7 @@ describe('interactionCreateHandler', () => {
     it('responds with an ephemeral rejection for unauthorized users', async () => {
         const reply = jest.fn().mockResolvedValue(undefined);
         const interaction = {
+            isAutocomplete: () => false,
             isButton: () => true,
             user: { id: 'forbidden' },
             reply,
@@ -45,6 +46,7 @@ describe('interactionCreateHandler', () => {
         };
 
         const interaction = {
+            isAutocomplete: () => false,
             isButton: () => true,
             user: { id: 'allowed' },
             customId: 'approve_action:ws-a:channel-a',
@@ -103,6 +105,7 @@ describe('interactionCreateHandler', () => {
         const sendAutoAcceptUI = jest.fn().mockResolvedValue(undefined);
 
         const interaction = {
+            isAutocomplete: () => false,
             isButton: () => true,
             customId: 'autoaccept_btn_on',
             user: { id: 'allowed' },
@@ -152,6 +155,7 @@ describe('interactionCreateHandler', () => {
         const wsHandler = { getWorkspaceForChannel: jest.fn().mockReturnValue('/tmp/demo-project') };
 
         const interaction = {
+            isAutocomplete: () => false,
             isButton: () => false,
             isStringSelectMenu: () => true,
             isChatInputCommand: () => false,
@@ -218,6 +222,7 @@ describe('interactionCreateHandler', () => {
         };
 
         const interaction = {
+            isAutocomplete: () => false,
             isButton: () => false,
             isStringSelectMenu: () => true,
             isChatInputCommand: () => false,

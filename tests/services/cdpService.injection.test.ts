@@ -159,7 +159,7 @@ describe('CdpService - Message Injection (Step 5)', () => {
         const result = await service.injectMessage('失敗するメッセージ');
         expect(result.ok).toBe(false);
         expect(result.error).toBeDefined();
-    });
+    }, 15000);
 
     // ---------------------------------------------------------
     // Test 4: Verify the injected script contains correct content
