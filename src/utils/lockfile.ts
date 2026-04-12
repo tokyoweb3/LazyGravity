@@ -26,6 +26,17 @@ function isProcessRunning(pid: number): boolean {
 export function acquireLock(): () => void {
     fs.mkdirSync(LOCK_DIR, { recursive: true, mode: 0o700 });
 
+    const dirStat = fs.lstatSync(LOCK_DIR);
+    if (!dirStat.isDirectory()) {
+        throw new Error(`Lock path is not a directory: ${LOCK_DIR}`);
+    }
+    if (typeof process.getuid === 'function' && dirStat.uid !== process.getuid()) {
+        throw new Error(`Lock directory is not owned by current user: ${LOCK_DIR}`);
+    }
+    if ((dirStat.mode & 0o077) !== 0) {
+        throw new Error(`Lock directory has overly permissive permissions: ${LOCK_DIR}`);
+    }
+
     // Check existing lock file
     if (fs.existsSync(LOCK_FILE)) {
         const content = fs.readFileSync(LOCK_FILE, 'utf-8').trim();
@@ -39,8 +50,20 @@ export function acquireLock(): () => void {
         }
     }
 
-    // Create new lock file
-    fs.writeFileSync(LOCK_FILE, String(process.pid), { encoding: 'utf-8', mode: 0o600 });
+    // Create new lock file atomically
+    try {
+        const fd = fs.openSync(LOCK_FILE, 'wx', 0o600);
+        try {
+            fs.writeFileSync(fd, String(process.pid), { encoding: 'utf-8' });
+        } finally {
+            fs.closeSync(fd);
+        }
+    } catch (err: any) {
+        if (err?.code === 'EEXIST') {
+            throw new Error('Another Bot process is already running');
+        }
+        throw err;
+    }
     logger.info(`🔒 Lock acquired (PID: ${process.pid})`);
 
     // Cleanup function
