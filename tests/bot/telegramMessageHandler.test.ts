@@ -126,6 +126,7 @@ function createBridge(pool = createMockPool()) {
 function createTelegramBindingRepo(binding?: { chatId: string; workspacePath: string }) {
     return {
         findByChatId: jest.fn().mockReturnValue(binding),
+        findByChatIdWithParentFallback: jest.fn().mockReturnValue(binding),
     } as any;
 }
 
@@ -164,6 +165,7 @@ describe('createTelegramMessageHandler', () => {
     it('sends error reply if no workspace binding found for chat', async () => {
         const { message } = createMockMessage();
         const telegramBindingRepo = createTelegramBindingRepo(undefined);
+        telegramBindingRepo.findByChatIdWithParentFallback = jest.fn().mockReturnValue(undefined);
 
         const handler = createTelegramMessageHandler({
             bridge: createBridge(),
@@ -172,10 +174,30 @@ describe('createTelegramMessageHandler', () => {
 
         await handler(message as any);
 
-        expect(telegramBindingRepo.findByChatId).toHaveBeenCalledWith('chat-123');
+        expect(telegramBindingRepo.findByChatIdWithParentFallback).toHaveBeenCalledWith('chat-123');
         expect(message.reply).toHaveBeenCalledWith({
-            text: 'No project is linked to this chat. Use /project to bind a workspace.',
+            text: 'No project is linked to this chat. Use /project to bind a workspace, or /project_reopen if this is a previously used session.',
         });
+    });
+
+    it('falls back to the base chat binding for Telegram topics', async () => {
+        const mockCdp = createMockCdp();
+        const pool = createMockPool(mockCdp);
+        const bridge = createBridge(pool);
+        const binding = { chatId: 'chat-123', workspacePath: '/workspace/a' };
+        const telegramBindingRepo = createTelegramBindingRepo(binding);
+        telegramBindingRepo.findByChatIdWithParentFallback = jest.fn().mockReturnValue(binding);
+        const { message } = createMockMessage({
+            content: 'topic prompt',
+            channel: createMockChannel('chat-123_55'),
+        });
+
+        const handler = createTelegramMessageHandler({ bridge, telegramBindingRepo });
+        await handler(message as any);
+
+        expect(telegramBindingRepo.findByChatIdWithParentFallback).toHaveBeenCalledWith('chat-123_55');
+        expect(pool.getOrConnect).toHaveBeenCalledWith('/workspace/a', { name: 'default' });
+        expect(mockCdp.injectMessage).toHaveBeenCalledWith('topic prompt');
     });
 
     it('connects to CDP and sends prompt', async () => {
@@ -189,8 +211,70 @@ describe('createTelegramMessageHandler', () => {
         const handler = createTelegramMessageHandler({ bridge, telegramBindingRepo });
         await handler(message as any);
 
-        expect(pool.getOrConnect).toHaveBeenCalledWith('/workspace/a');
+        expect(pool.getOrConnect).toHaveBeenCalledWith('/workspace/a', { name: 'default' });
         expect(mockCdp.injectMessage).toHaveBeenCalledWith('test prompt');
+    });
+
+    it('restores the saved account preference when reconnecting Telegram after restart', async () => {
+        const mockCdp = createMockCdp();
+        const pool = createMockPool(mockCdp);
+        const bridge = createBridge(pool);
+        bridge.selectedAccountByChannel = new Map();
+        const binding = { chatId: 'chat-123', workspacePath: '/workspace/a' };
+        const telegramBindingRepo = createTelegramBindingRepo(binding);
+        const channelPrefRepo = { getAccountName: jest.fn().mockReturnValue('work1') } as any;
+        const accountPrefRepo = { getAccountName: jest.fn().mockReturnValue('default') } as any;
+        const { message } = createMockMessage({ content: 'test prompt' });
+
+        const handler = createTelegramMessageHandler({
+            bridge,
+            telegramBindingRepo,
+            channelPrefRepo,
+            accountPrefRepo,
+            antigravityAccounts: [
+                { name: 'default', cdpPort: 9222 },
+                { name: 'work1', cdpPort: 9333 },
+            ],
+        });
+        await handler(message as any);
+
+        expect(channelPrefRepo.getAccountName).toHaveBeenCalledWith('chat-123');
+        expect(pool.getOrConnect).toHaveBeenCalledWith('/workspace/a', { name: 'work1' });
+        expect(bridge.selectedAccountByChannel.get('chat-123')).toBe('work1');
+    });
+
+    it('inherits the account from the base Telegram chat when the current topic has no override', async () => {
+        const mockCdp = createMockCdp();
+        const pool = createMockPool(mockCdp);
+        const bridge = createBridge(pool);
+        bridge.selectedAccountByChannel = new Map();
+        const binding = { chatId: 'chat-123_99', workspacePath: '/workspace/a' };
+        const telegramBindingRepo = createTelegramBindingRepo(binding);
+        const channelPrefRepo = {
+            getAccountName: jest.fn((chatId: string) => (chatId === 'chat-123' ? 'work1' : null)),
+        } as any;
+        const accountPrefRepo = { getAccountName: jest.fn().mockReturnValue('default') } as any;
+        const { message } = createMockMessage({
+            content: 'test prompt',
+            channel: createMockChannel('chat-123_99'),
+        });
+
+        const handler = createTelegramMessageHandler({
+            bridge,
+            telegramBindingRepo,
+            channelPrefRepo,
+            accountPrefRepo,
+            antigravityAccounts: [
+                { name: 'default', cdpPort: 9222 },
+                { name: 'work1', cdpPort: 9333 },
+            ],
+        });
+        await handler(message as any);
+
+        expect(channelPrefRepo.getAccountName).toHaveBeenCalledWith('chat-123_99');
+        expect(channelPrefRepo.getAccountName).toHaveBeenCalledWith('chat-123');
+        expect(pool.getOrConnect).toHaveBeenCalledWith('/workspace/a', { name: 'work1' });
+        expect(bridge.selectedAccountByChannel.get('chat-123_99')).toBe('work1');
     });
 
     it('calls message.react() after successful CDP connection', async () => {
@@ -265,10 +349,10 @@ describe('createTelegramMessageHandler', () => {
             'test-project',
             message.channel,
         );
-        expect(ensureApprovalDetector).toHaveBeenCalledWith(bridge, mockCdp, 'test-project');
-        expect(ensureErrorPopupDetector).toHaveBeenCalledWith(bridge, mockCdp, 'test-project');
-        expect(ensurePlanningDetector).toHaveBeenCalledWith(bridge, mockCdp, 'test-project');
-        expect(ensureRunCommandDetector).toHaveBeenCalledWith(bridge, mockCdp, 'test-project');
+        expect(ensureApprovalDetector).toHaveBeenCalledWith(bridge, mockCdp, 'test-project', 'default');
+        expect(ensureErrorPopupDetector).toHaveBeenCalledWith(bridge, mockCdp, 'test-project', 'default');
+        expect(ensurePlanningDetector).toHaveBeenCalledWith(bridge, mockCdp, 'test-project', 'default');
+        expect(ensureRunCommandDetector).toHaveBeenCalledWith(bridge, mockCdp, 'test-project', 'default');
     });
 
     it('sets lastActiveWorkspace and lastActiveChannel on bridge', async () => {
@@ -533,9 +617,9 @@ describe('createTelegramMessageHandler', () => {
         await handler(message as any);
 
         // Falls through to normal binding check → "No project is linked"
-        expect(telegramBindingRepo.findByChatId).toHaveBeenCalled();
+        expect(telegramBindingRepo.findByChatIdWithParentFallback).toHaveBeenCalled();
         expect(message.reply).toHaveBeenCalledWith({
-            text: 'No project is linked to this chat. Use /project to bind a workspace.',
+            text: 'No project is linked to this chat. Use /project to bind a workspace, or /project_reopen if this is a previously used session.',
         });
     });
 

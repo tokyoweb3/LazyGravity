@@ -11,6 +11,8 @@ import { ChannelManager } from '../services/channelManager';
 import { CdpConnectionPool } from '../services/cdpConnectionPool';
 import { WorkspaceService } from '../services/workspaceService';
 
+export type ResolveAccountForChannel = (channelId: string, userId: string) => string;
+
 /**
  * Handler for chat session related commands
  *
@@ -25,6 +27,7 @@ export class ChatCommandHandler {
     private readonly channelManager: ChannelManager;
     private readonly pool: CdpConnectionPool | null;
     private readonly workspaceService: WorkspaceService;
+    private readonly resolveAccountForChannel: ResolveAccountForChannel | null;
 
     constructor(
         chatSessionService: ChatSessionService,
@@ -33,6 +36,7 @@ export class ChatCommandHandler {
         channelManager: ChannelManager,
         workspaceService: WorkspaceService,
         pool?: CdpConnectionPool,
+        resolveAccountForChannel?: ResolveAccountForChannel,
     ) {
         this.chatSessionService = chatSessionService;
         this.chatSessionRepo = chatSessionRepo;
@@ -40,6 +44,7 @@ export class ChatCommandHandler {
         this.channelManager = channelManager;
         this.workspaceService = workspaceService;
         this.pool = pool ?? null;
+        this.resolveAccountForChannel = resolveAccountForChannel ?? null;
     }
 
     /**
@@ -58,21 +63,12 @@ export class ChatCommandHandler {
             return;
         }
 
-        // Check if the current channel is under a project category
-        const parentId = 'parentId' in channel ? channel.parentId : null;
-        if (!parentId) {
-            await interaction.editReply({
-                content: t('⚠️ Please run in a project category channel.\nUse `/project` to create a project first.'),
-            });
-            return;
-        }
-
-        // Determine the project path
         const currentSession = this.chatSessionRepo.findByChannelId(interaction.channelId);
         const binding = this.bindingRepo.findByChannelId(interaction.channelId);
+        const parentId = currentSession?.categoryId ?? ('parentId' in channel ? channel.parentId : null);
 
         const workspaceName = currentSession?.workspacePath ?? binding?.workspacePath;
-        if (!workspaceName) {
+        if (!parentId || !workspaceName) {
             await interaction.editReply({
                 content: t('⚠️ Please run in a project category channel.\nUse `/project` to create a project first.'),
             });
@@ -84,9 +80,10 @@ export class ChatCommandHandler {
 
         // Switch project (connect to the correct workbench page)
         let workspaceCdp;
+        const selectedAccount = this.resolveAccountForChannel?.(interaction.channelId, interaction.user.id) ?? 'default';
         if (this.pool) {
             try {
-                workspaceCdp = await this.pool.getOrConnect(workspacePath);
+                workspaceCdp = await this.pool.getOrConnect(workspacePath, { name: selectedAccount });
             } catch (e: any) {
                 await interaction.editReply({
                     content: t(`⚠️ Failed to switch project: ${e.message}`),
@@ -120,6 +117,7 @@ export class ChatCommandHandler {
             categoryId: parentId,
             workspacePath: workspaceName,
             sessionNumber,
+            activeAccountName: selectedAccount,
             guildId: guild.id,
         });
 

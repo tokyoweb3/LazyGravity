@@ -44,6 +44,7 @@ describe('interactionCreateHandler - planning buttons', () => {
         const reply = jest.fn().mockResolvedValue(undefined);
 
         const interaction = {
+            isAutocomplete: () => false,
             isButton: () => true,
             user: { id: 'allowed' },
             customId: 'planning_open_action:ws-a:channel-a',
@@ -69,6 +70,7 @@ describe('interactionCreateHandler - planning buttons', () => {
         const reply = jest.fn().mockResolvedValue(undefined);
 
         const interaction = {
+            isAutocomplete: () => false,
             isButton: () => true,
             user: { id: 'allowed' },
             customId: 'planning_open_action:ws-a:channel-a',
@@ -114,6 +116,7 @@ describe('interactionCreateHandler - planning buttons', () => {
         };
 
         const interaction = {
+            isAutocomplete: () => false,
             isButton: () => true,
             user: { id: 'allowed' },
             customId: 'planning_open_action:ws-a:channel-a',
@@ -173,6 +176,7 @@ describe('interactionCreateHandler - planning buttons', () => {
         };
 
         const interaction = {
+            isAutocomplete: () => false,
             isButton: () => true,
             user: { id: 'allowed' },
             customId: 'planning_proceed_action:ws-a:channel-a',
@@ -255,6 +259,7 @@ describe('interactionCreateHandler - planning buttons', () => {
         };
 
         const interaction = {
+            isAutocomplete: () => false,
             isButton: () => true,
             user: { id: 'allowed' },
             customId: 'planning_open_action:ws-a:channel-a',
@@ -316,6 +321,7 @@ describe('interactionCreateHandler - planning buttons', () => {
         };
 
         const interaction = {
+            isAutocomplete: () => false,
             isButton: () => true,
             user: { id: 'allowed' },
             customId: 'planning_open_action:ws-a:channel-a',
