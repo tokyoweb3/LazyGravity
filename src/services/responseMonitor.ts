@@ -538,6 +538,7 @@ async function evaluateAcrossContexts<T = unknown>(
     const awaitPromise = options?.awaitPromise ?? true;
     const targets = getOrderedContextTargets(cdpService);
     let firstValue: ContextProbeResult<T> | null = null;
+    let lastError: unknown = null;
 
     if (targets.length === 0) {
         const result = await cdpService.call('Runtime.evaluate', {
@@ -572,13 +573,17 @@ async function evaluateAcrossContexts<T = unknown>(
             if (accept(value)) {
                 return probed;
             }
-        } catch {
-            // Try the next context.
+        } catch (error) {
+            lastError = error;
         }
     }
 
     if (firstValue) {
         return firstValue;
+    }
+
+    if (lastError) {
+        throw lastError;
     }
 
     return {
@@ -978,7 +983,12 @@ export class ResponseMonitor {
             const skipped = dumpValue.filter((entry: any) => entry?.skip).slice(0, 5);
 
             logger.warn(
-                '[ResponseMonitor:diag] Structured payload invalid. Candidates:',
+                `[ResponseMonitor:diag] Structured payload invalid — ${dumpValue.length} candidate(s), ` +
+                `${accepted.length} accepted, ${skipped.length} skipped ` +
+                `(context=${dumpResult.contextId ?? 'none'})`,
+            );
+            logger.debug(
+                '[ResponseMonitor:diag] Candidate details:',
                 JSON.stringify({
                     payloadType: payload === null ? 'null' : typeof payload,
                     contextId: dumpResult.contextId,
@@ -1012,7 +1022,14 @@ export class ResponseMonitor {
             );
             const domValue = domResult.value;
             logger.warn(
-                '[ResponseMonitor:diag] DOM_DIAGNOSTIC:',
+                `[ResponseMonitor:diag] DOM_DIAGNOSTIC — ` +
+                `details=${domValue?.detailsCount ?? 0}, ` +
+                `activity=${Array.isArray(domValue?.activityNodes) ? domValue.activityNodes.length : 0}, ` +
+                `textNodes=${Array.isArray(domValue?.allTextNodes) ? domValue.allTextNodes.length : 0} ` +
+                `(context=${domResult.contextId ?? 'none'})`,
+            );
+            logger.debug(
+                '[ResponseMonitor:diag] DOM_DIAGNOSTIC details:',
                 JSON.stringify({
                     contextId: domResult.contextId,
                     contextUrl: domResult.contextUrl,
