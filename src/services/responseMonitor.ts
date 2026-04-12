@@ -461,6 +461,180 @@ export interface ResponseMonitorOptions {
     onPhaseChange?: (phase: ResponsePhase, text: string | null) => void;
     /** Process log update callback (activity messages + tool output) */
     onProcessLog?: (text: string) => void;
+    /** Optional pre-captured baseline response text from before prompt injection */
+    initialBaselineText?: string | null;
+    /** Optional pre-captured process log keys from before prompt injection */
+    initialSeenProcessLogKeys?: string[];
+}
+
+/**
+ * Snapshot of pre-injection output and process-log state used to seed monitoring.
+ */
+export interface ResponseMonitorBaselineSnapshot {
+    text: string | null;
+    processLogKeys: string[];
+}
+
+/**
+ * Execution context metadata used when probing multiple CDP runtime contexts.
+ */
+interface ContextProbeTarget {
+    id: number;
+    name?: string;
+    url?: string;
+}
+
+/**
+ * Evaluation result paired with the context that produced it.
+ */
+interface ContextProbeResult<T = unknown> {
+    value: T;
+    contextId: number | null;
+    contextName: string | null;
+    contextUrl: string | null;
+}
+
+/**
+ * Prefer the active runtime context first, then fall back to any discovered contexts.
+ */
+function getOrderedContextTargets(cdpService: CdpService): ContextProbeTarget[] {
+    const primaryId = cdpService.getPrimaryContextId?.() ?? null;
+    const rawContexts = cdpService.getContexts?.() ?? [];
+    const contexts = rawContexts
+        .filter((ctx: any) => ctx && typeof ctx.id === 'number')
+        .map((ctx: any) => ({
+            id: ctx.id,
+            name: typeof ctx.name === 'string' ? ctx.name : undefined,
+            url: typeof ctx.url === 'string' ? ctx.url : undefined,
+        }));
+
+    if (contexts.length === 0) {
+        return primaryId !== null ? [{ id: primaryId }] : [];
+    }
+
+    if (primaryId === null) {
+        return contexts;
+    }
+
+    const primary = contexts.find((ctx) => ctx.id === primaryId);
+    const ordered = primary ? [primary] : [{ id: primaryId }];
+    for (const ctx of contexts) {
+        if (ctx.id !== primaryId) ordered.push(ctx);
+    }
+    return ordered;
+}
+
+/**
+ * Evaluate an expression across known runtime contexts until one returns an acceptable value.
+ */
+async function evaluateAcrossContexts<T = unknown>(
+    cdpService: CdpService,
+    expression: string,
+    accept: (value: T) => boolean,
+    options?: {
+        awaitPromise?: boolean;
+    },
+): Promise<ContextProbeResult<T>> {
+    const awaitPromise = options?.awaitPromise ?? true;
+    const targets = getOrderedContextTargets(cdpService);
+    let firstValue: ContextProbeResult<T> | null = null;
+    let lastError: unknown = null;
+
+    if (targets.length === 0) {
+        const result = await cdpService.call('Runtime.evaluate', {
+            expression,
+            returnByValue: true,
+            awaitPromise,
+        });
+        return {
+            value: (result?.result?.value ?? null) as T,
+            contextId: null,
+            contextName: null,
+            contextUrl: null,
+        };
+    }
+
+    for (const target of targets) {
+        try {
+            const result = await cdpService.call('Runtime.evaluate', {
+                expression,
+                returnByValue: true,
+                awaitPromise,
+                contextId: target.id,
+            });
+            const value = (result?.result?.value ?? null) as T;
+            const probed: ContextProbeResult<T> = {
+                value,
+                contextId: target.id,
+                contextName: target.name ?? null,
+                contextUrl: target.url ?? null,
+            };
+            if (!firstValue) firstValue = probed;
+            if (accept(value)) {
+                return probed;
+            }
+        } catch (error) {
+            lastError = error;
+        }
+    }
+
+    if (firstValue) {
+        return firstValue;
+    }
+
+    if (lastError) {
+        throw lastError;
+    }
+
+    return {
+        value: null as T,
+        contextId: null,
+        contextName: null,
+        contextUrl: null,
+    };
+}
+
+/**
+ * Capture the current assistant/output DOM state before sending a new prompt.
+ * This avoids races where a fast reply is mistaken for baseline text.
+ */
+export async function captureResponseMonitorBaseline(
+    cdpService: CdpService,
+): Promise<ResponseMonitorBaselineSnapshot> {
+    let text: string | null = null;
+    try {
+        const textResult = await evaluateAcrossContexts<string | null>(
+            cdpService,
+            RESPONSE_SELECTORS.RESPONSE_TEXT,
+            (value) => typeof value === 'string' && value.trim().length > 0,
+        );
+        text = typeof textResult.value === 'string' ? textResult.value.trim() || null : null;
+    } catch {
+        text = null;
+    }
+
+    const processLogKeys = new Set<string>();
+    try {
+        const logResult = await evaluateAcrossContexts<string[] | null>(
+            cdpService,
+            RESPONSE_SELECTORS.PROCESS_LOGS,
+            (value) => Array.isArray(value) && value.length > 0,
+        );
+        const logEntries = logResult.value;
+        if (Array.isArray(logEntries)) {
+            for (const entry of logEntries) {
+                const key = String(entry || '').replace(/\r/g, '').trim().slice(0, 200);
+                if (key) processLogKeys.add(key);
+            }
+        }
+    } catch {
+        // best-effort baseline capture
+    }
+
+    return {
+        text,
+        processLogKeys: Array.from(processLogKeys),
+    };
 }
 
 /**
@@ -482,6 +656,8 @@ export class ResponseMonitor {
     private readonly onTimeout?: (lastText: string) => void;
     private readonly onPhaseChange?: (phase: ResponsePhase, text: string | null) => void;
     private readonly onProcessLog?: (text: string) => void;
+    private readonly initialBaselineText?: string | null;
+    private readonly initialSeenProcessLogKeys?: string[];
 
     private pollTimer: ReturnType<typeof setTimeout> | null = null;
     private isRunning: boolean = false;
@@ -493,6 +669,7 @@ export class ResponseMonitor {
     private quotaDetected: boolean = false;
     private seenProcessLogKeys: Set<string> = new Set();
     private structuredDiagLogged: boolean = false;
+    private lastContentContextId: number | null = null;
 
     // CDP disconnect handling (#48)
     private isPaused: boolean = false;
@@ -514,6 +691,8 @@ export class ResponseMonitor {
         this.onTimeout = options.onTimeout;
         this.onPhaseChange = options.onPhaseChange;
         this.onProcessLog = options.onProcessLog;
+        this.initialBaselineText = options.initialBaselineText;
+        this.initialSeenProcessLogKeys = options.initialSeenProcessLogKeys;
     }
 
     /** Start monitoring */
@@ -546,35 +725,45 @@ export class ResponseMonitor {
 
         this.onPhaseChange?.(this.currentPhase, null);
 
-        // Capture baseline text
-        try {
-            const baseResult = await this.cdpService.call(
-                'Runtime.evaluate',
-                this.buildEvaluateParams(RESPONSE_SELECTORS.RESPONSE_TEXT),
-            );
-            const rawValue = baseResult?.result?.value;
-            this.baselineText = typeof rawValue === 'string' ? rawValue.trim() || null : null;
-        } catch {
-            this.baselineText = null;
+        if (this.initialBaselineText !== undefined) {
+            this.baselineText = this.initialBaselineText;
+        } else {
+            try {
+                const baseResult = await this.evaluateAcrossContexts<string | null>(
+                    RESPONSE_SELECTORS.RESPONSE_TEXT,
+                    (value) => typeof value === 'string' && value.trim().length > 0,
+                );
+                this.baselineText = typeof baseResult.value === 'string' ? baseResult.value.trim() || null : null;
+            } catch {
+                this.baselineText = null;
+            }
         }
 
-        // Capture baseline process logs as already-seen keys
-        try {
-            const logResult = await this.cdpService.call(
-                'Runtime.evaluate',
-                this.buildEvaluateParams(RESPONSE_SELECTORS.PROCESS_LOGS),
+        if (this.initialSeenProcessLogKeys !== undefined) {
+            this.seenProcessLogKeys = new Set(
+                this.initialSeenProcessLogKeys
+                    .map((s) => (s || '').replace(/\r/g, '').trim())
+                    .filter((s) => s.length > 0)
+                    .map((s) => s.slice(0, 200)),
             );
-            const logEntries = logResult?.result?.value;
-            if (Array.isArray(logEntries)) {
-                this.seenProcessLogKeys = new Set(
-                    logEntries
-                        .map((s: string) => (s || '').replace(/\r/g, '').trim())
-                        .filter((s: string) => s.length > 0)
-                        .map((s: string) => s.slice(0, 200)),
+        } else {
+            try {
+                const logResult = await this.evaluateAcrossContexts<string[] | null>(
+                    RESPONSE_SELECTORS.PROCESS_LOGS,
+                    (value) => Array.isArray(value) && value.length > 0,
                 );
+                const logEntries = logResult.value;
+                if (Array.isArray(logEntries)) {
+                    this.seenProcessLogKeys = new Set(
+                        logEntries
+                            .map((s: string) => (s || '').replace(/\r/g, '').trim())
+                            .filter((s: string) => s.length > 0)
+                            .map((s: string) => s.slice(0, 200)),
+                    );
+                }
+            } catch {
+                // baseline capture only
             }
-        } catch {
-            // baseline capture only
         }
 
         // In structured mode, also capture activity lines from the structured
@@ -584,11 +773,11 @@ export class ResponseMonitor {
         // entries from previous turns leak into the process log as "new" entries.
         if (this.extractionMode === 'structured') {
             try {
-                const structuredBaseline = await this.cdpService.call(
-                    'Runtime.evaluate',
-                    this.buildEvaluateParams(RESPONSE_SELECTORS.RESPONSE_STRUCTURED),
+                const structuredBaseline = await this.evaluateAcrossContexts<unknown>(
+                    RESPONSE_SELECTORS.RESPONSE_STRUCTURED,
+                    (value) => classifyAssistantSegments(value).diagnostics.source === 'dom-structured',
                 );
-                const baselineClassified = classifyAssistantSegments(structuredBaseline?.result?.value);
+                const baselineClassified = classifyAssistantSegments(structuredBaseline.value);
                 if (baselineClassified.diagnostics.source === 'dom-structured') {
                     for (const line of baselineClassified.activityLines) {
                         const key = (line || '').replace(/\r/g, '').trim().slice(0, 200);
@@ -648,17 +837,21 @@ export class ResponseMonitor {
     /** Click the stop button to interrupt LLM generation */
     async clickStopButton(): Promise<{ ok: boolean; method?: string; error?: string }> {
         try {
-            const result = await this.cdpService.call(
-                'Runtime.evaluate',
-                this.buildEvaluateParams(RESPONSE_SELECTORS.CLICK_STOP_BUTTON),
+            const result = await this.evaluateAcrossContexts<{ ok?: boolean; method?: string; error?: string } | null>(
+                RESPONSE_SELECTORS.CLICK_STOP_BUTTON,
+                (value) => !!(value && typeof value === 'object' && (value as any).ok),
             );
-            const value = result?.result?.value;
+            const value = result.value;
 
             if (this.isRunning) {
                 await this.stop();
             }
 
-            return value ?? { ok: false, error: 'CDP evaluation returned empty' };
+            if (value && typeof value.ok === 'boolean') {
+                return value as { ok: boolean; method?: string; error?: string };
+            }
+
+            return { ok: false, error: 'CDP evaluation returned empty' };
         } catch (error: any) {
             return { ok: false, error: error.message || 'Failed to click stop button' };
         }
@@ -759,17 +952,96 @@ export class ResponseMonitor {
         }, this.pollIntervalMs);
     }
 
-    private buildEvaluateParams(expression: string): Record<string, unknown> {
-        const params: Record<string, unknown> = {
-            expression,
-            returnByValue: true,
+    private async evaluateAcrossContexts<T = unknown>(
+        expression: string,
+        accept: (value: T) => boolean,
+    ): Promise<ContextProbeResult<T>> {
+        const result = await evaluateAcrossContexts<T>(this.cdpService, expression, accept, {
             awaitPromise: true,
-        };
-        const contextId = this.cdpService.getPrimaryContextId?.();
-        if (contextId !== null && contextId !== undefined) {
-            params.contextId = contextId;
+        });
+        if (
+            result.contextId !== null
+            && accept(result.value)
+            && this.lastContentContextId !== result.contextId
+        ) {
+            this.lastContentContextId = result.contextId;
+            logger.debug(
+                `[ResponseMonitor] Using context ${result.contextId} (${result.contextName ?? 'unknown'} | ${result.contextUrl ?? 'no-url'})`,
+            );
         }
-        return params;
+        return result;
+    }
+
+    private async logStructuredExtractionDiagnostics(payload: unknown): Promise<void> {
+        try {
+            const dumpResult = await this.evaluateAcrossContexts<any[] | null>(
+                RESPONSE_SELECTORS.DUMP_ALL_TEXTS,
+                (value) => Array.isArray(value) && value.length > 0,
+            );
+            const dumpValue = Array.isArray(dumpResult.value) ? dumpResult.value : [];
+            const accepted = dumpValue.filter((entry: any) => !entry?.skip).slice(0, 5);
+            const skipped = dumpValue.filter((entry: any) => entry?.skip).slice(0, 5);
+
+            logger.warn(
+                `[ResponseMonitor:diag] Structured payload invalid — ${dumpValue.length} candidate(s), ` +
+                `${accepted.length} accepted, ${skipped.length} skipped ` +
+                `(context=${dumpResult.contextId ?? 'none'})`,
+            );
+            logger.debug(
+                '[ResponseMonitor:diag] Candidate details:',
+                JSON.stringify({
+                    payloadType: payload === null ? 'null' : typeof payload,
+                    contextId: dumpResult.contextId,
+                    contextUrl: dumpResult.contextUrl,
+                    totalCandidates: dumpValue.length,
+                    accepted: accepted.map((entry: any) => ({
+                        sel: entry.sel,
+                        len: entry.len,
+                        preview: entry.preview,
+                    })),
+                    skipped: skipped.map((entry: any) => ({
+                        sel: entry.sel,
+                        skip: entry.skip,
+                        len: entry.len,
+                        preview: entry.preview,
+                    })),
+                }),
+            );
+        } catch (error) {
+            logger.warn('[ResponseMonitor:diag] DUMP_ALL_TEXTS failed:', error);
+        }
+
+        try {
+            const domResult = await this.evaluateAcrossContexts<any>(
+                RESPONSE_SELECTORS.DOM_DIAGNOSTIC,
+                (value) => !!value && typeof value === 'object' && (
+                    Array.isArray((value as any).allTextNodes)
+                    || Array.isArray((value as any).activityNodes)
+                    || Array.isArray((value as any).detailsDump)
+                ),
+            );
+            const domValue = domResult.value;
+            logger.warn(
+                `[ResponseMonitor:diag] DOM_DIAGNOSTIC — ` +
+                `details=${domValue?.detailsCount ?? 0}, ` +
+                `activity=${Array.isArray(domValue?.activityNodes) ? domValue.activityNodes.length : 0}, ` +
+                `textNodes=${Array.isArray(domValue?.allTextNodes) ? domValue.allTextNodes.length : 0} ` +
+                `(context=${domResult.contextId ?? 'none'})`,
+            );
+            logger.debug(
+                '[ResponseMonitor:diag] DOM_DIAGNOSTIC details:',
+                JSON.stringify({
+                    contextId: domResult.contextId,
+                    contextUrl: domResult.contextUrl,
+                    detailsCount: domValue?.detailsCount ?? null,
+                    detailsDump: Array.isArray(domValue?.detailsDump) ? domValue.detailsDump.slice(0, 3) : [],
+                    activityNodes: Array.isArray(domValue?.activityNodes) ? domValue.activityNodes.slice(0, 5) : [],
+                    allTextNodes: Array.isArray(domValue?.allTextNodes) ? domValue.allTextNodes.slice(0, 5) : [],
+                }),
+            );
+        } catch (error) {
+            logger.warn('[ResponseMonitor:diag] DOM_DIAGNOSTIC failed:', error);
+        }
     }
 
     /**
@@ -803,19 +1075,19 @@ export class ResponseMonitor {
     private async poll(): Promise<void> {
         try {
             // 1. Stop button check
-            const stopResult = await this.cdpService.call(
-                'Runtime.evaluate',
-                this.buildEvaluateParams(RESPONSE_SELECTORS.STOP_BUTTON),
+            const stopResult = await this.evaluateAcrossContexts<{ isGenerating?: boolean } | null>(
+                RESPONSE_SELECTORS.STOP_BUTTON,
+                (value) => !!(value && typeof value === 'object' && (value as any).isGenerating),
             );
-            const stopValue = stopResult?.result?.value;
+            const stopValue = stopResult.value;
             const isGenerating = !!(stopValue && typeof stopValue === 'object' && (stopValue as any).isGenerating);
 
             // 2. Quota error check
-            const quotaResult = await this.cdpService.call(
-                'Runtime.evaluate',
-                this.buildEvaluateParams(RESPONSE_SELECTORS.QUOTA_ERROR),
+            const quotaResult = await this.evaluateAcrossContexts<boolean | null>(
+                RESPONSE_SELECTORS.QUOTA_ERROR,
+                (value) => value === true,
             );
-            const quotaDetected = quotaResult?.result?.value === true;
+            const quotaDetected = quotaResult.value === true;
 
             // 3. Text extraction (structured or legacy)
             let currentText: string | null = null;
@@ -824,11 +1096,11 @@ export class ResponseMonitor {
             if (this.extractionMode === 'structured') {
                 // Structured: use DOM segment extraction with HTML-to-Markdown
                 try {
-                    const structuredResult = await this.cdpService.call(
-                        'Runtime.evaluate',
-                        this.buildEvaluateParams(RESPONSE_SELECTORS.RESPONSE_STRUCTURED),
+                    const structuredResult = await this.evaluateAcrossContexts<unknown>(
+                        RESPONSE_SELECTORS.RESPONSE_STRUCTURED,
+                        (value) => classifyAssistantSegments(value).diagnostics.source === 'dom-structured',
                     );
-                    const payload = structuredResult?.result?.value;
+                    const payload = structuredResult.value;
                     const classified = classifyAssistantSegments(payload);
 
                     if (classified.diagnostics.source === 'dom-structured') {
@@ -852,6 +1124,7 @@ export class ResponseMonitor {
                             '| payload type:', typeof payload,
                             '| payload:', payload === null ? 'null' : payload === undefined ? 'undefined' : 'object',
                         );
+                        await this.logStructuredExtractionDiagnostics(payload);
                     }
                 } catch (error) {
                     logger.warn('[ResponseMonitor:poll] RESPONSE_STRUCTURED failed, falling back to legacy:', error);
@@ -860,26 +1133,21 @@ export class ResponseMonitor {
 
             // Legacy path (or fallback from structured)
             if (currentText === null) {
-                const textResult = await this.cdpService.call(
-                    'Runtime.evaluate',
-                    this.buildEvaluateParams(RESPONSE_SELECTORS.RESPONSE_TEXT),
+                const textResult = await this.evaluateAcrossContexts<string | null>(
+                    RESPONSE_SELECTORS.RESPONSE_TEXT,
+                    (value) => typeof value === 'string' && value.trim().length > 0,
                 );
-                const rawText = textResult?.result?.value;
-                const exceptionDetail = textResult?.result?.exceptionDetails ?? textResult?.exceptionDetails;
-                if (exceptionDetail) {
-                    logger.warn('[ResponseMonitor:poll] RESPONSE_TEXT threw:', exceptionDetail.text ?? JSON.stringify(exceptionDetail).slice(0, 200));
-                }
-                currentText = typeof rawText === 'string' ? rawText.trim() || null : null;
+                currentText = typeof textResult.value === 'string' ? textResult.value.trim() || null : null;
             }
 
             // 4. Process log extraction — always when structured didn't handle it
             if (!structuredHandledLogs) {
                 try {
-                    const logResult = await this.cdpService.call(
-                        'Runtime.evaluate',
-                        this.buildEvaluateParams(RESPONSE_SELECTORS.PROCESS_LOGS),
+                    const logResult = await this.evaluateAcrossContexts<string[] | null>(
+                        RESPONSE_SELECTORS.PROCESS_LOGS,
+                        (value) => Array.isArray(value) && value.length > 0,
                     );
-                    const logEntries = logResult?.result?.value;
+                    const logEntries = logResult.value;
                     if (Array.isArray(logEntries)) {
                         this.emitNewProcessLogs(logEntries);
                     }
