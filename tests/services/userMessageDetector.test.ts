@@ -33,8 +33,8 @@ describe('UserMessageDetector', () => {
         const detector = new UserMessageDetector({
             cdpService: mockCdpService,
             pollIntervalMs: 100,
-            onUserMessage,
         });
+        detector.on('message', onUserMessage);
 
         detector.start();
 
@@ -64,8 +64,8 @@ describe('UserMessageDetector', () => {
         const detector = new UserMessageDetector({
             cdpService: mockCdpService,
             pollIntervalMs: 100,
-            onUserMessage,
         });
+        detector.on('message', onUserMessage);
 
         detector.start();
         expect(detector.isActive()).toBe(true);
@@ -96,8 +96,8 @@ describe('UserMessageDetector', () => {
         const detector = new UserMessageDetector({
             cdpService: mockCdpService,
             pollIntervalMs: 100,
-            onUserMessage,
         });
+        detector.on('message', onUserMessage);
 
         detector.start();
 
@@ -126,8 +126,8 @@ describe('UserMessageDetector', () => {
         const detector = new UserMessageDetector({
             cdpService: mockCdpService,
             pollIntervalMs: 100,
-            onUserMessage,
         });
+        detector.on('message', onUserMessage);
 
         detector.start();
 
@@ -159,8 +159,8 @@ describe('UserMessageDetector', () => {
         const detector = new UserMessageDetector({
             cdpService: mockCdpService,
             pollIntervalMs: 100,
-            onUserMessage,
         });
+        detector.on('message', onUserMessage);
 
         // Register the echo hash before starting
         detector.addEchoHash('Echoed message');
@@ -184,8 +184,8 @@ describe('UserMessageDetector', () => {
         const detector = new UserMessageDetector({
             cdpService: mockCdpService,
             pollIntervalMs: 100,
-            onUserMessage,
         });
+        detector.on('message', onUserMessage);
 
         detector.start();
 
@@ -207,8 +207,8 @@ describe('UserMessageDetector', () => {
         const detector = new UserMessageDetector({
             cdpService: mockCdpService,
             pollIntervalMs: 100,
-            onUserMessage,
         });
+        detector.on('message', onUserMessage);
 
         detector.start();
 
@@ -236,8 +236,8 @@ describe('UserMessageDetector', () => {
         const detector = new UserMessageDetector({
             cdpService: mockCdpService,
             pollIntervalMs: 100,
-            onUserMessage,
         });
+        detector.on('message', onUserMessage);
 
         detector.start();
 
@@ -262,8 +262,8 @@ describe('UserMessageDetector', () => {
         const detector = new UserMessageDetector({
             cdpService: mockCdpService,
             pollIntervalMs: 100,
-            onUserMessage,
         });
+        detector.on('message', onUserMessage);
 
         detector.start();
         detector.start(); // should not throw or create double polling
@@ -294,8 +294,8 @@ describe('UserMessageDetector', () => {
         const detector = new UserMessageDetector({
             cdpService: mockCdpService,
             pollIntervalMs: 100,
-            onUserMessage,
         });
+        detector.on('message', onUserMessage);
 
         detector.start();
 
@@ -338,8 +338,8 @@ describe('UserMessageDetector', () => {
         const detector = new UserMessageDetector({
             cdpService: mockCdpService,
             pollIntervalMs: 100,
-            onUserMessage,
         });
+        detector.on('message', onUserMessage);
 
         // First session
         detector.start();

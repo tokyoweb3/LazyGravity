@@ -324,7 +324,7 @@ describe('wrapTelegramChannel', () => {
         const sent = await channel.send({ text: 'Hello' });
 
         expect(api.sendMessage).toHaveBeenCalledWith(
-            456,
+            '456',
             'Hello',
             expect.objectContaining({ parse_mode: 'HTML' }),
         );
@@ -612,7 +612,7 @@ describe('wrapTelegramSentMessage', () => {
         await sent.edit({ text: 'Edited text' });
 
         expect(api.editMessageText).toHaveBeenCalledWith(
-            555,
+            '555',
             200,
             'Edited text',
             expect.objectContaining({ parse_mode: 'HTML' }),
@@ -625,7 +625,7 @@ describe('wrapTelegramSentMessage', () => {
 
         await sent.delete();
 
-        expect(api.deleteMessage).toHaveBeenCalledWith(555, 200);
+        expect(api.deleteMessage).toHaveBeenCalledWith('555', 200);
     });
 
     it('passes string chatId directly without numeric coercion', async () => {
@@ -645,15 +645,15 @@ describe('wrapTelegramSentMessage', () => {
         expect(api.deleteMessage).toHaveBeenCalledWith(largeChatId, 300);
     });
 
-    it('passes numeric chatId directly without extra coercion', async () => {
+    it('passes numeric chatId as string', async () => {
         const api = createMockApi();
         const numericChatId = -1001234567890;
         const sent = wrapTelegramSentMessage({ message_id: 400 }, api, numericChatId);
 
         await sent.edit({ text: 'Test' });
-        // The original numeric chatId should be passed directly
+        // Numeric chatId should be coerced to string
         expect(api.editMessageText).toHaveBeenCalledWith(
-            numericChatId,
+            String(numericChatId),
             400,
             'Test',
             expect.objectContaining({ parse_mode: 'HTML' }),
