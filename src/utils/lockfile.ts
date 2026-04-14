@@ -33,7 +33,7 @@ export function acquireLock(): () => void {
     if (typeof process.getuid === 'function' && dirStat.uid !== process.getuid()) {
         throw new Error(`Lock directory is not owned by current user: ${LOCK_DIR}`);
     }
-    if ((dirStat.mode & 0o077) !== 0) {
+    if (process.platform !== 'win32' && (dirStat.mode & 0o077) !== 0) {
         throw new Error(`Lock directory has overly permissive permissions: ${LOCK_DIR}`);
     }
 
