@@ -70,7 +70,7 @@
     "minimatch": "^10.2.1",
     "semantic-release": "^25.0.3",
     "ts-jest": "^29.4.6",
-    "ts-morph": "^27.0.2",
+    "ts-morph": "^28.0.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3",
     "undici": "^7.22.0"
