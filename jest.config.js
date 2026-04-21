@@ -3,6 +3,9 @@ module.exports = {
     preset: 'ts-jest',
     testEnvironment: 'node',
     roots: ['<rootDir>/tests'],
+    transform: {
+        '^.+\\.tsx?$': ['ts-jest', { tsconfig: 'tsconfig.test.json' }],
+    },
     testPathIgnorePatterns: [
         '<rootDir>/tests/e2e.bot.test.ts',
         '<rootDir>/tests/services/responseMonitor.test.ts',
