@@ -31,6 +31,7 @@ import { AccountPreferenceRepository } from '../database/accountPreferenceReposi
 import { WorkspaceBindingRepository } from '../database/workspaceBindingRepository';
 import { ChannelPreferenceRepository } from '../database/channelPreferenceRepository';
 import { ChatSessionRepository } from '../database/chatSessionRepository';
+import { ArtifactThreadRepository } from '../database/artifactThreadRepository';
 import { WorkspaceService } from '../services/workspaceService';
 import {
     WorkspaceCommandHandler,
@@ -998,6 +999,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
     }
     const workspaceBindingRepo = new WorkspaceBindingRepository(db);
     const chatSessionRepo = new ChatSessionRepository(db);
+    const artifactThreadRepo = new ArtifactThreadRepository(db);
     const workspaceService = new WorkspaceService(config.workspaceBaseDir);
     const channelManager = new ChannelManager();
 
@@ -1211,6 +1213,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         channelPrefRepo,
         chatSessionRepo,
         chatSessionService,
+        artifactThreadRepo,
         antigravityAccounts: config.antigravityAccounts,
         handleSlashInteraction: async (
             interaction,

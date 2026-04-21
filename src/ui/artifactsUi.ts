@@ -6,10 +6,16 @@
 
 import {
     ActionRowBuilder,
+    ButtonBuilder,
+    ButtonInteraction,
+    ButtonStyle,
     ChatInputCommandInteraction,
     EmbedBuilder,
     StringSelectMenuBuilder,
+    MessageFlags,
 } from 'discord.js';
+import { UserPreferenceRepository } from '../database/userPreferenceRepository';
+import { ChatSessionRepository } from '../database/chatSessionRepository';
 
 import type { ArtifactInfo } from '../services/artifactService';
 import { ArtifactService, artifactTypeLabel } from '../services/artifactService';
@@ -20,6 +26,10 @@ import { ArtifactService, artifactTypeLabel } from '../services/artifactService'
 
 /** Custom ID for the artifact select menu */
 export const ARTIFACT_SELECT_ID = 'artifact_select';
+
+/** Custom ID for the toggle buttons */
+export const ARTIFACT_THREAD_BTN = 'artifact_mode_thread';
+export const ARTIFACT_INLINE_BTN = 'artifact_mode_inline';
 
 /** Discord select menu option limit */
 const MAX_SELECT_OPTIONS = 25;
@@ -68,6 +78,7 @@ function formatUpdatedAt(iso?: string): string {
 export function buildArtifactPickerUI(
     artifacts: ArtifactInfo[],
     conversationId?: string,
+    renderMode: 'thread' | 'inline' = 'thread',
 ): { embeds: EmbedBuilder[]; components: ActionRowBuilder<any>[] } {
     const embed = new EmbedBuilder()
         .setTitle('📂 Artifacts')
@@ -118,6 +129,26 @@ export function buildArtifactPickerUI(
         new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(selectMenu),
     ];
 
+    // Add toggle button row
+    const toggleButton = new ButtonBuilder();
+    if (renderMode === 'thread') {
+        toggleButton
+            .setCustomId(ARTIFACT_INLINE_BTN)
+            .setLabel('💬 Switch to Inline')
+            .setStyle(ButtonStyle.Secondary)
+            .setEmoji('💬');
+        embed.setFooter({ text: 'Output: Thread (one thread per file)' });
+    } else {
+        toggleButton
+            .setCustomId(ARTIFACT_THREAD_BTN)
+            .setLabel('📌 Switch to Thread')
+            .setStyle(ButtonStyle.Primary)
+            .setEmoji('📌');
+        embed.setFooter({ text: 'Output: Inline' });
+    }
+
+    components.push(new ActionRowBuilder<ButtonBuilder>().addComponents(toggleButton));
+
     return { embeds: [embed], components };
 }
 
@@ -129,10 +160,54 @@ export function buildArtifactPickerUI(
  * Send the artifacts picker UI as an editReply to a slash command interaction.
  */
 export async function sendArtifactsUI(
-    interaction: ChatInputCommandInteraction,
+    interaction: ChatInputCommandInteraction | ButtonInteraction,
     artifacts: ArtifactInfo[],
     conversationId?: string,
+    renderMode: 'thread' | 'inline' = 'thread',
 ): Promise<void> {
-    const { embeds, components } = buildArtifactPickerUI(artifacts, conversationId);
+    const { embeds, components } = buildArtifactPickerUI(artifacts, conversationId, renderMode);
     await interaction.editReply({ embeds, components });
+}
+
+/**
+ * Higher-level helper to send the artifact picker UI, 
+ * automatically discovering artifacts for the current channel.
+ */
+export async function sendArtifactPickerUI(
+    interaction: { reply: (opts: any) => Promise<any>; editReply: (opts: any) => Promise<any>; user: { id: string }; channelId: string },
+    deps: { userPrefRepo?: UserPreferenceRepository; chatSessionRepo?: ChatSessionRepository },
+    edit: boolean = false
+): Promise<void> {
+    const artifactService = new ArtifactService();
+    const sessionTitle = deps.chatSessionRepo?.findByChannelId(interaction.channelId)?.displayName?.trim() ?? '';
+    
+    // 1. Resolve conversation (either matching session title or latest)
+    let conversationId = sessionTitle ? artifactService.findConversationByTitle(sessionTitle) : null;
+    if (!conversationId) conversationId = artifactService.getLatestConversationWithArtifacts();
+
+    if (!conversationId) {
+        const payload = { content: '📂 No artifacts found for this session.', components: [], ephemeral: true };
+        if (edit) await interaction.editReply(payload);
+        else await interaction.reply(payload);
+        return;
+    }
+
+    // 2. List artifacts
+    const artifacts = artifactService.listArtifacts(conversationId);
+    if (artifacts.length === 0) {
+        const payload = { content: '📂 No artifacts found in this conversation.', components: [], ephemeral: true };
+        if (edit) await interaction.editReply(payload);
+        else await interaction.reply(payload);
+        return;
+    }
+
+    // 3. Get user render mode pref
+    const renderMode = deps.userPrefRepo?.getArtifactRenderMode(interaction.user.id) ?? 'thread';
+
+    // 4. Build and send
+    const { embeds, components } = buildArtifactPickerUI(artifacts, conversationId, renderMode);
+    
+    const payload = { embeds, components, ephemeral: true };
+    if (edit) await interaction.editReply(payload);
+    else await interaction.reply(payload);
 }

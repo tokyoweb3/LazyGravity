@@ -21,6 +21,8 @@ export interface UserPreferenceRecord {
     createdAt?: string;
     /** Last update timestamp (ISO string) */
     updatedAt?: string;
+    /** Artifact render mode (thread vs inline) */
+    artifactRenderMode: 'thread' | 'inline';
 }
 
 /**
@@ -49,6 +51,7 @@ export class UserPreferenceRepository {
             )
         `);
         this.migrateDefaultModel();
+        this.migrateArtifactRenderMode();
     }
 
     /**
@@ -69,6 +72,17 @@ export class UserPreferenceRepository {
             } catch {
                 // Column already exists — safe to ignore
             }
+        }
+    }
+
+    /**
+     * Migration: add artifact_render_mode column.
+     * Default is 'thread'.
+     */
+    private migrateArtifactRenderMode(): void {
+        const columns = this.db.pragma('table_info(user_preferences)') as { name: string }[];
+        if (!columns.some(c => c.name === 'artifact_render_mode')) {
+            this.db.exec("ALTER TABLE user_preferences ADD COLUMN artifact_render_mode TEXT DEFAULT 'thread'");
         }
     }
 
@@ -111,6 +125,32 @@ export class UserPreferenceRepository {
     }
 
     /**
+     * Get the artifact render mode preference for a user.
+     * Returns 'thread' as default.
+     */
+    public getArtifactRenderMode(userId: string): 'thread' | 'inline' {
+        const row = this.db.prepare(
+            'SELECT artifact_render_mode FROM user_preferences WHERE user_id = ?'
+        ).get(userId) as { artifact_render_mode: string } | undefined;
+
+        if (!row || row.artifact_render_mode === 'thread') return 'thread';
+        return 'inline';
+    }
+
+    /**
+     * Set the artifact render mode preference (upsert).
+     */
+    public setArtifactRenderMode(userId: string, mode: 'thread' | 'inline'): void {
+        this.db.prepare(`
+            INSERT INTO user_preferences (user_id, artifact_render_mode)
+            VALUES (?, ?)
+            ON CONFLICT(user_id)
+            DO UPDATE SET artifact_render_mode = excluded.artifact_render_mode,
+                          updated_at = datetime('now')
+        `).run(userId, mode);
+    }
+
+    /**
      * Set the default model for a user (upsert).
      * Pass null to clear the default.
      */
@@ -147,6 +187,7 @@ export class UserPreferenceRepository {
             defaultModel: row.default_model ?? null,
             createdAt: row.created_at,
             updatedAt: row.updated_at,
+            artifactRenderMode: (row.artifact_render_mode as 'thread' | 'inline') ?? 'thread',
         };
     }
 }

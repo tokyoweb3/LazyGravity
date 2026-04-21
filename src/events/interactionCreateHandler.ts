@@ -45,8 +45,9 @@ import { AutoAcceptService } from '../services/autoAcceptService';
 import { ChatSessionService } from '../services/chatSessionService';
 import { JoinCommandHandler } from '../commands/joinCommandHandler';
 import { isSessionSelectId } from '../ui/sessionPickerUi';
-import { ARTIFACT_SELECT_ID } from '../ui/artifactsUi';
+import { ARTIFACT_SELECT_ID, ARTIFACT_THREAD_BTN, ARTIFACT_INLINE_BTN, buildArtifactPickerUI, sendArtifactPickerUI } from '../ui/artifactsUi';
 import { ArtifactService } from '../services/artifactService';
+import { ArtifactThreadRepository } from '../database/artifactThreadRepository';
 import type { AntigravityAccountConfig } from '../utils/configLoader';
 import { inferParentScopeChannelId, listAccountNames, resolveScopedAccountName } from '../utils/accountUtils';
 import { ACCOUNT_SELECT_ID, sendAccountUI } from '../ui/accountUi';
@@ -97,6 +98,7 @@ export interface InteractionCreateHandlerDeps {
     userPrefRepo?: UserPreferenceRepository;
     accountPrefRepo?: AccountPreferenceRepository;
     channelPrefRepo?: ChannelPreferenceRepository;
+    artifactThreadRepo?: ArtifactThreadRepository;
     antigravityAccounts?: AntigravityAccountConfig[];
     chatSessionRepo?: ChatSessionRepository;
     chatSessionService?: ChatSessionService;
@@ -855,6 +857,19 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                     }
                     return;
                 }
+
+                if (interaction.customId === ARTIFACT_THREAD_BTN || interaction.customId === ARTIFACT_INLINE_BTN) {
+                    const newMode = interaction.customId === ARTIFACT_THREAD_BTN ? 'thread' : 'inline';
+                    if (deps.userPrefRepo) {
+                        deps.userPrefRepo.setArtifactRenderMode(interaction.user.id, newMode);
+                    }
+                    await interaction.deferUpdate().catch(logger.error);
+                    await sendArtifactPickerUI(interaction, {
+                        userPrefRepo: deps.userPrefRepo,
+                        chatSessionRepo: deps.chatSessionRepo
+                    }, true);
+                    return;
+                }
             } catch (error) {
                 logger.error('Error during button interaction handling:', error);
 
@@ -1076,14 +1091,72 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                     return;
                 }
 
-                // Acknowledge success; send content as follow-up chunks
-                await interaction.editReply({ content: `📂 **${decoded.filename}**`, components: [] }).catch(logger.error);
+                // Get user render mode
+                const renderMode = deps.userPrefRepo?.getArtifactRenderMode(interaction.user.id) ?? 'thread';
 
-                // Split into 2000-char chunks and send as follow-ups
+                let targetChannel: any = interaction.channel;
+
+                if (renderMode === 'thread' && deps.artifactThreadRepo && (interaction as any).channel?.threads) {
+                    try {
+                        const existingThreadId = deps.artifactThreadRepo.getThreadId(channelId, decoded.filename);
+                        let thread: any = null;
+
+                        if (existingThreadId) {
+                            try {
+                                thread = await interaction.client.channels.fetch(existingThreadId);
+                                if (thread && thread.archived) {
+                                    await thread.setArchived(false);
+                                }
+                            } catch (fetchError) {
+                                logger.warn(`[ArtifactSelect] Could not fetch existing thread ${existingThreadId}:`, fetchError);
+                                deps.artifactThreadRepo.deleteThreadId(channelId, decoded.filename);
+                            }
+                        }
+
+                        if (!thread) {
+                            // Create new thread from the prompt message
+                            const message = await interaction.editReply({ 
+                                content: `📂 **Artifact: ${decoded.filename}**\n*Creating thread for persistent viewing...*`, 
+                                components: [] 
+                            });
+                            
+                            thread = await message.startThread({
+                                name: `artifact: ${decoded.filename}`,
+                                autoArchiveDuration: 60,
+                            });
+                            
+                            deps.artifactThreadRepo.setThreadId(channelId, decoded.filename, thread.id);
+                            
+                            // Update the main message to link to the thread
+                            await interaction.editReply({ 
+                                content: `📂 **Artifact: ${decoded.filename}**\n*Thread created: <#${thread.id}>*`, 
+                                components: [] 
+                            }).catch(logger.error);
+                        } else {
+                            // Reuse existing thread
+                            await interaction.editReply({ 
+                                content: `📂 **Artifact: ${decoded.filename}**\n*Updated in existing thread: <#${thread.id}>*`, 
+                                components: [] 
+                            }).catch(logger.error);
+                            
+                            // Send a visual spacer to separate content
+                            const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                            await thread.send(`─────────────────────────\n🔄 **Artifact Re-rendered at ${now}**`).catch(logger.error);
+                        }
+                        targetChannel = thread;
+                    } catch (threadError) {
+                        logger.error('[ArtifactSelect] Thread creation/resume failed, falling back to inline:', threadError);
+                        await interaction.editReply({ content: `📂 **${decoded.filename}**`, components: [] }).catch(logger.error);
+                    }
+                } else {
+                    // Inline rendering
+                    await interaction.editReply({ content: `📂 **${decoded.filename}**`, components: [] }).catch(logger.error);
+                }
+
+                // Split into 2000-char chunks and send as follow-ups or thread messages
                 const MAX_CHUNK = 1990;
                 let remaining = content;
                 while (remaining.length > 0) {
-                    // Try to split on newline boundary
                     let chunk: string;
                     if (remaining.length <= MAX_CHUNK) {
                         chunk = remaining;
@@ -1093,10 +1166,15 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                         chunk = splitAt > 0 ? remaining.slice(0, splitAt) : remaining.slice(0, MAX_CHUNK);
                         remaining = remaining.slice(chunk.length).replace(/^\n/, '');
                     }
-                    await interaction.followUp({ content: chunk }).catch(logger.error);
+                    
+                    if (targetChannel && targetChannel.send) {
+                        await targetChannel.send({ content: chunk }).catch(logger.error);
+                    } else {
+                        await interaction.followUp({ content: chunk }).catch(logger.error);
+                    }
                 }
 
-                logger.info(`[ArtifactSelect] Served artifact ${decoded.conversationId}/${decoded.filename} to channel=${channelId}`);
+                logger.info(`[ArtifactSelect] Served artifact ${decoded.conversationId}/${decoded.filename} to channel=${channelId} (mode=${renderMode})`);
             } catch (error) {
                 logger.error('[ArtifactSelect] Error serving artifact:', error);
                 await interaction.editReply({ content: '❌ Error reading artifact.', components: [] }).catch(logger.error);
