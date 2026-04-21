@@ -45,6 +45,8 @@ import { AutoAcceptService } from '../services/autoAcceptService';
 import { ChatSessionService } from '../services/chatSessionService';
 import { JoinCommandHandler } from '../commands/joinCommandHandler';
 import { isSessionSelectId } from '../ui/sessionPickerUi';
+import { ARTIFACT_SELECT_ID } from '../ui/artifactsUi';
+import { ArtifactService } from '../services/artifactService';
 import type { AntigravityAccountConfig } from '../utils/configLoader';
 import { inferParentScopeChannelId, listAccountNames, resolveScopedAccountName } from '../utils/accountUtils';
 import { ACCOUNT_SELECT_ID, sendAccountUI } from '../ui/accountUi';
@@ -1017,6 +1019,87 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                 }
             } catch (error) {
                 logger.error('Session selection error:', error);
+            }
+            return;
+        }
+
+        if (interaction.isStringSelectMenu() && interaction.customId === ARTIFACT_SELECT_ID) {
+            if (!deps.config.allowedUserIds.includes(interaction.user.id)) {
+                await interaction.reply({ content: t('You do not have permission.'), flags: MessageFlags.Ephemeral }).catch(logger.error);
+                return;
+            }
+
+            try {
+                await interaction.deferUpdate();
+            } catch (deferError: any) {
+                if (deferError?.code === 10062 || deferError?.code === 40060) {
+                    logger.warn('[ArtifactSelect] deferUpdate expired. Skipping.');
+                    return;
+                }
+                logger.error('[ArtifactSelect] deferUpdate failed:', deferError);
+                return;
+            }
+
+            const selectedValue = interaction.values[0];
+            if (!selectedValue) {
+                await interaction.editReply({ content: 'No artifact selected.', components: [] }).catch(logger.error);
+                return;
+            }
+
+            try {
+                const artifactService = new ArtifactService();
+
+                // Resolve the selected artifact by rescanning and matching the encoded value
+                const channelId = (interaction as any).channelId as string;
+                const sessionTitle = deps.chatSessionRepo?.findByChannelId(channelId)?.displayName?.trim() ?? '';
+                let conversationId = sessionTitle ? artifactService.findConversationByTitle(sessionTitle) : null;
+                if (!conversationId) conversationId = artifactService.getLatestConversationWithArtifacts();
+
+                if (!conversationId) {
+                    await interaction.editReply({ content: '📂 No artifacts found.', components: [] }).catch(logger.error);
+                    return;
+                }
+
+                const artifacts = artifactService.listArtifacts(conversationId);
+                const decoded = artifactService.decodeSelectValue(selectedValue, artifacts);
+
+                if (!decoded) {
+                    logger.warn(`[ArtifactSelect] Could not decode value: ${selectedValue}`);
+                    await interaction.editReply({ content: '⚠️ Could not identify the selected artifact.', components: [] }).catch(logger.error);
+                    return;
+                }
+
+                const content = artifactService.getArtifactContent(decoded.conversationId, decoded.filename);
+
+                if (!content) {
+                    await interaction.editReply({ content: '⚠️ Could not read artifact content.', components: [] }).catch(logger.error);
+                    return;
+                }
+
+                // Acknowledge success; send content as follow-up chunks
+                await interaction.editReply({ content: `📂 **${decoded.filename}**`, components: [] }).catch(logger.error);
+
+                // Split into 2000-char chunks and send as follow-ups
+                const MAX_CHUNK = 1990;
+                let remaining = content;
+                while (remaining.length > 0) {
+                    // Try to split on newline boundary
+                    let chunk: string;
+                    if (remaining.length <= MAX_CHUNK) {
+                        chunk = remaining;
+                        remaining = '';
+                    } else {
+                        const splitAt = remaining.lastIndexOf('\n', MAX_CHUNK);
+                        chunk = splitAt > 0 ? remaining.slice(0, splitAt) : remaining.slice(0, MAX_CHUNK);
+                        remaining = remaining.slice(chunk.length).replace(/^\n/, '');
+                    }
+                    await interaction.followUp({ content: chunk }).catch(logger.error);
+                }
+
+                logger.info(`[ArtifactSelect] Served artifact ${decoded.conversationId}/${decoded.filename} to channel=${channelId}`);
+            } catch (error) {
+                logger.error('[ArtifactSelect] Error serving artifact:', error);
+                await interaction.editReply({ content: '❌ Error reading artifact.', components: [] }).catch(logger.error);
             }
             return;
         }

@@ -91,6 +91,8 @@ import { sendAutoAcceptUI } from '../ui/autoAcceptUi';
 import { sendAccountUI } from '../ui/accountUi';
 import { sendOutputUI, OUTPUT_BTN_EMBED, OUTPUT_BTN_PLAIN } from '../ui/outputUi';
 import { handleScreenshot } from '../ui/screenshotUi';
+import { sendArtifactsUI, ARTIFACT_SELECT_ID } from '../ui/artifactsUi';
+import { ArtifactService } from '../services/artifactService';
 import { UserPreferenceRepository, OutputFormat } from '../database/userPreferenceRepository';
 import { inferParentScopeChannelId, listAccountNames, resolveScopedAccountName } from '../utils/accountUtils';
 import { formatAsPlainText, splitPlainText } from '../utils/plainTextFormatter';
@@ -1572,6 +1574,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                 { command: 'stop', description: 'Interrupt active LLM generation' },
                 { command: 'help', description: 'Show available commands' },
                 { command: 'ping', description: 'Check bot latency' },
+                { command: 'artifacts', description: 'Browse session artifacts' },
             ]).catch((e: unknown) => {
                 logger.warn('Failed to register Telegram commands:', e instanceof Error ? e.message : e);
             });
@@ -1830,6 +1833,11 @@ export async function handleSlashInteraction(
                         '`/logs [lines] [level]` — View recent bot logs',
                         '`/cleanup [days]` — Clean up unused channels/categories',
                         '`/help` — Show this help',
+                    ].join('\n')
+                },
+                {
+                    name: '📂 Artifacts', value: [
+                        '`/artifacts` — Browse and render generated artifacts from the active session',
                     ].join('\n')
                 },
             ];
@@ -2231,6 +2239,40 @@ export async function handleSlashInteraction(
                 : `\`\`\`\n${formatted.slice(0, MAX_CONTENT)}\n\`\`\`\n(truncated — showing ${MAX_CONTENT} chars of ${formatted.length})`;
 
             await interaction.editReply({ content: codeBlock });
+            break;
+        }
+
+        case 'artifacts': {
+            const artifactService = new ArtifactService();
+            const sessionTitle = chatSessionRepo?.findByChannelId(interaction.channelId)?.displayName?.trim() ?? '';
+
+            let conversationId: string | null = null;
+            if (sessionTitle) {
+                conversationId = artifactService.findConversationByTitle(sessionTitle);
+                if (conversationId) {
+                    logger.info(
+                        `[ArtifactsCommand] channel=${interaction.channelId} matched conversationId=${conversationId} title="${sessionTitle}"`,
+                    );
+                } else {
+                    logger.info(
+                        `[ArtifactsCommand] channel=${interaction.channelId} no conversation matched title="${sessionTitle}", falling back to latest`,
+                    );
+                }
+            }
+
+            if (!conversationId) {
+                conversationId = artifactService.getLatestConversationWithArtifacts();
+            }
+
+            if (!conversationId) {
+                await interaction.editReply({
+                    content: '📂 No artifacts found. Artifacts are created during Antigravity sessions.',
+                });
+                break;
+            }
+
+            const artifacts = artifactService.listArtifacts(conversationId);
+            await sendArtifactsUI(interaction, artifacts, conversationId);
             break;
         }
 
