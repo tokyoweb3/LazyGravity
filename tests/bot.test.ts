@@ -112,6 +112,7 @@ jest.mock('better-sqlite3', () => {
     return jest.fn().mockImplementation(() => {
         return {
             exec: jest.fn(),
+            pragma: jest.fn().mockReturnValue([]),
             prepare: jest.fn().mockReturnValue({ run: jest.fn(), get: jest.fn(), all: jest.fn().mockReturnValue([]) }),
             close: jest.fn(),
         };

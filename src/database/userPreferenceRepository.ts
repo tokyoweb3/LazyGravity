@@ -22,7 +22,7 @@ export interface UserPreferenceRecord {
     /** Last update timestamp (ISO string) */
     updatedAt?: string;
     /** Artifact render mode (thread vs inline) */
-    artifactRenderMode: 'thread' | 'inline';
+    artifactRenderMode?: 'thread' | 'inline';
 }
 
 /**

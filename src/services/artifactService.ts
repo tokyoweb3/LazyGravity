@@ -172,7 +172,20 @@ export class ArtifactService {
         const needle = title.trim().toLowerCase();
         const ids = this.listConversationIds();
 
-        for (const id of ids) {
+        // Sort by directory mtime descending (most recent first)
+        const sortedIds = ids
+            .map((id) => {
+                const full = path.join(this.brainBasePath, id);
+                try {
+                    return { id, mtime: fs.statSync(full).mtimeMs };
+                } catch {
+                    return { id, mtime: 0 };
+                }
+            })
+            .sort((a, b) => b.mtime - a.mtime)
+            .map(x => x.id);
+
+        for (const id of sortedIds) {
             const overviewPath = path.join(
                 this.brainBasePath,
                 id,
@@ -183,13 +196,17 @@ export class ArtifactService {
             try {
                 if (!fs.existsSync(overviewPath)) continue;
                 // Only read the first 4KB to avoid huge files
-                const fd = fs.openSync(overviewPath, 'r');
-                const buf = Buffer.alloc(4096);
-                const bytesRead = fs.readSync(fd, buf, 0, buf.length, 0);
-                fs.closeSync(fd);
-                const header = buf.slice(0, bytesRead).toString('utf-8').toLowerCase();
-                if (header.includes(needle)) {
-                    return id;
+                let fd: number | null = null;
+                try {
+                    fd = fs.openSync(overviewPath, 'r');
+                    const buf = Buffer.alloc(4096);
+                    const bytesRead = fs.readSync(fd, buf, 0, buf.length, 0);
+                    const header = buf.slice(0, bytesRead).toString('utf-8').toLowerCase();
+                    if (header.includes(needle)) {
+                        return id;
+                    }
+                } finally {
+                    if (fd !== null) fs.closeSync(fd);
                 }
             } catch {
                 // Skip unreadable files
@@ -250,29 +267,44 @@ export class ArtifactService {
     }
 
     /**
-     * Encode a conversationId + filename pair as a Discord select-menu value.
-     * Discord limits option values to 100 characters.
+     * Encode conversationId and filename into a single string for Discord select menu values.
+     * We use a prefix 'art_', followed by a short slice of the conv ID, and the filename.
+     * Added a short hash of the filename to prevent collisions on long-filename truncation.
      */
     static encodeSelectValue(conversationId: string, filename: string): string {
-        // Use a short ID (first 8 chars of uuid) + filename to stay within limits
-        const shortId = conversationId.replace(/-/g, '').slice(0, 12);
-        return `art_${shortId}_${filename}`.slice(0, 100);
+        const shortConv = conversationId.replace(/-/g, '').slice(0, 12);
+        // Simple hash of the filename
+        let hash = 0;
+        for (let i = 0; i < filename.length; i++) {
+            hash = ((hash << 5) - hash) + filename.charCodeAt(i);
+            hash |= 0; // Convert to 32bit integer
+        }
+        const shortHash = Math.abs(hash).toString(36).slice(0, 4);
+        
+        return `art_${shortConv}_${shortHash}_${filename}`;
     }
 
     /**
-     * Decode a select value back to { conversationId, filename }.
-     * Returns null if the value cannot be resolved.
+     * Decode a select menu value back into conversationId and filename.
+     * Since we only have a slice of the conversationId, we must look it up
+     * in the provided list of artifacts.
      */
-    decodeSelectValue(
-        value: string,
-        artifacts: ArtifactInfo[],
-    ): { conversationId: string; filename: string } | null {
-        // Match against known artifacts by re-encoding and comparing
-        for (const a of artifacts) {
-            if (ArtifactService.encodeSelectValue(a.conversationId, a.filename) === value) {
-                return { conversationId: a.conversationId, filename: a.filename };
-            }
-        }
-        return null;
+    decodeSelectValue(value: string, artifacts: ArtifactInfo[]): { conversationId: string; filename: string } | null {
+        if (!value.startsWith('art_')) return null;
+        
+        // Format: art_CONV_HASH_FILENAME
+        const parts = value.split('_');
+        if (parts.length < 4) return null;
+        
+        const shortConv = parts[1];
+        const filename = parts.slice(3).join('_'); // Filename might contain underscores
+
+        // Find the matching artifact in the current list
+        const found = artifacts.find(a => 
+            a.filename === filename && 
+            a.conversationId.replace(/-/g, '').startsWith(shortConv)
+        );
+
+        return found ? { conversationId: found.conversationId, filename: found.filename } : null;
     }
 }

@@ -26,6 +26,7 @@ import { ChannelManager } from '../services/channelManager';
 import { MODE_DISPLAY_NAMES, ModeService } from '../services/modeService';
 import { ModelService } from '../services/modelService';
 import { TitleGeneratorService } from '../services/titleGeneratorService';
+import { ArtifactService } from '../services/artifactService';
 import {
     cleanupInboundImageAttachments as cleanupInboundImageAttachmentsFn,
     downloadInboundImageAttachments as downloadInboundImageAttachmentsFn,
@@ -46,6 +47,7 @@ export interface MessageCreateHandlerDeps {
     chatSessionRepo: ChatSessionRepository;
     channelManager: ChannelManager;
     titleGenerator: TitleGeneratorService;
+    artifactService: ArtifactService;
     client: any;
     sendPromptToAntigravity: (
         bridge: CdpBridge,
@@ -277,6 +279,7 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                         channelManager: deps.channelManager,
                         titleGenerator: deps.titleGenerator,
                         userPrefRepo: deps.userPrefRepo,
+                        artifactService: deps.artifactService,
                         extractionMode: deps.config.extractionMode,
                         responseTimeoutMs: deps.config.responseTimeoutMs,
                     });
@@ -497,6 +500,7 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                                     channelManager: deps.channelManager,
                                     titleGenerator: deps.titleGenerator,
                                     userPrefRepo: deps.userPrefRepo,
+                                    artifactService: deps.artifactService,
                                     extractionMode: deps.config.extractionMode,
                                     responseTimeoutMs: deps.config.responseTimeoutMs,
                                     onFullCompletion: settle,

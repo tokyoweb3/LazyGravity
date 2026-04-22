@@ -57,7 +57,7 @@ function formatOptionDescription(artifact: ArtifactInfo): string | undefined {
 function formatUpdatedAt(iso?: string): string {
     if (!iso) return '';
     try {
-        return new Date(iso).toLocaleString('en-US', {
+        return new Date(iso).toLocaleString(undefined, {
             month: 'short',
             day: 'numeric',
             hour: '2-digit',
@@ -133,14 +133,14 @@ export function buildArtifactPickerUI(
     const toggleButton = new ButtonBuilder();
     if (renderMode === 'thread') {
         toggleButton
-            .setCustomId(ARTIFACT_INLINE_BTN)
+            .setCustomId(`${ARTIFACT_INLINE_BTN}:${conversationId || ''}`)
             .setLabel('💬 Switch to Inline')
             .setStyle(ButtonStyle.Secondary)
             .setEmoji('💬');
         embed.setFooter({ text: 'Output: Thread (one thread per file)' });
     } else {
         toggleButton
-            .setCustomId(ARTIFACT_THREAD_BTN)
+            .setCustomId(`${ARTIFACT_THREAD_BTN}:${conversationId || ''}`)
             .setLabel('📌 Switch to Thread')
             .setStyle(ButtonStyle.Primary)
             .setEmoji('📌');
@@ -174,20 +174,43 @@ export async function sendArtifactsUI(
  * automatically discovering artifacts for the current channel.
  */
 export async function sendArtifactPickerUI(
-    interaction: { reply: (opts: any) => Promise<any>; editReply: (opts: any) => Promise<any>; user: { id: string }; channelId: string },
-    deps: { userPrefRepo?: UserPreferenceRepository; chatSessionRepo?: ChatSessionRepository },
-    edit: boolean = false
+    interaction: { 
+        reply: (opts: any) => Promise<any>; 
+        editReply: (opts: any) => Promise<any>; 
+        user: { id: string }; 
+        channelId: string;
+        deferred?: boolean;
+        replied?: boolean;
+    },
+    deps: { userPrefRepo?: UserPreferenceRepository; chatSessionRepo?: ChatSessionRepository; artifactService?: ArtifactService },
+    edit: boolean = false,
+    resolvedConversationId?: string | null
 ): Promise<void> {
-    const artifactService = new ArtifactService();
-    const sessionTitle = deps.chatSessionRepo?.findByChannelId(interaction.channelId)?.displayName?.trim() ?? '';
+    const artifactService = deps.artifactService || new ArtifactService();
+    let conversationId = resolvedConversationId;
     
-    // 1. Resolve conversation (either matching session title or latest)
-    let conversationId = sessionTitle ? artifactService.findConversationByTitle(sessionTitle) : null;
-    if (!conversationId) conversationId = artifactService.getLatestConversationWithArtifacts();
+    if (!conversationId) {
+        const session = deps.chatSessionRepo?.findByChannelId(interaction.channelId);
+        if (session) {
+            conversationId = session.conversationId ?? null;
+
+            // Fallback to title matching if ID is not in DB or doesn't match a real folder
+            if (!conversationId || !artifactService.listArtifacts(conversationId).length) {
+                const sessionTitle = session.displayName?.trim() ?? '';
+                const matchedId = sessionTitle ? artifactService.findConversationByTitle(sessionTitle) : null;
+                if (matchedId) conversationId = matchedId;
+            }
+            // Note: We do NOT fallback to getLatestConversationWithArtifacts() for managed sessions
+            // to avoid showing artifacts from other projects/chats.
+        } else {
+            // Final fallback: latest overall (only for non-session channels)
+            conversationId = artifactService.getLatestConversationWithArtifacts();
+        }
+    }
 
     if (!conversationId) {
         const payload = { content: '📂 No artifacts found for this session.', components: [], ephemeral: true };
-        if (edit) await interaction.editReply(payload);
+        if (edit || interaction.deferred || interaction.replied) await interaction.editReply(payload);
         else await interaction.reply(payload);
         return;
     }
@@ -196,7 +219,7 @@ export async function sendArtifactPickerUI(
     const artifacts = artifactService.listArtifacts(conversationId);
     if (artifacts.length === 0) {
         const payload = { content: '📂 No artifacts found in this conversation.', components: [], ephemeral: true };
-        if (edit) await interaction.editReply(payload);
+        if (edit || interaction.deferred || interaction.replied) await interaction.editReply(payload);
         else await interaction.reply(payload);
         return;
     }
@@ -208,6 +231,6 @@ export async function sendArtifactPickerUI(
     const { embeds, components } = buildArtifactPickerUI(artifacts, conversationId, renderMode);
     
     const payload = { embeds, components, ephemeral: true };
-    if (edit) await interaction.editReply(payload);
+    if (edit || interaction.deferred || interaction.replied) await interaction.editReply(payload);
     else await interaction.reply(payload);
 }
