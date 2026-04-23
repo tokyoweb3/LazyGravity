@@ -47,7 +47,7 @@ export interface MessageCreateHandlerDeps {
     chatSessionRepo: ChatSessionRepository;
     channelManager: ChannelManager;
     titleGenerator: TitleGeneratorService;
-    artifactService: ArtifactService;
+    artifactService?: ArtifactService;
     client: any;
     sendPromptToAntigravity: (
         bridge: CdpBridge,
