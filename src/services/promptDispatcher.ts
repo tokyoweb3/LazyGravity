@@ -11,6 +11,8 @@ import { TitleGeneratorService } from './titleGeneratorService';
 import { InboundImageAttachment } from '../utils/imageHandler';
 import { UserPreferenceRepository } from '../database/userPreferenceRepository';
 
+import { ArtifactService } from './artifactService';
+
 export interface PromptDispatchOptions {
     chatSessionService: ChatSessionService;
     chatSessionRepo: ChatSessionRepository;
@@ -18,7 +20,11 @@ export interface PromptDispatchOptions {
     titleGenerator: TitleGeneratorService;
     userPrefRepo?: UserPreferenceRepository;
     extractionMode?: import('../utils/config').ExtractionMode;
+    artifactService?: ArtifactService;
+    onFullCompletion?: () => void;
+    responseTimeoutMs?: number;
 }
+
 
 export interface PromptDispatchRequest {
     message: Message;

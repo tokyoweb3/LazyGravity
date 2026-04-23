@@ -207,6 +207,11 @@ const pingCommand = new SlashCommandBuilder()
     .setName('ping')
     .setDescription(t('Check bot latency'));
 
+/** /artifacts command definition */
+const artifactsCommand = new SlashCommandBuilder()
+    .setName('artifacts')
+    .setDescription(t('Browse and view generated artifacts from the active session'));
+
 /** Array of commands to register */
 export const slashCommands = [
     helpCommand,
@@ -227,6 +232,7 @@ export const slashCommands = [
     outputCommand,
     pingCommand,
     logsCommand,
+    artifactsCommand,
 ];
 
 /**

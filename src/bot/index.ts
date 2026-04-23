@@ -31,6 +31,7 @@ import { AccountPreferenceRepository } from '../database/accountPreferenceReposi
 import { WorkspaceBindingRepository } from '../database/workspaceBindingRepository';
 import { ChannelPreferenceRepository } from '../database/channelPreferenceRepository';
 import { ChatSessionRepository } from '../database/chatSessionRepository';
+import { ArtifactThreadRepository } from '../database/artifactThreadRepository';
 import { WorkspaceService } from '../services/workspaceService';
 import {
     WorkspaceCommandHandler,
@@ -91,6 +92,8 @@ import { sendAutoAcceptUI } from '../ui/autoAcceptUi';
 import { sendAccountUI } from '../ui/accountUi';
 import { sendOutputUI, OUTPUT_BTN_EMBED, OUTPUT_BTN_PLAIN } from '../ui/outputUi';
 import { handleScreenshot } from '../ui/screenshotUi';
+import { sendArtifactsUI, sendArtifactPickerUI, ARTIFACT_SELECT_ID } from '../ui/artifactsUi';
+import { ArtifactService } from '../services/artifactService';
 import { UserPreferenceRepository, OutputFormat } from '../database/userPreferenceRepository';
 import { inferParentScopeChannelId, listAccountNames, resolveScopedAccountName } from '../utils/accountUtils';
 import { formatAsPlainText, splitPlainText } from '../utils/plainTextFormatter';
@@ -205,10 +208,12 @@ async function sendPromptToAntigravity(
         channelManager: ChannelManager;
         titleGenerator: TitleGeneratorService;
         userPrefRepo?: UserPreferenceRepository;
+        artifactService?: ArtifactService;
         onFullCompletion?: () => void;
         extractionMode?: ExtractionMode;
         responseTimeoutMs?: number;
     }
+
 ): Promise<void> {
     // Completion signal — called exactly once when the entire prompt lifecycle ends
     let completionSignaled = false;
@@ -863,6 +868,14 @@ async function sendPromptToAntigravity(
                                     await options.channelManager.renameChannel(message.guild, message.channelId, formattedName);
                                     options.chatSessionRepo.updateDisplayName(message.channelId, sessionInfo.title);
                                 }
+
+                                // Persist conversation_id for artifact picker resolution
+                                if (options.artifactService) {
+                                    const convId = options.artifactService.findConversationByTitle(sessionInfo.title);
+                                    if (convId) {
+                                        options.chatSessionRepo.setConversationId(message.channelId, convId);
+                                    }
+                                }
                             }
                         } catch (e) {
                             logger.error('[Rename] Failed to get title from Antigravity and rename:', e);
@@ -996,6 +1009,8 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
     }
     const workspaceBindingRepo = new WorkspaceBindingRepository(db);
     const chatSessionRepo = new ChatSessionRepository(db);
+    const artifactThreadRepo = new ArtifactThreadRepository(db);
+    const artifactService = new ArtifactService();
     const workspaceService = new WorkspaceService(config.workspaceBaseDir);
     const channelManager = new ChannelManager();
 
@@ -1209,6 +1224,8 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         channelPrefRepo,
         chatSessionRepo,
         chatSessionService,
+        artifactThreadRepo,
+        artifactService,
         antigravityAccounts: config.antigravityAccounts,
         handleSlashInteraction: async (
             interaction,
@@ -1244,6 +1261,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             channelPrefRepoArg,
             antigravityAccountsArg,
             chatSessionRepo,
+            artifactService,
         ),
         handleTemplateUse: async (interaction, templateId) => {
             const template = templateRepo.findById(templateId);
@@ -1341,6 +1359,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                         channelManager,
                         titleGenerator,
                         userPrefRepo,
+                        artifactService,
                         extractionMode: config.extractionMode,
                     },
                 });
@@ -1360,6 +1379,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         chatSessionRepo,
         channelManager,
         titleGenerator,
+        artifactService,
         client,
         sendPromptToAntigravity: async (
             _bridge,
@@ -1572,6 +1592,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                 { command: 'stop', description: 'Interrupt active LLM generation' },
                 { command: 'help', description: 'Show available commands' },
                 { command: 'ping', description: 'Check bot latency' },
+                { command: 'artifacts', description: 'Browse session artifacts' },
             ]).catch((e: unknown) => {
                 logger.warn('Failed to register Telegram commands:', e instanceof Error ? e.message : e);
             });
@@ -1691,6 +1712,7 @@ export async function handleSlashInteraction(
     channelPrefRepo?: ChannelPreferenceRepository,
     antigravityAccounts: AntigravityAccountConfig[] = [{ name: 'default', cdpPort: 9222 }],
     chatSessionRepo?: ChatSessionRepository,
+    artifactService?: ArtifactService,
 ): Promise<void> {
     const commandName = interaction.commandName;
     const getAccountPort = (accountName: string): number | null => {
@@ -1830,6 +1852,11 @@ export async function handleSlashInteraction(
                         '`/logs [lines] [level]` — View recent bot logs',
                         '`/cleanup [days]` — Clean up unused channels/categories',
                         '`/help` — Show this help',
+                    ].join('\n')
+                },
+                {
+                    name: '📂 Artifacts', value: [
+                        '`/artifacts` — Browse and render generated artifacts from the active session',
                     ].join('\n')
                 },
             ];
@@ -2231,6 +2258,15 @@ export async function handleSlashInteraction(
                 : `\`\`\`\n${formatted.slice(0, MAX_CONTENT)}\n\`\`\`\n(truncated — showing ${MAX_CONTENT} chars of ${formatted.length})`;
 
             await interaction.editReply({ content: codeBlock });
+            break;
+        }
+
+        case 'artifacts': {
+            await sendArtifactPickerUI(interaction, { 
+                userPrefRepo, 
+                chatSessionRepo, 
+                artifactService 
+            });
             break;
         }
 
