@@ -14,17 +14,31 @@ import { htmlToDiscordMarkdown } from '../utils/htmlToDiscordMarkdown';
 // Types
 // ---------------------------------------------------------------------------
 
+/**
+ * Represents a single extracted segment from the assistant's response DOM.
+ */
 export interface AssistantDomSegment {
+    /** The type of content: assistant text, thinking trace, tool interaction, etc. */
     kind: 'assistant-body' | 'thinking' | 'tool-call' | 'tool-result' | 'feedback';
+    /** The content (often HTML for body, plain text for logs) */
     text: string;
+    /** The role is always 'assistant' for these segments */
     role: 'assistant';
+    /** Index of the message in the conversation thread */
     messageIndex: number;
+    /** CSS selector path to the element for debugging */
     domPath: string;
 }
 
+/**
+ * The raw payload returned from the browser-side extraction script.
+ */
 export interface AssistantDomSegmentPayload {
+    /** Identifier to verify the payload structure */
     source: 'dom-structured';
+    /** Timestamp when the extraction occurred */
     extractedAt: number;
+    /** Array of segments found in the DOM */
     segments: AssistantDomSegment[];
 }
 

@@ -35,27 +35,44 @@ import { routeMirroredMessage } from './telegramJoinCommand';
 import type { AntigravityAccountConfig } from '../utils/configLoader';
 import { resolveScopedAccountName } from '../utils/accountUtils';
 
+/**
+ * Dependencies required by the Telegram message handler.
+ */
 export interface TelegramMessageHandlerDeps {
+    /** Bridge to manage CDP connections and detectors */
     readonly bridge: CdpBridge;
+    /** Repository for Telegram-to-workspace bindings */
     readonly telegramBindingRepo: TelegramBindingRepository;
+    /** Service for resolving workspace paths */
     readonly workspaceService?: WorkspaceService;
+    /** Service for managing UI modes (Planning, Fast, etc.) */
     readonly modeService?: ModeService;
+    /** Service for managing model preferences */
     readonly modelService?: ModelService;
+    /** Content extraction strategy (structured or legacy) */
     readonly extractionMode?: ExtractionMode;
+    /** Repository for message templates */
     readonly templateRepo?: import('../database/templateRepository').TemplateRepository;
+    /** Function to fetch user quota info */
     readonly fetchQuota?: () => Promise<any[]>;
-    /** Shared map of active ResponseMonitors keyed by project name.
-     *  Used by /stop to halt monitoring and prevent stale re-sends. */
+    /** 
+     * Shared map of active ResponseMonitors keyed by project name.
+     * Used by /stop to halt monitoring and prevent stale re-sends.
+     */
     readonly activeMonitors?: Map<string, ResponseMonitor>;
     /** Bot token for downloading Telegram file attachments. */
     readonly botToken?: string;
     /** Bot API object for getFile calls. */
     readonly botApi?: import('../platform/telegram/wrappers').TelegramBotLike['api'];
+    /** Service for managing chat sessions in Antigravity */
     readonly chatSessionService?: ChatSessionService;
     /** Response monitor inactivity timeout in ms. Defaults to ResponseMonitor default (900000). */
     readonly responseTimeoutMs?: number;
+    /** Repository for user-specific account preferences */
     readonly accountPrefRepo?: AccountPreferenceRepository;
+    /** Repository for channel-specific account preferences */
     readonly channelPrefRepo?: ChannelPreferenceRepository;
+    /** Configured Antigravity accounts (CDP ports, etc.) */
     readonly antigravityAccounts?: AntigravityAccountConfig[];
 }
 

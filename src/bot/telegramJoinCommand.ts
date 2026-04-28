@@ -28,6 +28,10 @@ export interface TelegramJoinCommandDeps {
 
 const activeResponseMonitors = new Map<string, ResponseMonitor>();
 
+function buildMonitorKey(channelId: string, workspacePath: string): string {
+    return `${channelId}::${workspacePath}`;
+}
+
 function resolveAccount(deps: TelegramJoinCommandDeps, chatId: string, userId: string): string {
     return resolveScopedAccountName({
         channelId: chatId,
@@ -140,12 +144,14 @@ export async function handleMirror(deps: TelegramJoinCommandDeps, message: Platf
     const account = resolveAccount(deps, message.channel.id, message.author.id);
     const detector = deps.bridge.pool.getUserMessageDetector(projectName, account);
 
+    const monitorKey = buildMonitorKey(message.channel.id, resolvedWorkspacePath);
+
     if (detector?.isActive()) {
         detector.stop();
-        const responseMonitor = activeResponseMonitors.get(resolvedWorkspacePath);
+        const responseMonitor = activeResponseMonitors.get(monitorKey);
         if (responseMonitor?.isActive()) {
             await responseMonitor.stop();
-            activeResponseMonitors.delete(resolvedWorkspacePath);
+            activeResponseMonitors.delete(monitorKey);
         }
 
         await message.reply({ text: '📡 Mirroring OFF\nPC-to-Telegram message mirroring has been stopped.' }).catch(logger.error);
@@ -196,7 +202,8 @@ export function startResponseMirror(
     channel: any,
     chatTitle: string
 ): void {
-    const prev = activeResponseMonitors.get(workspacePath);
+    const monitorKey = buildMonitorKey(channel.id, workspacePath);
+    const prev = activeResponseMonitors.get(monitorKey);
     if (prev?.isActive()) {
         prev.stop().catch(() => {});
     }
@@ -207,7 +214,7 @@ export function startResponseMirror(
         maxDurationMs: 300000,
         extractionMode: deps.extractionMode,
         onComplete: (finalText: string) => {
-            activeResponseMonitors.delete(workspacePath);
+            activeResponseMonitors.delete(monitorKey);
             if (!finalText || finalText.trim().length === 0) return;
 
             const maxLen = 3000;
@@ -220,13 +227,14 @@ export function startResponseMirror(
             }).catch((err: any) => logger.error('[TelegramMirror] Failed to send AI response:', err));
         },
         onTimeout: () => {
-            activeResponseMonitors.delete(workspacePath);
+            activeResponseMonitors.delete(monitorKey);
         },
     });
 
-    activeResponseMonitors.set(workspacePath, monitor);
+    activeResponseMonitors.set(monitorKey, monitor);
     monitor.startPassive().catch((err) => {
         logger.error('[TelegramMirror] Failed to start response monitor:', err);
-        activeResponseMonitors.delete(workspacePath);
+        activeResponseMonitors.delete(monitorKey);
     });
 }
+

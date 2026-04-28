@@ -651,6 +651,16 @@ export async function captureResponseMonitorBaseline(
  * Simple baseline suppression via string comparison.
  * NO network event subscription.
  */
+/**
+ * Monitors the Antigravity UI for AI responses and execution logs.
+ *
+ * This class handles:
+ * - Detecting when the AI starts and stops generating.
+ * - Extracting text and structured content (tool calls, diffs) from the DOM.
+ * - Monitoring the "Process Log" for diagnostic information.
+ * - Handling CDP connection interruptions and reconnections.
+ * - Providing real-time progress updates via callbacks.
+ */
 export class ResponseMonitor {
     private readonly cdpService: CdpService;
     private readonly pollIntervalMs: number;
@@ -686,6 +696,10 @@ export class ResponseMonitor {
     // Activity-based timeout (#49)
     private lastActivityTime: number = 0;
 
+    /**
+     * Initializes a new ResponseMonitor instance.
+     * @param options Configuration options for monitoring.
+     */
     constructor(options: ResponseMonitorOptions) {
         this.cdpService = options.cdpService;
         this.pollIntervalMs = options.pollIntervalMs ?? 2000;
@@ -809,7 +823,10 @@ export class ResponseMonitor {
         this.schedulePoll();
     }
 
-    /** Stop monitoring */
+    /**
+     * Stop monitoring and clean up resources.
+     * Unregisters CDP listeners and clears polling timers.
+     */
     async stop(): Promise<void> {
         this.isRunning = false;
         this.isPaused = false;
