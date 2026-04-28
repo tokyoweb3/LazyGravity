@@ -34,6 +34,7 @@ export interface CdpBridge {
     approvalChannelBySession: Map<string, PlatformChannel>;
     /** Channel-scoped preferred Antigravity account selection. */
     selectedAccountByChannel?: Map<string, string>;
+    cdpHost: string;
 }
 
 const APPROVE_ACTION_PREFIX = 'approve_action';
@@ -281,6 +282,7 @@ export function initCdpBridge(
     autoApproveDefault: boolean,
     accountPorts: Record<string, number> = {},
     accountUserDataDirs: Record<string, string> = {},
+    cdpHost: string = '127.0.0.1',
 ): CdpBridge {
     const pool = new CdpConnectionPool({
         accountPorts,
@@ -290,6 +292,7 @@ export function initCdpBridge(
         // Reconnection is triggered when the next chat/template message is sent.
         maxReconnectAttempts: 0,
         reconnectDelayMs: 3000,
+        cdpHost,
     });
 
     const quota = new QuotaService();
@@ -304,6 +307,7 @@ export function initCdpBridge(
         approvalChannelByWorkspace: new Map(),
         approvalChannelBySession: new Map(),
         selectedAccountByChannel: new Map(),
+        cdpHost,
     };
 }
 
@@ -648,7 +652,6 @@ export function ensureUserMessageDetector(
 ): void {
     const existing = bridge.pool.getUserMessageDetector(projectName, accountName);
     if (existing && existing.isActive()) {
-        existing.on('message', onUserMessage);
         return;
     }
 

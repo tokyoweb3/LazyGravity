@@ -37,38 +37,38 @@ const DETECT_USER_MESSAGE_SCRIPT = `(() => {
     const panel = document.querySelector('.antigravity-agent-side-panel');
     const scope = panel || document;
 
-    // Strategy A (primary): Query .whitespace-pre-wrap elements directly inside
-    // user bubble containers. This avoids the parent-container problem where
-    // querySelectorAll matches a wrapper that contains multiple bubbles.
-    const textEls = scope.querySelectorAll(
-        '[class*="bg-gray-500/15"][class*="select-text"] .whitespace-pre-wrap'
-    );
+    // Strategy A (primary): Query .bg-input bubbles. 
+    // User bubbles usually have p-2 while the input box has p-1.
+    const bubbles = Array.from(scope.querySelectorAll('.bg-input.p-2'));
+    const userBubbles = bubbles.filter(el => {
+        const text = (el.textContent || '').toLowerCase();
+        // User bubbles usually have "undo" button. 
+        // We check common translations and the presence of the whitespace-pre-wrap container.
+        const hasUndo = text.includes('undo') || text.includes('撤銷') || text.includes('撤销') || text.includes('元に戻す');
+        return hasUndo || el.querySelector('.whitespace-pre-wrap');
+    });
 
-    if (textEls.length > 0) {
-        const lastTextEl = textEls[textEls.length - 1];
-        const text = (lastTextEl.textContent || '').trim();
+    if (userBubbles.length > 0) {
+        const lastBubble = userBubbles[userBubbles.length - 1];
+        const textEl = lastBubble.querySelector('.whitespace-pre-wrap') || lastBubble;
+        const text = (textEl.textContent || '').replace(/undo|撤銷|撤销|元に戻す/gi, '').trim();
         if (text.length > 0) return { text };
     }
 
-    // Strategy B (fallback): Find individual bubble containers, filtering out
-    // any element that itself contains nested bubble elements (i.e., a parent wrapper).
-    const userBubbles = Array.from(scope.querySelectorAll(
-        '[class*="bg-gray-500/15"][class*="rounded-lg"][class*="select-text"]'
-    )).filter(el => !el.querySelector('[class*="bg-gray-500/15"][class*="select-text"]'));
+    // Strategy B (fallback): Direct whitespace-pre-wrap lookup
+    const textEls = Array.from(scope.querySelectorAll('.whitespace-pre-wrap'));
+    if (textEls.length > 0) {
+        for (let i = textEls.length - 1; i >= 0; i--) {
+            const el = textEls[i];
+            const parent = el.closest('.bg-input');
+            if (parent) {
+                const text = (el.textContent || '').trim();
+                if (text.length > 0) return { text };
+            }
+        }
+    }
 
-    if (userBubbles.length === 0) return null;
-
-    const lastBubble = userBubbles[userBubbles.length - 1];
-    const textEl = lastBubble.querySelector('.whitespace-pre-wrap')
-        || lastBubble.querySelector('[style*="word-break"]');
-
-    const text = textEl
-        ? (textEl.textContent || '').trim()
-        : (lastBubble.textContent || '').trim();
-
-    if (!text || text.length < 1) return null;
-
-    return { text };
+    return null;
 })()`;
 
 /**

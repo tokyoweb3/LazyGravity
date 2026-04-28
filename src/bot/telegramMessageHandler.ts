@@ -12,7 +12,7 @@
 import type { PlatformMessage, PlatformChannel, PlatformSentMessage } from '../platform/types';
 import type { TelegramBindingRepository } from '../database/telegramBindingRepository';
 import type { WorkspaceService } from '../services/workspaceService';
-import { CdpBridge, registerApprovalWorkspaceChannel, ensureApprovalDetector, ensureErrorPopupDetector, ensurePlanningDetector, ensureRunCommandDetector } from '../services/cdpBridgeManager';
+import { CdpBridge, registerApprovalWorkspaceChannel, ensureApprovalDetector, ensureErrorPopupDetector, ensurePlanningDetector, ensureRunCommandDetector, ensureUserMessageDetector } from '../services/cdpBridgeManager';
 import { CdpService } from '../services/cdpService';
 import { ResponseMonitor, captureResponseMonitorBaseline } from '../services/responseMonitor';
 import { ProcessLogBuffer } from '../utils/processLogBuffer';
@@ -31,6 +31,7 @@ import type { ExtractionMode } from '../utils/config';
 import type { ChatSessionService } from '../services/chatSessionService';
 import type { AccountPreferenceRepository } from '../database/accountPreferenceRepository';
 import type { ChannelPreferenceRepository } from '../database/channelPreferenceRepository';
+import { routeMirroredMessage } from './telegramJoinCommand';
 import type { AntigravityAccountConfig } from '../utils/configLoader';
 import { resolveScopedAccountName } from '../utils/accountUtils';
 
@@ -210,6 +211,13 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
             ensurePlanningDetector(deps.bridge, cdp, projectName, selectedAccount);
             ensureRunCommandDetector(deps.bridge, cdp, projectName, selectedAccount);
 
+            // Auto-enable PC-to-Telegram mirroring if not already active for this session
+            ensureUserMessageDetector(deps.bridge, cdp, projectName, (info) => {
+                routeMirroredMessage(deps as any, cdp, workspacePath, info, message.channel).catch((err) => {
+                    logger.error('[TelegramMirror] Error routing mirrored message:', err);
+                });
+            }, selectedAccount);
+
             // Acknowledge receipt
             await message.react('\u{1F440}').catch(() => {});
 
@@ -237,6 +245,12 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
             // Determine the prompt text — use default for image-only messages
             const effectivePrompt = promptText || 'Please review the attached images and respond accordingly.';
             const baseline = await captureResponseMonitorBaseline(cdp);
+
+            // Add to echo hashes to prevent mirroring this message back to Telegram
+            const detector = deps.bridge.pool.getUserMessageDetector(projectName, selectedAccount);
+            if (detector) {
+                detector.addEchoHash(effectivePrompt);
+            }
 
             // Inject prompt (with or without images) into Antigravity
             logger.prompt(effectivePrompt);
@@ -276,6 +290,8 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
             const processLogBuffer = new ProcessLogBuffer({ maxChars: 3500, maxEntries: 120, maxEntryLength: 220 });
             let lastActivityLogText = '';
             let statusMsg: PlatformSentMessage | null = null;
+            let lastSentProgressText = '';
+            let lastProgressSentTime = 0;
 
             // Send initial status message
             statusMsg = await channel.send({ text: 'Processing...' }).catch(() => null);
@@ -305,13 +321,28 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
                         if (logText && logText.trim().length > 0) {
                             lastActivityLogText = processLogBuffer.append(logText);
                         }
-                        if (statusMsg && lastActivityLogText) {
+                        if (statusMsg && lastActivityLogText && !lastSentProgressText) {
                             const elapsed = Math.round((Date.now() - startTime) / 1000);
-                            // Escape HTML to prevent Telegram parse_mode errors
-                            // (activity logs may contain <, >, & from code/paths)
                             statusMsg.edit({
                                 text: `${escapeHtml(lastActivityLogText)}\n\n⏱️ ${elapsed}s`,
-                            }).catch(() => {});
+                            }).catch(() => { statusMsg = null; });
+                        }
+                    },
+
+                    onProgress: (text) => {
+                        if (!text || text === lastSentProgressText) return;
+                        const now = Date.now();
+                        const isSignificant = text.length > lastSentProgressText.length + 150;
+                        const isTimedOut = now - lastProgressSentTime > 7000;
+
+                        if (isSignificant || isTimedOut) {
+                            lastSentProgressText = text;
+                            lastProgressSentTime = now;
+                            const display = text.length > 3500 ? text.slice(-3500) : text;
+                            const caption = `🤖 <b>Antigravity Response (Live):</b>\n${escapeHtml(display)}`;
+                            if (statusMsg) {
+                                statusMsg.edit({ text: caption }).catch(() => { statusMsg = null; });
+                            }
                         }
                     },
 

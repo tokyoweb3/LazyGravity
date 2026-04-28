@@ -1026,7 +1026,12 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             .filter((account) => typeof account.userDataDir === 'string' && account.userDataDir.trim().length > 0)
             .map((account) => [account.name, account.userDataDir!.trim()]),
     );
-    const bridge = initCdpBridge(config.autoApproveFileEdits, accountPorts, accountUserDataDirs);
+    const bridge = initCdpBridge(
+        config.autoApproveFileEdits,
+        accountPorts,
+        accountUserDataDirs,
+        config.cdpHost
+    );
 
     // Initialize CDP-dependent services (constructor CDP dependency removed)
     const chatSessionService = new ChatSessionService();
@@ -1140,7 +1145,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         }),
     );
 
-    client.once(Events.ClientReady, async (readyClient) => {
+    client.once(Events.ClientReady, async (readyClient: Client<true>) => {
         logger.info(`Ready! Logged in as ${readyClient.user.tag} | extractionMode=${config.extractionMode}`);
 
         try {
@@ -1182,12 +1187,12 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             const guild = readyClient.guilds.cache.first();
             if (guild) {
                 const sendableTextChannels = guild.channels.cache.filter(
-                    (ch) =>
+                    (ch: any) =>
                         ch.isTextBased()
                         && !ch.isVoiceBased()
                         && ch.permissionsFor(readyClient.user)?.has('SendMessages'),
                 );
-                const channel = sendableTextChannels.find((ch) => isPreferredDiscordStartupChannel(ch.name))
+                const channel = sendableTextChannels.find((ch: any) => isPreferredDiscordStartupChannel(ch.name))
                     ?? sendableTextChannels.first();
                 if (channel && channel.isTextBased()) {
                     await channel.send({ embeds: [dashboardEmbed] });

@@ -173,7 +173,7 @@ export async function handleMirror(deps: TelegramJoinCommandDeps, message: Platf
     }
 }
 
-async function routeMirroredMessage(
+export async function routeMirroredMessage(
     deps: TelegramJoinCommandDeps,
     cdp: CdpService,
     workspacePath: string,
@@ -189,7 +189,7 @@ async function routeMirroredMessage(
     startResponseMirror(deps, cdp, workspacePath, channel, chatTitle || 'Unknown');
 }
 
-function startResponseMirror(
+export function startResponseMirror(
     deps: TelegramJoinCommandDeps,
     cdp: CdpService,
     workspacePath: string,

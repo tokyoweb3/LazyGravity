@@ -17,9 +17,10 @@ export const RESPONSE_SELECTORS = {
         const scopes = [panel, document].filter(Boolean);
 
         const selectors = [
-            { sel: '.rendered-markdown', score: 10 },
-            { sel: '.leading-relaxed.select-text', score: 9 },
-            { sel: '.flex.flex-col.gap-y-3', score: 8 },
+            { sel: '.text-ide-message-block-bot-color', score: 10 },
+            { sel: '.rendered-markdown', score: 9 },
+            { sel: '.leading-relaxed.select-text', score: 8 },
+            { sel: '.flex.flex-col.gap-y-3', score: 7 },
             { sel: '[data-message-author-role="assistant"]', score: 7 },
             { sel: '[data-message-role="assistant"]', score: 6 },
             { sel: '[class*="assistant-message"]', score: 5 },
@@ -102,7 +103,12 @@ export const RESPONSE_SELECTORS = {
 
         for (const scope of scopes) {
             const el = scope.querySelector('[data-tooltip-id="input-send-button-cancel-tooltip"]');
-            if (el) return { isGenerating: true };
+            if (el) {
+                const style = window.getComputedStyle(el);
+                if (style.display !== 'none' && style.visibility !== 'hidden' && parseFloat(style.opacity) > 0) {
+                    return { isGenerating: true };
+                }
+            }
         }
 
         const normalize = (value) => (value || '').toLowerCase().replace(/\\s+/g, ' ').trim();
