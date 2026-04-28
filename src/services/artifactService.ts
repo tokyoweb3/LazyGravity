@@ -189,8 +189,12 @@ export class ArtifactService {
         let bestId: string | null = null;
         let bestScore = 0;
 
-        const cleanNeedle = needle.replace(/[^a-z0-9]/g, ' ').split(/\s+/).filter(w => w.length > 2);
         const commonWords = new Set(['the', 'and', 'for', 'with', 'from', 'this', 'that', 'fixing', 'adding', 'updating', 'project']);
+        const cleanNeedleWords = needle.replace(/[^a-z0-9]/g, ' ').split(/\s+/).filter(w => w.length > 2 && !commonWords.has(w));
+        const uniqueNeedleWords = Array.from(new Set(cleanNeedleWords));
+        
+        // If query has multiple meaningful terms, require a stronger minimum score of 2.
+        const minScore = uniqueNeedleWords.length >= 2 ? 2 : 1;
 
         for (const id of sortedIds) {
             const overviewPath = path.join(
@@ -214,10 +218,11 @@ export class ArtifactService {
                         return id; // Exact match takes precedence
                     }
 
+                    const headerTokens = new Set(header.replace(/[^a-z0-9]/g, ' ').split(/\s+/));
+                    
                     let score = 0;
-                    for (const word of cleanNeedle) {
-                        if (commonWords.has(word)) continue;
-                        if (header.includes(word)) score++;
+                    for (const word of uniqueNeedleWords) {
+                        if (headerTokens.has(word)) score++;
                     }
                     if (score > bestScore) {
                         bestScore = score;
@@ -231,7 +236,7 @@ export class ArtifactService {
             }
         }
 
-        if (bestScore > 0) {
+        if (bestScore >= minScore) {
             return bestId;
         }
 
