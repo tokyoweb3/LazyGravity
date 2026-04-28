@@ -165,6 +165,7 @@ export class ArtifactService {
 
     /**
      * Try to find a conversation UUID whose overview.txt contains the given session title.
+     * Uses an exact match first, falling back to keyword overlap scoring.
      * Returns the UUID or null if not found.
      */
     findConversationByTitle(title: string): string | null {
@@ -185,6 +186,12 @@ export class ArtifactService {
             .sort((a, b) => b.mtime - a.mtime)
             .map(x => x.id);
 
+        let bestId: string | null = null;
+        let bestScore = 0;
+
+        const cleanNeedle = needle.replace(/[^a-z0-9]/g, ' ').split(/\s+/).filter(w => w.length > 2);
+        const commonWords = new Set(['the', 'and', 'for', 'with', 'from', 'this', 'that', 'fixing', 'adding', 'updating', 'project']);
+
         for (const id of sortedIds) {
             const overviewPath = path.join(
                 this.brainBasePath,
@@ -202,8 +209,19 @@ export class ArtifactService {
                     const buf = Buffer.alloc(4096);
                     const bytesRead = fs.readSync(fd, buf, 0, buf.length, 0);
                     const header = buf.slice(0, bytesRead).toString('utf-8').toLowerCase();
+                    
                     if (header.includes(needle)) {
-                        return id;
+                        return id; // Exact match takes precedence
+                    }
+
+                    let score = 0;
+                    for (const word of cleanNeedle) {
+                        if (commonWords.has(word)) continue;
+                        if (header.includes(word)) score++;
+                    }
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestId = id;
                     }
                 } finally {
                     if (fd !== null) fs.closeSync(fd);
@@ -212,6 +230,11 @@ export class ArtifactService {
                 // Skip unreadable files
             }
         }
+
+        if (bestScore > 0) {
+            return bestId;
+        }
+
         return null;
     }
 
