@@ -193,8 +193,8 @@ export class ArtifactService {
         const cleanNeedleWords = needle.replace(/[^a-z0-9]/g, ' ').split(/\s+/).filter(w => w.length > 2 && !commonWords.has(w));
         const uniqueNeedleWords = Array.from(new Set(cleanNeedleWords));
         
-        // If query has multiple meaningful terms, require a stronger minimum score of 2.
-        const minScore = uniqueNeedleWords.length >= 2 ? 2 : 1;
+        // Require a stronger minimum score of 2 to prevent weak one-word matches.
+        const minScore = 2;
 
         for (const id of sortedIds) {
             const overviewPath = path.join(
