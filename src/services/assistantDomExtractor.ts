@@ -150,6 +150,7 @@ export function extractAssistantSegmentsPayloadScript(): string {
 
     // Same selectors as RESPONSE_TEXT — ordered by specificity
     var selectors = [
+        '.text-ide-message-block-bot-color',
         '.rendered-markdown',
         '.leading-relaxed.select-text',
         '.flex.flex-col.gap-y-3',
@@ -188,6 +189,11 @@ export function extractAssistantSegmentsPayloadScript(): string {
         if (node.closest('[class*="feedback"], footer')) return true;
         if (node.closest('.notify-user-container')) return true;
         if (node.closest('[role="dialog"]')) return true;
+        if (node.closest('form')) return true;
+        if (node.querySelector('textarea') || node.closest('textarea')) return true;
+        var text = (node.innerText || '').toLowerCase();
+        if (text.includes('ask anything, @ to mention')) return true;
+        if (text.includes('0 files with changes')) return true;
         return false;
     };
 

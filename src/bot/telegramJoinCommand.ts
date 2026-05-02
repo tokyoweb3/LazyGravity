@@ -156,17 +156,21 @@ export async function handleMirror(deps: TelegramJoinCommandDeps, message: Platf
         ? deps.workspaceService.getWorkspacePath(binding.workspacePath)
         : binding.workspacePath;
 
-    const projectName = deps.bridge.pool.extractProjectName(resolvedWorkspacePath);
-    const account = resolveAccount(deps, message.channel.id, message.author.id);
-    const detector = deps.bridge.pool.getUserMessageDetector(projectName, account);
-
     const monitorKey = buildMonitorKey(message.channel.id, resolvedWorkspacePath);
+    const mirrorEntry = activeMirrors.get(monitorKey);
+    const projectName = deps.bridge.pool.extractProjectName(resolvedWorkspacePath);
 
-    if (detector?.isActive()) {
-        detector.stop();
+    if (mirrorEntry) {
+        const activeAccount = mirrorEntry.accountName ?? undefined;
+        const detector = deps.bridge.pool.getUserMessageDetector(projectName, activeAccount);
+        if (detector?.isActive()) {
+            detector.stop();
+        }
         const responseMonitor = activeResponseMonitors.get(monitorKey);
         if (responseMonitor?.isActive()) {
             await responseMonitor.stop();
+        }
+        if (activeResponseMonitors.get(monitorKey) === responseMonitor) {
             activeResponseMonitors.delete(monitorKey);
         }
         activeMirrors.delete(monitorKey);
@@ -174,6 +178,7 @@ export async function handleMirror(deps: TelegramJoinCommandDeps, message: Platf
 
         await message.reply({ text: '📡 Mirroring OFF\nPC-to-Telegram message mirroring has been stopped.' }).catch(logger.error);
     } else {
+        const account = resolveAccount(deps, message.channel.id, message.author.id);
         let cdp: CdpService;
         try {
             cdp = await deps.bridge.pool.getOrConnect(resolvedWorkspacePath, { name: account });
@@ -265,7 +270,7 @@ export function startResponseMirror(
         initialBaselineFingerprints: baselineFingerprints,
         initialSeenProcessLogKeys: baselineProcessLogKeys,
         onComplete: (finalText: string) => {
-            activeResponseMonitors.delete(monitorKey);
+            if (activeResponseMonitors.get(monitorKey) === monitor) activeResponseMonitors.delete(monitorKey);
             if (!finalText || finalText.trim().length === 0) return;
 
             const maxLen = 3000;
@@ -278,14 +283,14 @@ export function startResponseMirror(
             }).catch((err: any) => logger.error('[TelegramMirror] Failed to send AI response:', err));
         },
         onTimeout: () => {
-            activeResponseMonitors.delete(monitorKey);
+            if (activeResponseMonitors.get(monitorKey) === monitor) activeResponseMonitors.delete(monitorKey);
         },
     });
 
     activeResponseMonitors.set(monitorKey, monitor);
     monitor.startPassive().catch((err) => {
         logger.error('[TelegramMirror] Failed to start response monitor:', err);
-        activeResponseMonitors.delete(monitorKey);
+        if (activeResponseMonitors.get(monitorKey) === monitor) activeResponseMonitors.delete(monitorKey);
     });
 }
 
@@ -294,6 +299,10 @@ export function startResponseMirror(
  */
 export async function restoreMirrors(deps: TelegramJoinCommandDeps): Promise<void> {
     if (!persistenceService) return;
+    if (!deps.botApi) {
+        logger.warn('[MirrorPersistence] botApi is unavailable; skipping mirror restoration.');
+        return;
+    }
     
     const states = persistenceService.load();
     if (states.length === 0) return;

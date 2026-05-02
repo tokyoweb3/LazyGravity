@@ -50,6 +50,11 @@ export const RESPONSE_SELECTORS = {
             if (node.closest('[class*="feedback"], footer')) return true;
             if (node.closest('.notify-user-container')) return true;
             if (node.closest('[role="dialog"]')) return true;
+            if (node.closest('form')) return true;
+            if (node.querySelector('textarea') || node.closest('textarea')) return true;
+            const text = (node.innerText || '').toLowerCase();
+            if (text.includes('ask anything, @ to mention')) return true;
+            if (text.includes('0 files with changes')) return true;
             return false;
         };
 
@@ -120,9 +125,9 @@ export const RESPONSE_SELECTORS = {
         const scopes = [panel, document].filter(Boolean);
 
         for (const scope of scopes) {
-            const el = scope.querySelector('[data-tooltip-id="input-send-button-cancel-tooltip"]');
-            if (el) {
-                const style = window.getComputedStyle(el);
+            const els = scope.querySelectorAll('[data-tooltip-id="input-send-button-cancel-tooltip"]');
+            for (let i = 0; i < els.length; i++) {
+                const style = window.getComputedStyle(els[i]);
                 if (style.display !== 'none' && style.visibility !== 'hidden' && parseFloat(style.opacity) > 0) {
                     return { isGenerating: true };
                 }
@@ -166,10 +171,16 @@ export const RESPONSE_SELECTORS = {
         const scopes = [panel, document].filter(Boolean);
 
         for (const scope of scopes) {
-            const el = scope.querySelector('[data-tooltip-id="input-send-button-cancel-tooltip"]');
-            if (el && typeof el.click === 'function') {
-                el.click();
-                return { ok: true, method: 'tooltip-id' };
+            const els = scope.querySelectorAll('[data-tooltip-id="input-send-button-cancel-tooltip"]');
+            for (let i = 0; i < els.length; i++) {
+                const el = els[i];
+                if (el && typeof el.click === 'function') {
+                    const style = window.getComputedStyle(el);
+                    if (style.display !== 'none' && style.visibility !== 'hidden' && parseFloat(style.opacity) > 0) {
+                        el.click();
+                        return { ok: true, method: 'tooltip-id' };
+                    }
+                }
             }
         }
 
@@ -211,6 +222,7 @@ export const RESPONSE_SELECTORS = {
         const scopes = [panel, document].filter(Boolean);
 
         const selectors = [
+            { sel: '.text-ide-message-block-bot-color', score: 11 },
             { sel: '.rendered-markdown', score: 10 },
             { sel: '.leading-relaxed.select-text', score: 9 },
             { sel: '.flex.flex-col.gap-y-3', score: 8 },
@@ -241,6 +253,11 @@ export const RESPONSE_SELECTORS = {
             if (node.closest('[class*="feedback"], footer')) return true;
             if (node.closest('.notify-user-container')) return true;
             if (node.closest('[role="dialog"]')) return true;
+            if (node.closest('form')) return true;
+            if (node.querySelector('textarea') || node.closest('textarea')) return true;
+            const text = (node.innerText || '').toLowerCase();
+            if (text.includes('ask anything, @ to mention')) return true;
+            if (text.includes('0 files with changes')) return true;
             return false;
         };
         const looksLikeToolOutput = (text) => {
@@ -297,6 +314,7 @@ export const RESPONSE_SELECTORS = {
         const scopes = [panel, document].filter(Boolean);
 
         const selectors = [
+            { sel: '.text-ide-message-block-bot-color', score: 11 },
             { sel: '.rendered-markdown', score: 10 },
             { sel: '.leading-relaxed.select-text', score: 9 },
             { sel: '.flex.flex-col.gap-y-3', score: 8 },
@@ -334,6 +352,11 @@ export const RESPONSE_SELECTORS = {
             if (node.closest('[class*="feedback"], footer')) return true;
             if (node.closest('.notify-user-container')) return true;
             if (node.closest('[role="dialog"]')) return true;
+            if (node.closest('form')) return true;
+            if (node.querySelector('textarea') || node.closest('textarea')) return true;
+            const text = (node.innerText || '').toLowerCase();
+            if (text.includes('ask anything, @ to mention')) return true;
+            if (text.includes('0 files with changes')) return true;
             return false;
         };
 

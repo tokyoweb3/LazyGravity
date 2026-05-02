@@ -652,6 +652,8 @@ export function ensureUserMessageDetector(
 ): void {
     const existing = bridge.pool.getUserMessageDetector(projectName, accountName);
     if (existing && existing.isActive()) {
+        existing.removeAllListeners('message');
+        existing.on('message', onUserMessage);
         return;
     }
 

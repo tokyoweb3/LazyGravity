@@ -50,8 +50,18 @@ const DETECT_USER_MESSAGE_SCRIPT = `(() => {
 
     if (userBubbles.length > 0) {
         const lastBubble = userBubbles[userBubbles.length - 1];
-        const textEl = lastBubble.querySelector('.whitespace-pre-wrap') || lastBubble;
-        const text = (textEl.textContent || '').replace(/undo|撤銷|撤销|元に戻す/gi, '').trim();
+        const clone = lastBubble.cloneNode(true);
+        const buttons = clone.querySelectorAll('button, [role="button"]');
+        for (let i = 0; i < buttons.length; i++) {
+            const btnText = (buttons[i].textContent || '').toLowerCase();
+            if (btnText.includes('undo') || btnText.includes('撤銷') || btnText.includes('撤销') || btnText.includes('元に戻す')) {
+                buttons[i].parentNode.removeChild(buttons[i]);
+            }
+        }
+        const textEl = clone.querySelector('.whitespace-pre-wrap') || clone;
+        let text = (textEl.textContent || '').trim();
+        // Fallback regex to strip trailing Undo text in case DOM removal missed it
+        text = text.replace(/\s*(?:Undo|撤銷|撤销|元に戻す)\s*$/i, '').trim();
         if (text.length > 0) return { text };
     }
 
@@ -62,7 +72,8 @@ const DETECT_USER_MESSAGE_SCRIPT = `(() => {
             const el = textEls[i];
             const parent = el.closest('.bg-input');
             if (parent) {
-                const text = (el.textContent || '').trim();
+                let text = (el.textContent || '').trim();
+                text = text.replace(/\s*(?:Undo|撤銷|撤销|元に戻す)\s*$/i, '').trim();
                 if (text.length > 0) return { text };
             }
         }

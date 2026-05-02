@@ -77,11 +77,15 @@ const WORKSPACE_STATE_SCRIPT = `(() => {
 
     let isGenerating = false;
     for (const scope of scopes) {
-        const stopEl = scope.querySelector('[data-tooltip-id="input-send-button-cancel-tooltip"]');
-        if (stopEl) {
-            isGenerating = true;
-            break;
+        const els = scope.querySelectorAll('[data-tooltip-id="input-send-button-cancel-tooltip"]');
+        for (let i = 0; i < els.length; i++) {
+            const style = window.getComputedStyle(els[i]);
+            if (style.display !== 'none' && style.visibility !== 'hidden' && parseFloat(style.opacity) > 0) {
+                isGenerating = true;
+                break;
+            }
         }
+        if (isGenerating) break;
     }
 
     if (!isGenerating) {

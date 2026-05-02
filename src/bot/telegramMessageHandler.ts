@@ -228,13 +228,6 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
             ensurePlanningDetector(deps.bridge, cdp, projectName, selectedAccount);
             ensureRunCommandDetector(deps.bridge, cdp, projectName, selectedAccount);
 
-            // Auto-enable PC-to-Telegram mirroring if not already active for this session
-            ensureUserMessageDetector(deps.bridge, cdp, projectName, (info) => {
-                routeMirroredMessage(deps as any, cdp, workspacePath, info, message.channel).catch((err) => {
-                    logger.error('[TelegramMirror] Error routing mirrored message:', err);
-                });
-            }, selectedAccount);
-
             // Acknowledge receipt
             await message.react('\u{1F440}').catch(() => {});
 
@@ -264,8 +257,9 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
             const baseline = await captureResponseMonitorBaseline(cdp);
 
             // Add to echo hashes to prevent mirroring this message back to Telegram
-            const detector = deps.bridge.pool.getUserMessageDetector(projectName, selectedAccount);
-            if (detector) {
+            // Broadcast to all detectors for this project to prevent ghosting across different account contexts
+            const detectors = deps.bridge.pool.getUserMessageDetectorsForProject(projectName);
+            for (const detector of detectors) {
                 detector.addEchoHash(effectivePrompt);
             }
 
@@ -309,6 +303,7 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
             let statusMsg: PlatformSentMessage | null = null;
             let lastSentProgressText = '';
             let lastProgressSentTime = 0;
+            let lastProgressText = '';
 
             // Send initial status message
             statusMsg = await channel.send({ text: 'Processing...' }).catch(() => null);
@@ -349,6 +344,7 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
                     },
 
                     onProgress: (text) => {
+                        lastProgressText = text;
                         if (!text || text === lastSentProgressText) return;
                         const now = Date.now();
                         const isSignificant = text.length > lastSentProgressText.length + 150;
@@ -368,6 +364,8 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
                     onComplete: async (finalText) => {
                         try {
                             const elapsed = Math.round((Date.now() - startTime) / 1000);
+                            
+                            const finalSource = finalText && finalText.trim().length > 0 ? finalText : lastProgressText;
 
                             // Console log output (mirroring Discord handler pattern)
                             const finalLogText = lastActivityLogText || processLogBuffer.snapshot();
@@ -376,7 +374,7 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
                                 console.info(finalLogText);
                             }
 
-                            const separated = splitOutputAndLogs(finalText || '');
+                            const separated = splitOutputAndLogs(finalSource || '');
                             const finalOutputText = separated.output || finalText || '';
                             if (finalOutputText && finalOutputText.trim().length > 0) {
                                 logger.divider(`Output (${finalOutputText.length} chars)`);
@@ -396,8 +394,8 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
                             // Send the final response
                             if (finalOutputText && finalOutputText.trim().length > 0) {
                                 await sendTextChunked(channel, finalOutputText);
-                            } else if (finalText && finalText.trim().length > 0) {
-                                await sendTextChunked(channel, finalText);
+                            } else if (finalSource && finalSource.trim().length > 0) {
+                                await sendTextChunked(channel, finalSource);
                             } else {
                                 await channel.send({ text: '(Empty response from Antigravity)' }).catch(logger.error);
                             }
