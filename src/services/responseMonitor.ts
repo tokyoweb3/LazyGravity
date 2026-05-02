@@ -608,15 +608,21 @@ export async function captureResponseMonitorBaseline(
     cdpService: CdpService,
 ): Promise<ResponseMonitorBaselineSnapshot> {
     let text: string | null = null;
-    try {
-        const textResult = await evaluateAcrossContexts<string | null>(
-            cdpService,
-            RESPONSE_SELECTORS.RESPONSE_TEXT,
-            (value) => typeof value === 'string' && value.trim().length > 0,
-        );
-        text = typeof textResult.value === 'string' ? textResult.value.trim() || null : null;
-    } catch {
-        text = null;
+    
+    // Retry up to 2 times if we get null, as the UI might be in transition
+    for (let i = 0; i < 2; i++) {
+        try {
+            const textResult = await evaluateAcrossContexts<string | null>(
+                cdpService,
+                RESPONSE_SELECTORS.RESPONSE_TEXT,
+                (value) => typeof value === 'string' && value.trim().length > 0,
+            );
+            text = typeof textResult.value === 'string' ? textResult.value.trim() || null : null;
+            if (text) break;
+            if (i === 0) await new Promise(r => setTimeout(r, 100)); // micro-sleep
+        } catch {
+            text = null;
+        }
     }
 
     const processLogKeys = new Set<string>();
@@ -1163,6 +1169,9 @@ export class ResponseMonitor {
                 currentText = typeof textResult.value === 'string' ? textResult.value.trim() || null : null;
             }
 
+            // Normalization helper for baseline comparison
+            const normalize = (t: string | null) => (t || '').replace(/[\s\r\n]+/g, ' ').trim();
+
             // 4. Process log extraction — always when structured didn't handle it
             if (!structuredHandledLogs) {
                 try {
@@ -1208,28 +1217,31 @@ export class ResponseMonitor {
             }
 
             // Baseline suppression: do not emit progress for pre-existing text.
-            // IMPORTANT: do not early-return here; completion logic must still run.
-            const effectiveText = (
-                currentText !== null &&
-                this.baselineText !== null &&
-                currentText === this.baselineText &&
-                this.lastText === null
-            ) ? null : currentText;
+            // We use normalized comparison to avoid issues with whitespace/newlines.
+            const isBaseline = currentText !== null && this.baselineText !== null && normalize(currentText) === normalize(this.baselineText);
+            
+            const effectiveText = (isBaseline && this.lastText === null) ? null : currentText;
 
             // Text change handling
             const textChanged = effectiveText !== null && effectiveText !== this.lastText;
             if (textChanged) {
-                this.lastActivityTime = Date.now();
-                this.lastText = effectiveText;
+                // If we haven't detected generation start yet (no stop button), 
+                // be very conservative about emitting text changes unless they are clearly different from baseline.
+                if (!this.generationStarted && !isGenerating && isBaseline) {
+                    // Still looking at old text, skip
+                } else {
+                    this.lastActivityTime = Date.now();
+                    this.lastText = effectiveText;
 
-                if (this.currentPhase === 'waiting' || this.currentPhase === 'thinking') {
-                    this.setPhase('generating', effectiveText);
-                    if (!this.generationStarted) {
-                        this.generationStarted = true;
+                    if (this.currentPhase === 'waiting' || this.currentPhase === 'thinking') {
+                        this.setPhase('generating', effectiveText);
+                        if (!this.generationStarted) {
+                            this.generationStarted = true;
+                        }
                     }
-                }
 
-                this.onProgress?.(effectiveText);
+                    this.onProgress?.(effectiveText);
+                }
             }
 
             // Completion: stop button gone N consecutive times
