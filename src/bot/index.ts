@@ -1,5 +1,5 @@
 import { SESSION_SELECT_ID } from '../ui/sessionPickerUi';
-import { handleTelegramJoinSelect } from './telegramJoinCommand';
+import { handleTelegramJoinSelect, initMirrorPersistence, restoreMirrors } from './telegramJoinCommand';
 import { t } from "../utils/i18n";
 import { logger } from '../utils/logger';
 import type { LogLevel } from '../utils/logger';
@@ -1014,6 +1014,9 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
     const workspaceService = new WorkspaceService(config.workspaceBaseDir);
     const channelManager = new ChannelManager();
 
+    // Initialize mirror persistence
+    initMirrorPersistence(process.cwd());
+
     // Auto-launch Antigravity with CDP port if not already running
     await ensureAntigravityRunning();
 
@@ -1453,10 +1456,21 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                 botApi: telegramBot.api as any,
                 chatSessionService,
                 responseTimeoutMs: config.responseTimeoutMs,
-                accountPrefRepo,
                 channelPrefRepo,
                 antigravityAccounts: config.antigravityAccounts,
             });
+
+            // Restore active mirrors from persistence
+            restoreMirrors({
+                bridge,
+                telegramBindingRepo,
+                workspaceService,
+                botApi: telegramBot.api as any,
+                accountPrefRepo,
+                channelPrefRepo,
+                antigravityAccounts: config.antigravityAccounts,
+                extractionMode: config.extractionMode,
+            }).catch(err => logger.error('[Telegram] Failed to restore mirrors:', err));
 
             // Compose select handlers: project select + mode select
             const projectSelectHandler = createTelegramSelectHandler({

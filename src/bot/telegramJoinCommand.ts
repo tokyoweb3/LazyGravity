@@ -13,6 +13,7 @@ import { resolveScopedAccountName } from '../utils/accountUtils';
 import type { AccountPreferenceRepository } from '../database/accountPreferenceRepository';
 import type { ChannelPreferenceRepository } from '../database/channelPreferenceRepository';
 import type { AntigravityAccountConfig } from '../utils/configLoader';
+import { MirrorPersistenceService, MirrorState } from '../services/mirrorPersistenceService';
 
 export interface TelegramJoinCommandDeps {
     readonly bridge: CdpBridge;
@@ -28,8 +29,22 @@ export interface TelegramJoinCommandDeps {
 
 const activeResponseMonitors = new Map<string, ResponseMonitor>();
 
+// Centralized state for mirroring persistence
+let persistenceService: MirrorPersistenceService | null = null;
+const activeMirrors = new Map<string, MirrorState>();
+
 function buildMonitorKey(channelId: string, workspacePath: string): string {
     return `${channelId}::${workspacePath}`;
+}
+
+export function initMirrorPersistence(projectRoot: string): void {
+    persistenceService = new MirrorPersistenceService(projectRoot);
+}
+
+function updatePersistence(): void {
+    if (persistenceService) {
+        persistenceService.save(Array.from(activeMirrors.values()));
+    }
 }
 
 function resolveAccount(deps: TelegramJoinCommandDeps, chatId: string, userId: string): string {
@@ -153,6 +168,8 @@ export async function handleMirror(deps: TelegramJoinCommandDeps, message: Platf
             await responseMonitor.stop();
             activeResponseMonitors.delete(monitorKey);
         }
+        activeMirrors.delete(monitorKey);
+        updatePersistence();
 
         await message.reply({ text: '📡 Mirroring OFF\nPC-to-Telegram message mirroring has been stopped.' }).catch(logger.error);
     } else {
@@ -174,6 +191,13 @@ export async function handleMirror(deps: TelegramJoinCommandDeps, message: Platf
                 logger.error('[TelegramMirror] Error routing mirrored message:', err);
             });
         }, account);
+
+        activeMirrors.set(monitorKey, {
+            channelId: message.channel.id,
+            workspacePath: resolvedWorkspacePath,
+            accountName: account
+        });
+        updatePersistence();
 
         await message.reply({ text: '📡 Mirroring ON\nMessages typed in Antigravity on your PC will now appear here.' }).catch(logger.error);
     }
@@ -236,5 +260,40 @@ export function startResponseMirror(
         logger.error('[TelegramMirror] Failed to start response monitor:', err);
         activeResponseMonitors.delete(monitorKey);
     });
+}
+
+/**
+ * Restore active mirrors from persistent storage on startup.
+ */
+export async function restoreMirrors(deps: TelegramJoinCommandDeps): Promise<void> {
+    if (!persistenceService) return;
+    
+    const states = persistenceService.load();
+    if (states.length === 0) return;
+
+    logger.info(`[MirrorPersistence] Restoring ${states.length} active mirrors...`);
+
+    for (const state of states) {
+        try {
+            const projectName = deps.workspaceService?.getWorkspaceName(state.workspacePath) || state.workspacePath;
+            const account = state.accountName || resolveAccount(deps, state.channelId, 'system');
+            
+            const cdp = await deps.bridge.pool.getOrConnect(state.workspacePath, { name: account });
+            const channel = { id: state.channelId, send: (m: any) => deps.botApi.sendMessage(state.channelId, m.text, { parse_mode: 'HTML' }) };
+
+            ensureUserMessageDetector(deps.bridge, cdp, projectName, (info) => {
+                routeMirroredMessage(deps, cdp, state.workspacePath, info, channel).catch((err) => {
+                    logger.error('[TelegramMirror] Error routing restored mirrored message:', err);
+                });
+            }, account);
+
+            const monitorKey = buildMonitorKey(state.channelId, state.workspacePath);
+            activeMirrors.set(monitorKey, state);
+            
+            logger.debug(`[MirrorPersistence] Restored mirror for ${projectName} in channel ${state.channelId}`);
+        } catch (error) {
+            logger.warn(`[MirrorPersistence] Failed to restore mirror for ${state.workspacePath}:`, error);
+        }
+    }
 }
 
