@@ -454,6 +454,7 @@ async function sendTextChunked(
     while (remaining.length > 0) {
         const chunk = remaining.slice(0, MAX_LENGTH);
         remaining = remaining.slice(MAX_LENGTH);
-        await channel.send({ text: chunk }).catch(logger.error);
+        // Ensure HTML escaping for Telegram compatibility
+        await channel.send({ text: escapeHtml(chunk) }).catch(logger.error);
     }
 }
