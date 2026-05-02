@@ -654,7 +654,8 @@ export async function captureResponseMonitorBaseline(
                 fingerprints.push(text.length + ':' + text.slice(0, 50) + ':' + text.slice(-50));
             }
             // Count can just be 1 for structured, or we can rely on segments
-            count = Object.values(classified.diagnostics.segmentCounts).reduce((a, b) => a + b, 0) || 1;
+            const counts = Object.values(classified.diagnostics.segmentCounts) as number[];
+            count = counts.reduce((a, b) => a + b, 0) || 1;
         }
     } catch (err) {
         // Fallback to legacy
