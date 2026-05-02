@@ -1209,17 +1209,26 @@ export class ResponseMonitor {
                 }
             }
 
-            // Legacy path (or fallback from structured)
+            // Legacy path for index, count, and fingerprint (always run this to ensure baseline suppression works)
             let currentFingerprint: string | null = null;
-            if (currentText === null) {
+            let legacyText: string | null = null;
+            
+            try {
                 const result = await this.evaluateAcrossContexts<{text: string | null, index: number, count: number, fingerprint: string | null} | null>(
                     RESPONSE_SELECTORS.RESPONSE_TEXT,
                     (value) => !!value && typeof (value as any).index === 'number',
                 );
-                currentText = typeof result.value?.text === 'string' ? result.value.text.trim() || null : null;
+                legacyText = typeof result.value?.text === 'string' ? result.value.text.trim() || null : null;
                 currentIndex = result.value?.index ?? -1;
                 currentCount = result.value?.count ?? 0;
                 currentFingerprint = result.value?.fingerprint ?? null;
+            } catch (err) {
+                // Ignore errors here
+            }
+
+            // Fallback text if structured extraction failed
+            if (currentText === null) {
+                currentText = legacyText;
             }
 
             // Normalization helper for baseline comparison
