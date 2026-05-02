@@ -89,12 +89,11 @@ export const RESPONSE_SELECTORS = {
                 if (looksLikeFeedbackFooter(text)) continue;
                 if (looksLikeToolOutput(text)) continue;
                 if (looksLikeQuotaPopup(text)) continue;
-                // Prefer recency first: return the newest acceptable node.
-                return text;
+                return { text, count: nodes.length };
             }
         }
 
-        return null;
+        return { text: null, count: 0 };
     })()`,
     /** Stop button detection via tooltip-id + text fallback */
     STOP_BUTTON: `(() => {
@@ -469,6 +468,8 @@ export interface ResponseMonitorOptions {
     onProcessLog?: (text: string) => void;
     /** Optional pre-captured baseline response text from before prompt injection */
     initialBaselineText?: string | null;
+    /** Optional pre-captured baseline node count from before prompt injection */
+    initialBaselineCount?: number;
     /** Optional pre-captured process log keys from before prompt injection */
     initialSeenProcessLogKeys?: string[];
 }
@@ -478,6 +479,7 @@ export interface ResponseMonitorOptions {
  */
 export interface ResponseMonitorBaselineSnapshot {
     text: string | null;
+    count: number;
     processLogKeys: string[];
 }
 
@@ -608,20 +610,24 @@ export async function captureResponseMonitorBaseline(
     cdpService: CdpService,
 ): Promise<ResponseMonitorBaselineSnapshot> {
     let text: string | null = null;
+    let count = 0;
     
     // Retry up to 2 times if we get null, as the UI might be in transition
     for (let i = 0; i < 2; i++) {
         try {
-            const textResult = await evaluateAcrossContexts<string | null>(
+            const result = await evaluateAcrossContexts<{text: string | null, count: number} | null>(
                 cdpService,
                 RESPONSE_SELECTORS.RESPONSE_TEXT,
-                (value) => typeof value === 'string' && value.trim().length > 0,
+                (value) => !!value && typeof (value as any).count === 'number',
             );
-            text = typeof textResult.value === 'string' ? textResult.value.trim() || null : null;
-            if (text) break;
+            const val = result.value;
+            text = typeof val?.text === 'string' ? val.text.trim() || null : null;
+            count = val?.count ?? 0;
+            if (text || count > 0) break;
             if (i === 0) await new Promise(r => setTimeout(r, 100)); // micro-sleep
         } catch {
             text = null;
+            count = 0;
         }
     }
 
@@ -645,6 +651,7 @@ export async function captureResponseMonitorBaseline(
 
     return {
         text,
+        count,
         processLogKeys: Array.from(processLogKeys),
     };
 }
@@ -685,6 +692,7 @@ export class ResponseMonitor {
     private isRunning: boolean = false;
     private lastText: string | null = null;
     private baselineText: string | null = null;
+    private baselineCount: number = 0;
     private generationStarted: boolean = false;
     private currentPhase: ResponsePhase = 'waiting';
     private stopGoneCount: number = 0;
@@ -718,6 +726,7 @@ export class ResponseMonitor {
         this.onPhaseChange = options.onPhaseChange;
         this.onProcessLog = options.onProcessLog;
         this.initialBaselineText = options.initialBaselineText;
+        this.initialBaselineCount = options.initialBaselineCount;
         this.initialSeenProcessLogKeys = options.initialSeenProcessLogKeys;
     }
 
@@ -742,7 +751,8 @@ export class ResponseMonitor {
         this.isRunning = true;
         this.isPaused = false;
         this.lastText = null;
-        this.baselineText = null;
+        this.baselineText = this.initialBaselineText ?? null;
+        this.baselineCount = this.initialBaselineCount ?? 0;
         this.generationStarted = passive;
         this.currentPhase = passive ? 'generating' : 'waiting';
         this.stopGoneCount = 0;
@@ -1120,6 +1130,7 @@ export class ResponseMonitor {
 
             // 3. Text extraction (structured or legacy)
             let currentText: string | null = null;
+            let currentCount = 0;
             let structuredHandledLogs = false;
 
             if (this.extractionMode === 'structured') {
@@ -1162,11 +1173,12 @@ export class ResponseMonitor {
 
             // Legacy path (or fallback from structured)
             if (currentText === null) {
-                const textResult = await this.evaluateAcrossContexts<string | null>(
+                const result = await this.evaluateAcrossContexts<{text: string | null, count: number} | null>(
                     RESPONSE_SELECTORS.RESPONSE_TEXT,
-                    (value) => typeof value === 'string' && value.trim().length > 0,
+                    (value) => !!value && typeof (value as any).count === 'number',
                 );
-                currentText = typeof textResult.value === 'string' ? textResult.value.trim() || null : null;
+                currentText = typeof result.value?.text === 'string' ? result.value.text.trim() || null : null;
+                currentCount = result.value?.count ?? 0;
             }
 
             // Normalization helper for baseline comparison
@@ -1218,9 +1230,11 @@ export class ResponseMonitor {
 
             // Baseline suppression: do not emit progress for pre-existing text.
             // We use normalized comparison to avoid issues with whitespace/newlines.
+            // ADDED: Stricter check using message count. If count hasn't increased, it's definitely old.
             const isBaseline = currentText !== null && this.baselineText !== null && normalize(currentText) === normalize(this.baselineText);
+            const countHasIncreased = currentCount > this.baselineCount;
             
-            const effectiveText = (isBaseline && this.lastText === null) ? null : currentText;
+            const effectiveText = (isBaseline && this.lastText === null && !countHasIncreased) ? null : currentText;
 
             // Text change handling
             const textChanged = effectiveText !== null && effectiveText !== this.lastText;
