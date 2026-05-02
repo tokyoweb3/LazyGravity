@@ -1,3 +1,4 @@
+import * as path from 'path';
 import { CdpBridge, ensureUserMessageDetector, getCurrentChatTitle } from '../services/cdpBridgeManager';
 import { CdpService } from '../services/cdpService';
 import { ResponseMonitor } from '../services/responseMonitor';
@@ -275,7 +276,7 @@ export async function restoreMirrors(deps: TelegramJoinCommandDeps): Promise<voi
 
     for (const state of states) {
         try {
-            const projectName = deps.workspaceService?.getWorkspaceName(state.workspacePath) || state.workspacePath;
+            const projectName = path.basename(state.workspacePath);
             const account = state.accountName || resolveAccount(deps, state.channelId, 'system');
             
             const cdp = await deps.bridge.pool.getOrConnect(state.workspacePath, { name: account });

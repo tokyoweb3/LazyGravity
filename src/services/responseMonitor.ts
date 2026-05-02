@@ -686,6 +686,7 @@ export class ResponseMonitor {
     private readonly onPhaseChange?: (phase: ResponsePhase, text: string | null) => void;
     private readonly onProcessLog?: (text: string) => void;
     private readonly initialBaselineText?: string | null;
+    private readonly initialBaselineCount?: number;
     private readonly initialSeenProcessLogKeys?: string[];
 
     private pollTimer: ReturnType<typeof setTimeout> | null = null;
