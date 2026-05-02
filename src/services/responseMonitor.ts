@@ -89,11 +89,12 @@ export const RESPONSE_SELECTORS = {
                 if (looksLikeFeedbackFooter(text)) continue;
                 if (looksLikeToolOutput(text)) continue;
                 if (looksLikeQuotaPopup(text)) continue;
-                return { text, count: nodes.length };
+                // Return text, the index of the node we found, and the total node count
+                return { text, index: i, count: nodes.length };
             }
         }
 
-        return { text: null, count: 0 };
+        return { text: null, index: -1, count: scopes.reduce((acc, s) => acc + (s?.querySelectorAll(combinedSelector).length || 0), 0) };
     })()`,
     /** Stop button detection via tooltip-id + text fallback */
     STOP_BUTTON: `(() => {
@@ -1132,6 +1133,7 @@ export class ResponseMonitor {
             // 3. Text extraction (structured or legacy)
             let currentText: string | null = null;
             let currentCount = 0;
+            let currentIndex = -1;
             let structuredHandledLogs = false;
 
             if (this.extractionMode === 'structured') {
@@ -1174,11 +1176,12 @@ export class ResponseMonitor {
 
             // Legacy path (or fallback from structured)
             if (currentText === null) {
-                const result = await this.evaluateAcrossContexts<{text: string | null, count: number} | null>(
+                const result = await this.evaluateAcrossContexts<{text: string | null, index: number, count: number} | null>(
                     RESPONSE_SELECTORS.RESPONSE_TEXT,
-                    (value) => !!value && typeof (value as any).count === 'number',
+                    (value) => !!value && typeof (value as any).index === 'number',
                 );
                 currentText = typeof result.value?.text === 'string' ? result.value.text.trim() || null : null;
+                currentIndex = result.value?.index ?? -1;
                 currentCount = result.value?.count ?? 0;
             }
 
@@ -1230,12 +1233,13 @@ export class ResponseMonitor {
             }
 
             // Baseline suppression: do not emit progress for pre-existing text.
-            // We use normalized comparison to avoid issues with whitespace/newlines.
-            // ADDED: Stricter check using message count. If count hasn't increased, it's definitely old.
+            // We use normalized comparison and strict index tracking.
+            // If the node index we found is LESS than our baseline count, it's an old node.
             const isBaseline = currentText !== null && this.baselineText !== null && normalize(currentText) === normalize(this.baselineText);
+            const isOldNode = currentIndex >= 0 && currentIndex < this.baselineCount;
             const countHasIncreased = currentCount > this.baselineCount;
             
-            const effectiveText = (isBaseline && this.lastText === null && !countHasIncreased) ? null : currentText;
+            const effectiveText = (isOldNode || (isBaseline && this.lastText === null && !countHasIncreased)) ? null : currentText;
 
             // Text change handling
             const textChanged = effectiveText !== null && effectiveText !== this.lastText;
