@@ -76,9 +76,15 @@ export const RESPONSE_SELECTORS = {
         const combinedSelector = selectors.map((s) => s.sel).join(', ');
         const seen = new Set();
 
+        let foundText = null;
+        let foundIndex = -1;
+        const allFingerprints = [];
+        let globalNodeCount = 0;
+
+        let foundFingerprint = null;
         for (const scope of scopes) {
             const nodes = scope.querySelectorAll(combinedSelector);
-            for (let i = nodes.length - 1; i >= 0; i--) {
+            for (let i = 0; i < nodes.length; i++) {
                 const node = nodes[i];
                 if (!node || seen.has(node)) continue;
                 seen.add(node);
@@ -89,19 +95,24 @@ export const RESPONSE_SELECTORS = {
                 if (looksLikeFeedbackFooter(text)) continue;
                 if (looksLikeToolOutput(text)) continue;
                 if (looksLikeQuotaPopup(text)) continue;
-                // Return text, the index of the node we found, and the total node count
-                return { 
-                    text, 
-                    index: i, 
-                    count: nodes.length,
-                    // Identity marker: combining text length and first 50 chars for faster matching
-                    fingerprint: text.length + ':' + text.slice(0, 50)
-                };
+
+                const fp = text.length + ':' + text.slice(0, 50) + ':' + text.slice(-50);
+                allFingerprints.push(fp);
+
+                foundText = text;
+                foundIndex = globalNodeCount + i;
+                foundFingerprint = fp;
             }
+            globalNodeCount += nodes.length;
         }
 
-        const totalCount = scopes.reduce((acc, s) => acc + (s?.querySelectorAll(combinedSelector).length || 0), 0);
-        return { text: null, index: -1, count: totalCount, fingerprint: null };
+        return { 
+            text: foundText, 
+            index: foundIndex, 
+            count: globalNodeCount, 
+            fingerprints: allFingerprints,
+            fingerprint: foundFingerprint
+        };
     })()`,
     /** Stop button detection via tooltip-id + text fallback */
     STOP_BUTTON: `(() => {
@@ -624,10 +635,10 @@ export async function captureResponseMonitorBaseline(
     let count = 0;
     const fingerprints: string[] = [];
     
-    // Retry up to 2 times if we get null, as the UI might be in transition
-    for (let i = 0; i < 2; i++) {
+    // Aggressive retry: wait up to 1 second for the DOM to settle if it looks empty
+    for (let i = 0; i < 5; i++) {
         try {
-            const result = await evaluateAcrossContexts<{text: string | null, index: number, count: number, fingerprint: string | null} | null>(
+            const result = await evaluateAcrossContexts<{text: string | null, index: number, count: number, fingerprints: string[]} | null>(
                 cdpService,
                 RESPONSE_SELECTORS.RESPONSE_TEXT,
                 (value) => !!value && typeof (value as any).count === 'number',
@@ -635,10 +646,16 @@ export async function captureResponseMonitorBaseline(
             const val = result.value;
             text = typeof val?.text === 'string' ? val.text.trim() || null : null;
             count = val?.count ?? 0;
-            if (val?.fingerprint) fingerprints.push(val.fingerprint);
             
-            if (text || count > 0) break;
-            if (i === 0) await new Promise(r => setTimeout(r, 100)); // micro-sleep
+            if (Array.isArray(val?.fingerprints)) {
+                for (const fp of val.fingerprints) {
+                    if (!fingerprints.includes(fp)) fingerprints.push(fp);
+                }
+            }
+            
+            // If we see nodes, consider it settled. If 0 nodes, maybe it's clearing? Wait a bit.
+            if (count > 0) break;
+            await new Promise(r => setTimeout(r, 200)); 
         } catch {
             text = null;
             count = 0;
