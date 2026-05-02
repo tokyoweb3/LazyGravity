@@ -213,11 +213,29 @@ export async function routeMirroredMessage(
 ): Promise<void> {
     const chatTitle = await getCurrentChatTitle(cdp);
     
+    // Capture the baseline BEFORE sending the user message notification,
+    // so that the passive monitor knows which assistant messages are old.
+    let baselineText: string | null = null;
+    let baselineCount = 0;
+    let baselineFingerprints: string[] = [];
+    let baselineProcessLogKeys: string[] = [];
+
+    try {
+        const { captureResponseMonitorBaseline } = require('../services/responseMonitor');
+        const baseline = await captureResponseMonitorBaseline(cdp);
+        baselineText = baseline.text;
+        baselineCount = baseline.count;
+        baselineFingerprints = baseline.fingerprints;
+        baselineProcessLogKeys = baseline.processLogKeys;
+    } catch (err) {
+        logger.error('[TelegramMirror] Error capturing passive baseline:', err);
+    }
+    
     await channel.send({
         text: `🖥️ <b>User typed in Antigravity:</b>\n<pre>${escapeHtml(info.text)}</pre>\n<i>Session: ${escapeHtml(chatTitle || 'Unknown')}</i>`
     }).catch((err: any) => logger.error('[TelegramMirror] Failed to send user message:', err));
 
-    startResponseMirror(deps, cdp, workspacePath, channel, chatTitle || 'Unknown');
+    startResponseMirror(deps, cdp, workspacePath, channel, chatTitle || 'Unknown', baselineText, baselineCount, baselineFingerprints, baselineProcessLogKeys);
 }
 
 export function startResponseMirror(
@@ -225,7 +243,11 @@ export function startResponseMirror(
     cdp: CdpService,
     workspacePath: string,
     channel: any,
-    chatTitle: string
+    chatTitle: string,
+    baselineText?: string | null,
+    baselineCount?: number,
+    baselineFingerprints?: string[],
+    baselineProcessLogKeys?: string[]
 ): void {
     const monitorKey = buildMonitorKey(channel.id, workspacePath);
     const prev = activeResponseMonitors.get(monitorKey);
@@ -238,6 +260,10 @@ export function startResponseMirror(
         pollIntervalMs: 2000,
         maxDurationMs: 300000,
         extractionMode: deps.extractionMode,
+        initialBaselineText: baselineText,
+        initialBaselineCount: baselineCount,
+        initialBaselineFingerprints: baselineFingerprints,
+        initialSeenProcessLogKeys: baselineProcessLogKeys,
         onComplete: (finalText: string) => {
             activeResponseMonitors.delete(monitorKey);
             if (!finalText || finalText.trim().length === 0) return;
