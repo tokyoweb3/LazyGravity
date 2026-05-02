@@ -333,6 +333,7 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
                     extractionMode: deps.extractionMode,
                     initialBaselineText: baseline.text,
                     initialBaselineCount: baseline.count,
+                    initialBaselineFingerprints: baseline.fingerprints,
                     initialSeenProcessLogKeys: baseline.processLogKeys,
 
                     onProcessLog: (logText) => {

@@ -90,11 +90,18 @@ export const RESPONSE_SELECTORS = {
                 if (looksLikeToolOutput(text)) continue;
                 if (looksLikeQuotaPopup(text)) continue;
                 // Return text, the index of the node we found, and the total node count
-                return { text, index: i, count: nodes.length };
+                return { 
+                    text, 
+                    index: i, 
+                    count: nodes.length,
+                    // Identity marker: combining text length and first 50 chars for faster matching
+                    fingerprint: text.length + ':' + text.slice(0, 50)
+                };
             }
         }
 
-        return { text: null, index: -1, count: scopes.reduce((acc, s) => acc + (s?.querySelectorAll(combinedSelector).length || 0), 0) };
+        const totalCount = scopes.reduce((acc, s) => acc + (s?.querySelectorAll(combinedSelector).length || 0), 0);
+        return { text: null, index: -1, count: totalCount, fingerprint: null };
     })()`,
     /** Stop button detection via tooltip-id + text fallback */
     STOP_BUTTON: `(() => {
@@ -471,6 +478,8 @@ export interface ResponseMonitorOptions {
     initialBaselineText?: string | null;
     /** Optional pre-captured baseline node count from before prompt injection */
     initialBaselineCount?: number;
+    /** Optional fingerprints of existing messages to ignore */
+    initialBaselineFingerprints?: string[];
     /** Optional pre-captured process log keys from before prompt injection */
     initialSeenProcessLogKeys?: string[];
 }
@@ -481,6 +490,7 @@ export interface ResponseMonitorOptions {
 export interface ResponseMonitorBaselineSnapshot {
     text: string | null;
     count: number;
+    fingerprints: string[];
     processLogKeys: string[];
 }
 
@@ -612,11 +622,12 @@ export async function captureResponseMonitorBaseline(
 ): Promise<ResponseMonitorBaselineSnapshot> {
     let text: string | null = null;
     let count = 0;
+    const fingerprints: string[] = [];
     
     // Retry up to 2 times if we get null, as the UI might be in transition
     for (let i = 0; i < 2; i++) {
         try {
-            const result = await evaluateAcrossContexts<{text: string | null, count: number} | null>(
+            const result = await evaluateAcrossContexts<{text: string | null, index: number, count: number, fingerprint: string | null} | null>(
                 cdpService,
                 RESPONSE_SELECTORS.RESPONSE_TEXT,
                 (value) => !!value && typeof (value as any).count === 'number',
@@ -624,6 +635,8 @@ export async function captureResponseMonitorBaseline(
             const val = result.value;
             text = typeof val?.text === 'string' ? val.text.trim() || null : null;
             count = val?.count ?? 0;
+            if (val?.fingerprint) fingerprints.push(val.fingerprint);
+            
             if (text || count > 0) break;
             if (i === 0) await new Promise(r => setTimeout(r, 100)); // micro-sleep
         } catch {
@@ -653,6 +666,7 @@ export async function captureResponseMonitorBaseline(
     return {
         text,
         count,
+        fingerprints,
         processLogKeys: Array.from(processLogKeys),
     };
 }
@@ -688,6 +702,7 @@ export class ResponseMonitor {
     private readonly onProcessLog?: (text: string) => void;
     private readonly initialBaselineText?: string | null;
     private readonly initialBaselineCount?: number;
+    private readonly initialBaselineFingerprints?: string[];
     private readonly initialSeenProcessLogKeys?: string[];
 
     private pollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -695,6 +710,7 @@ export class ResponseMonitor {
     private lastText: string | null = null;
     private baselineText: string | null = null;
     private baselineCount: number = 0;
+    private baselineFingerprints: Set<string> = new Set();
     private generationStarted: boolean = false;
     private currentPhase: ResponsePhase = 'waiting';
     private stopGoneCount: number = 0;
@@ -729,6 +745,7 @@ export class ResponseMonitor {
         this.onProcessLog = options.onProcessLog;
         this.initialBaselineText = options.initialBaselineText;
         this.initialBaselineCount = options.initialBaselineCount;
+        this.initialBaselineFingerprints = options.initialBaselineFingerprints;
         this.initialSeenProcessLogKeys = options.initialSeenProcessLogKeys;
     }
 
@@ -755,6 +772,7 @@ export class ResponseMonitor {
         this.lastText = null;
         this.baselineText = this.initialBaselineText ?? null;
         this.baselineCount = this.initialBaselineCount ?? 0;
+        this.baselineFingerprints = new Set(this.initialBaselineFingerprints || []);
         this.generationStarted = passive;
         this.currentPhase = passive ? 'generating' : 'waiting';
         this.stopGoneCount = 0;
@@ -1175,14 +1193,16 @@ export class ResponseMonitor {
             }
 
             // Legacy path (or fallback from structured)
+            let currentFingerprint: string | null = null;
             if (currentText === null) {
-                const result = await this.evaluateAcrossContexts<{text: string | null, index: number, count: number} | null>(
+                const result = await this.evaluateAcrossContexts<{text: string | null, index: number, count: number, fingerprint: string | null} | null>(
                     RESPONSE_SELECTORS.RESPONSE_TEXT,
                     (value) => !!value && typeof (value as any).index === 'number',
                 );
                 currentText = typeof result.value?.text === 'string' ? result.value.text.trim() || null : null;
                 currentIndex = result.value?.index ?? -1;
                 currentCount = result.value?.count ?? 0;
+                currentFingerprint = result.value?.fingerprint ?? null;
             }
 
             // Normalization helper for baseline comparison
@@ -1233,13 +1253,13 @@ export class ResponseMonitor {
             }
 
             // Baseline suppression: do not emit progress for pre-existing text.
-            // We use normalized comparison and strict index tracking.
-            // If the node index we found is LESS than our baseline count, it's an old node.
+            // We use normalized comparison, index tracking, and fingerprint blacklisting.
             const isBaseline = currentText !== null && this.baselineText !== null && normalize(currentText) === normalize(this.baselineText);
             const isOldNode = currentIndex >= 0 && currentIndex < this.baselineCount;
+            const isBlacklisted = currentFingerprint !== null && this.baselineFingerprints.has(currentFingerprint);
             const countHasIncreased = currentCount > this.baselineCount;
             
-            const effectiveText = (isOldNode || (isBaseline && this.lastText === null && !countHasIncreased)) ? null : currentText;
+            const effectiveText = (isOldNode || isBlacklisted || (isBaseline && this.lastText === null && !countHasIncreased)) ? null : currentText;
 
             // Text change handling
             const textChanged = effectiveText !== null && effectiveText !== this.lastText;
