@@ -637,13 +637,16 @@ export async function captureResponseMonitorBaseline(
     
     // Attempt structured baseline capture first, as it is much more accurate than the legacy selector.
     try {
-        const { classifyAssistantSegments } = require('./responseExtractors');
         const structuredResult = await evaluateAcrossContexts<unknown>(
             cdpService,
             RESPONSE_SELECTORS.RESPONSE_STRUCTURED,
             (value) => {
-                const diag = classifyAssistantSegments(value).diagnostics;
-                return diag.source === 'dom-structured';
+                try {
+                    const diag = classifyAssistantSegments(value).diagnostics;
+                    return diag.source === 'dom-structured';
+                } catch {
+                    return false;
+                }
             }
         );
         const classified = classifyAssistantSegments(structuredResult.value);
@@ -658,7 +661,7 @@ export async function captureResponseMonitorBaseline(
             count = counts.reduce((a, b) => a + b, 0) || 1;
         }
     } catch (err) {
-        // Fallback to legacy
+        logger.warn('[ResponseMonitor] Structured baseline capture failed, falling back to legacy:', err);
     }
 
     if (!text) {
