@@ -635,30 +635,56 @@ export async function captureResponseMonitorBaseline(
     let count = 0;
     const fingerprints: string[] = [];
     
-    // Aggressive retry: wait up to 1 second for the DOM to settle if it looks empty
-    for (let i = 0; i < 5; i++) {
-        try {
-            const result = await evaluateAcrossContexts<{text: string | null, index: number, count: number, fingerprints: string[]} | null>(
-                cdpService,
-                RESPONSE_SELECTORS.RESPONSE_TEXT,
-                (value) => !!value && typeof (value as any).count === 'number',
-            );
-            const val = result.value;
-            text = typeof val?.text === 'string' ? val.text.trim() || null : null;
-            count = val?.count ?? 0;
-            
-            if (Array.isArray(val?.fingerprints)) {
-                for (const fp of val.fingerprints) {
-                    if (!fingerprints.includes(fp)) fingerprints.push(fp);
-                }
+    // Attempt structured baseline capture first, as it is much more accurate than the legacy selector.
+    try {
+        const { classifyAssistantSegments } = require('./responseExtractors');
+        const structuredResult = await evaluateAcrossContexts<unknown>(
+            cdpService,
+            RESPONSE_SELECTORS.RESPONSE_STRUCTURED,
+            (value) => {
+                const diag = classifyAssistantSegments(value).diagnostics;
+                return diag.source === 'dom-structured';
             }
-            
-            // If we see nodes, consider it settled. If 0 nodes, maybe it's clearing? Wait a bit.
-            if (count > 0) break;
-            await new Promise(r => setTimeout(r, 200)); 
-        } catch {
-            text = null;
-            count = 0;
+        );
+        const classified = classifyAssistantSegments(structuredResult.value);
+        if (classified.diagnostics.source === 'dom-structured') {
+            text = classified.finalOutputText.trim() || null;
+            // Fingerprint the structured text
+            if (text) {
+                fingerprints.push(text.length + ':' + text.slice(0, 50) + ':' + text.slice(-50));
+            }
+            // Count can just be 1 for structured, or we can rely on segments
+            count = Object.values(classified.diagnostics.segmentCounts).reduce((a, b) => a + b, 0) || 1;
+        }
+    } catch (err) {
+        // Fallback to legacy
+    }
+
+    if (!text) {
+        // Aggressive retry for legacy fallback
+        for (let i = 0; i < 5; i++) {
+            try {
+                const result = await evaluateAcrossContexts<{text: string | null, index: number, count: number, fingerprints: string[]} | null>(
+                    cdpService,
+                    RESPONSE_SELECTORS.RESPONSE_TEXT,
+                    (value) => !!value && typeof (value as any).count === 'number',
+                );
+                const val = result.value;
+                text = typeof val?.text === 'string' ? val.text.trim() || null : null;
+                count = val?.count ?? 0;
+                
+                if (Array.isArray(val?.fingerprints)) {
+                    for (const fp of val.fingerprints) {
+                        if (!fingerprints.includes(fp)) fingerprints.push(fp);
+                    }
+                }
+                
+                if (count > 0) break;
+                await new Promise(r => setTimeout(r, 200)); 
+            } catch {
+                text = null;
+                count = 0;
+            }
         }
     }
 
