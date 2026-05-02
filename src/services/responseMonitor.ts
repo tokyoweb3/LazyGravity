@@ -1235,34 +1235,18 @@ export class ResponseMonitor {
                         await this.logStructuredExtractionDiagnostics(payload);
                     }
                 } catch (error) {
-                    logger.warn('[ResponseMonitor:poll] RESPONSE_STRUCTURED failed, falling back to legacy:', error);
+                    logger.warn('[ResponseMonitor:poll] RESPONSE_STRUCTURED failed:', error);
                 }
-            }
-
-            // Legacy path for index, count, and fingerprint (always run this to ensure baseline suppression works)
-            let currentFingerprint: string | null = null;
-            let legacyText: string | null = null;
-            
-            try {
-                const result = await this.evaluateAcrossContexts<{text: string | null, index: number, count: number, fingerprint: string | null} | null>(
-                    RESPONSE_SELECTORS.RESPONSE_TEXT,
-                    (value) => !!value && typeof (value as any).index === 'number',
-                );
-                legacyText = typeof result.value?.text === 'string' ? result.value.text.trim() || null : null;
-                currentIndex = result.value?.index ?? -1;
-                currentCount = result.value?.count ?? 0;
-                currentFingerprint = result.value?.fingerprint ?? null;
-            } catch (err) {
-                // Ignore errors here
-            }
-
-            // Fallback text if structured extraction failed
-            if (currentText === null) {
-                currentText = legacyText;
             }
 
             // Normalization helper for baseline comparison
             const normalize = (t: string | null) => (t || '').replace(/[\s\r\n]+/g, ' ').trim();
+
+            // Baseline suppression: do not emit progress for pre-existing text.
+            const isBaseline = currentText !== null && this.baselineText !== null && normalize(currentText) === normalize(this.baselineText);
+            
+            // If the text perfectly matches the baseline, and we haven't emitted anything new yet, it's an echo.
+            const effectiveText = (isBaseline && this.lastText === null) ? null : currentText;
 
             // 4. Process log extraction — always when structured didn't handle it
             if (!structuredHandledLogs) {
@@ -1308,28 +1292,7 @@ export class ResponseMonitor {
                 }
             }
 
-            // Check if structured text and legacy text are looking at the same node
-            let applyLegacySuppression = false;
-            if (currentText === null || legacyText === null) {
-                applyLegacySuppression = true;
-            } else {
-                applyLegacySuppression = normalize(currentText) === normalize(legacyText);
-            }
 
-            // Baseline suppression: do not emit progress for pre-existing text.
-            const isBaseline = currentText !== null && this.baselineText !== null && normalize(currentText) === normalize(this.baselineText);
-            
-            let isOldNode = false;
-            let isBlacklisted = false;
-            
-            if (applyLegacySuppression) {
-                isOldNode = currentIndex >= 0 && currentIndex < this.baselineCount;
-                isBlacklisted = currentFingerprint !== null && this.baselineFingerprints.has(currentFingerprint);
-            }
-
-            const countHasIncreased = currentCount > this.baselineCount;
-            
-            const effectiveText = (isOldNode || isBlacklisted || (isBaseline && this.lastText === null && !countHasIncreased)) ? null : currentText;
 
             // Text change handling
             const textChanged = effectiveText !== null && effectiveText !== this.lastText;
