@@ -1278,11 +1278,25 @@ export class ResponseMonitor {
                 }
             }
 
+            // Check if structured text and legacy text are looking at the same node
+            let applyLegacySuppression = false;
+            if (currentText === null || legacyText === null) {
+                applyLegacySuppression = true;
+            } else {
+                applyLegacySuppression = normalize(currentText) === normalize(legacyText);
+            }
+
             // Baseline suppression: do not emit progress for pre-existing text.
-            // We use normalized comparison, index tracking, and fingerprint blacklisting.
             const isBaseline = currentText !== null && this.baselineText !== null && normalize(currentText) === normalize(this.baselineText);
-            const isOldNode = currentIndex >= 0 && currentIndex < this.baselineCount;
-            const isBlacklisted = currentFingerprint !== null && this.baselineFingerprints.has(currentFingerprint);
+            
+            let isOldNode = false;
+            let isBlacklisted = false;
+            
+            if (applyLegacySuppression) {
+                isOldNode = currentIndex >= 0 && currentIndex < this.baselineCount;
+                isBlacklisted = currentFingerprint !== null && this.baselineFingerprints.has(currentFingerprint);
+            }
+
             const countHasIncreased = currentCount > this.baselineCount;
             
             const effectiveText = (isOldNode || isBlacklisted || (isBaseline && this.lastText === null && !countHasIncreased)) ? null : currentText;
