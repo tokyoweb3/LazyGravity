@@ -1,7 +1,7 @@
 import * as path from 'path';
 import { CdpBridge, ensureUserMessageDetector, getCurrentChatTitle } from '../services/cdpBridgeManager';
 import { CdpService } from '../services/cdpService';
-import { ResponseMonitor } from '../services/responseMonitor';
+import { ResponseMonitor, captureResponseMonitorBaseline } from '../services/responseMonitor';
 import type { ChatSessionService } from '../services/chatSessionService';
 import type { PlatformMessage, PlatformSelectInteraction, MessagePayload } from '../platform/types';
 import type { TelegramBindingRepository } from '../database/telegramBindingRepository';
@@ -226,7 +226,6 @@ export async function routeMirroredMessage(
     let baselineProcessLogKeys: string[] = [];
 
     try {
-        const { captureResponseMonitorBaseline } = require('../services/responseMonitor');
         const baseline = await captureResponseMonitorBaseline(cdp);
         baselineText = baseline.text;
         baselineCount = baseline.count;
