@@ -69,6 +69,9 @@ export function artifactTypeLabel(type: ArtifactType): string {
 // ArtifactService
 // ---------------------------------------------------------------------------
 
+/** Common words to ignore when scoring fuzzy title matches */
+const COMMON_WORDS = new Set(['the', 'and', 'for', 'with', 'from', 'this', 'that']);
+
 export class ArtifactService {
     private readonly brainBasePath: string;
 
@@ -189,8 +192,17 @@ export class ArtifactService {
         let bestId: string | null = null;
         let bestScore = 0;
 
-        const commonWords = new Set(['the', 'and', 'for', 'with', 'from', 'this', 'that', 'fixing', 'adding', 'updating', 'project']);
-        const cleanNeedleWords = needle.replace(/[^a-z0-9]/g, ' ').split(/\s+/).filter(w => w.length > 2 && !commonWords.has(w));
+        // Unicode-aware split to support CJK. Preserve CJK characters (len 1) but filter short Latin words.
+        const cleanNeedleWords = needle
+            .replace(/[^\p{L}\p{N}]+/gu, ' ')
+            .split(/\s+/)
+            .filter(w => {
+                if (COMMON_WORDS.has(w)) return false;
+                // Allow CJK characters (Scripts: Han, Hiragana, Katakana, Hangul) even if length 1.
+                const isCJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(w);
+                return isCJK || w.length > 2;
+            });
+            
         const uniqueNeedleWords = Array.from(new Set(cleanNeedleWords));
         
         // Require a stronger minimum score of 2 to prevent weak one-word matches.
@@ -218,7 +230,8 @@ export class ArtifactService {
                         return id; // Exact match takes precedence
                     }
 
-                    const headerTokens = new Set(header.replace(/[^a-z0-9]/g, ' ').split(/\s+/));
+                    // Use same Unicode-aware split for header tokens
+                    const headerTokens = new Set(header.replace(/[^\p{L}\p{N}]+/gu, ' ').split(/\s+/));
                     
                     let score = 0;
                     for (const word of uniqueNeedleWords) {
