@@ -69,6 +69,9 @@ export function artifactTypeLabel(type: ArtifactType): string {
 // ArtifactService
 // ---------------------------------------------------------------------------
 
+/** Common words to ignore when scoring fuzzy title matches */
+const COMMON_WORDS = new Set(['the', 'and', 'for', 'with', 'from', 'this', 'that']);
+
 export class ArtifactService {
     private readonly brainBasePath: string;
 
@@ -165,6 +168,7 @@ export class ArtifactService {
 
     /**
      * Try to find a conversation UUID whose overview.txt contains the given session title.
+     * Uses an exact match first, falling back to keyword overlap scoring.
      * Returns the UUID or null if not found.
      */
     findConversationByTitle(title: string): string | null {
@@ -185,6 +189,25 @@ export class ArtifactService {
             .sort((a, b) => b.mtime - a.mtime)
             .map(x => x.id);
 
+        let bestId: string | null = null;
+        let bestScore = 0;
+
+        // Unicode-aware split to support CJK. Preserve CJK characters (len 1) but filter short Latin words.
+        const cleanNeedleWords = needle
+            .replace(/[^\p{L}\p{N}]+/gu, ' ')
+            .split(/\s+/)
+            .filter(w => {
+                if (COMMON_WORDS.has(w)) return false;
+                // Allow CJK characters (Scripts: Han, Hiragana, Katakana, Hangul) even if length 1.
+                const isCJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(w);
+                return isCJK || w.length > 2;
+            });
+            
+        const uniqueNeedleWords = Array.from(new Set(cleanNeedleWords));
+        
+        // Require a stronger minimum score of 2 to prevent weak one-word matches.
+        const minScore = 2;
+
         for (const id of sortedIds) {
             const overviewPath = path.join(
                 this.brainBasePath,
@@ -202,8 +225,21 @@ export class ArtifactService {
                     const buf = Buffer.alloc(4096);
                     const bytesRead = fs.readSync(fd, buf, 0, buf.length, 0);
                     const header = buf.slice(0, bytesRead).toString('utf-8').toLowerCase();
+                    
                     if (header.includes(needle)) {
-                        return id;
+                        return id; // Exact match takes precedence
+                    }
+
+                    // Use same Unicode-aware split for header tokens
+                    const headerTokens = new Set(header.replace(/[^\p{L}\p{N}]+/gu, ' ').split(/\s+/));
+                    
+                    let score = 0;
+                    for (const word of uniqueNeedleWords) {
+                        if (headerTokens.has(word)) score++;
+                    }
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestId = id;
                     }
                 } finally {
                     if (fd !== null) fs.closeSync(fd);
@@ -212,6 +248,11 @@ export class ArtifactService {
                 // Skip unreadable files
             }
         }
+
+        if (bestScore >= minScore) {
+            return bestId;
+        }
+
         return null;
     }
 

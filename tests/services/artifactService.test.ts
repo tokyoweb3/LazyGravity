@@ -88,4 +88,57 @@ describe('ArtifactService', () => {
             expect(artifacts).toEqual([]);
         });
     });
+    describe('findConversationByTitle', () => {
+        const conversationId = '00000000-0000-0000-0000-000000000001';
+        let convDir: string;
+        let logDir: string;
+
+        beforeEach(() => {
+            convDir = path.join(tmpBrainPath, conversationId);
+            logDir = path.join(convDir, '.system_generated', 'logs');
+            fs.mkdirSync(logDir, { recursive: true });
+        });
+
+        it('should find by exact match', () => {
+            fs.writeFileSync(path.join(logDir, 'overview.txt'), 'Session Title: Fix Deployment Bug');
+            const found = artifactService.findConversationByTitle('Fix Deployment Bug');
+            expect(found).toBe(conversationId);
+        });
+
+        it('should find by fuzzy match with high score', () => {
+            fs.writeFileSync(path.join(logDir, 'overview.txt'), 'Context: fixing memory leak in production');
+            // "memory" and "leak" are meaningful (score 2). "fixing" is no longer a stopword.
+            const found = artifactService.findConversationByTitle('Memory Leak Issue');
+            expect(found).toBe(conversationId);
+        });
+
+        it('should reject fuzzy match with low score (minScore=2)', () => {
+            fs.writeFileSync(path.join(logDir, 'overview.txt'), 'Context: fix production bug');
+            // only "production" matches. score 1 < minScore 2.
+            const found = artifactService.findConversationByTitle('Production Release');
+            expect(found).toBeNull();
+        });
+
+        it('should ignore common stopwords in fuzzy match', () => {
+            fs.writeFileSync(path.join(logDir, 'overview.txt'), 'Context: the production for this that');
+            // "the", "for", "this", "that" are stopwords. "production" matches but score is 1.
+            const found = artifactService.findConversationByTitle('The Production System');
+            expect(found).toBeNull();
+        });
+
+        it('should support CJK characters in fuzzy match', () => {
+            fs.writeFileSync(path.join(logDir, 'overview.txt'), 'Session: ログイン機能の修正 (Login fix)');
+            // "ログイン" (login), "機能" (function), "修正" (fix). 
+            // Matching "ログイン" and "機能" should score 2.
+            const found = artifactService.findConversationByTitle('ログイン機能');
+            expect(found).toBe(conversationId);
+        });
+        
+        it('should support Chinese characters', () => {
+            fs.writeFileSync(path.join(logDir, 'overview.txt'), 'Session: 修复部署错误');
+            // "修复" (fix), "部署" (deploy), "错误" (error).
+            const found = artifactService.findConversationByTitle('修复部署');
+            expect(found).toBe(conversationId);
+        });
+    });
 });
