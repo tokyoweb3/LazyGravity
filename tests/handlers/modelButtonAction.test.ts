@@ -31,7 +31,11 @@ function createMockInteraction(customId: string) {
 }
 
 describe('createModelButtonAction', () => {
-    const bridge = { lastActiveWorkspace: null, pool: { getConnected: jest.fn().mockReturnValue(null) } } as any;
+    const bridge = { 
+        lastActiveWorkspace: null, 
+        pool: { getConnected: jest.fn().mockReturnValue(null) },
+        cdpHost: '127.0.0.1' 
+    } as any;
     const fetchQuota = jest.fn().mockResolvedValue([]);
 
     it('matches model_btn_<name> customId', () => {

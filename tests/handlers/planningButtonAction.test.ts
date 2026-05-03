@@ -59,6 +59,7 @@ function makeBridge(overrides: Partial<CdpBridge> = {}): CdpBridge {
         lastActiveChannel: null,
         approvalChannelByWorkspace: new Map(),
         approvalChannelBySession: new Map(),
+        cdpHost: 'localhost',
         ...overrides,
     };
 }

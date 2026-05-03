@@ -98,6 +98,7 @@ function createMockBridge(overrides: Record<string, unknown> = {}) {
         lastActiveChannel: null,
         approvalChannelByWorkspace: new Map(),
         approvalChannelBySession: new Map(),
+        cdpHost: '127.0.0.1',
         autoAccept: {
             isEnabled: jest.fn().mockReturnValue(false),
             handle: jest.fn().mockReturnValue({

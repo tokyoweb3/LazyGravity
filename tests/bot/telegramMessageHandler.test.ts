@@ -109,6 +109,7 @@ function createMockPool(cdp = createMockCdp()) {
         getOrConnect: jest.fn().mockResolvedValue(cdp),
         extractProjectName: jest.fn().mockReturnValue('test-project'),
         getActiveWorkspaceNames: jest.fn().mockReturnValue([]),
+        getUserMessageDetectorsForProject: jest.fn().mockReturnValue([]),
     };
 }
 
@@ -120,6 +121,7 @@ function createBridge(pool = createMockPool()) {
         approvalChannelByWorkspace: new Map(),
         approvalChannelBySession: new Map(),
         autoAccept: { isEnabled: () => false },
+        cdpHost: '127.0.0.1',
     } as any;
 }
 

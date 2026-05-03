@@ -1,7 +1,7 @@
 import * as path from 'path';
 import { CdpBridge, ensureUserMessageDetector, getCurrentChatTitle } from '../services/cdpBridgeManager';
 import { CdpService } from '../services/cdpService';
-import { ResponseMonitor, captureResponseMonitorBaseline } from '../services/responseMonitor';
+import { ResponseMonitor } from '../services/responseMonitor';
 import type { ChatSessionService } from '../services/chatSessionService';
 import type { PlatformMessage, PlatformSelectInteraction, MessagePayload } from '../platform/types';
 import type { TelegramBindingRepository } from '../database/telegramBindingRepository';
@@ -216,6 +216,13 @@ export async function routeMirroredMessage(
     info: { text: string },
     channel: any
 ): Promise<void> {
+    // Broadcast the hash to all other detectors for this project to prevent echoes
+    const projectName = deps.bridge.pool.extractProjectName(workspacePath);
+    const detectors = deps.bridge.pool.getUserMessageDetectorsForProject(projectName);
+    for (const d of detectors) {
+        d.addEchoHash(info.text);
+    }
+
     const chatTitle = await getCurrentChatTitle(cdp);
     
     // Capture the baseline BEFORE sending the user message notification,
@@ -226,6 +233,7 @@ export async function routeMirroredMessage(
     let baselineProcessLogKeys: string[] = [];
 
     try {
+        const { captureResponseMonitorBaseline } = require('../services/responseMonitor');
         const baseline = await captureResponseMonitorBaseline(cdp);
         baselineText = baseline.text;
         baselineCount = baseline.count;

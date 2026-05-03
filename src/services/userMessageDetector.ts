@@ -37,48 +37,30 @@ const DETECT_USER_MESSAGE_SCRIPT = `(() => {
     const panel = document.querySelector('.antigravity-agent-side-panel');
     const scope = panel || document;
 
-    // Strategy A (primary): Query .bg-input bubbles. 
-    // User bubbles usually have p-2 while the input box has p-1.
     const bubbles = Array.from(scope.querySelectorAll('.bg-input.p-2'));
     const userBubbles = bubbles.filter(el => {
-        const text = (el.textContent || '').toLowerCase();
-        // User bubbles usually have "undo" button. 
-        // We check common translations and the presence of the whitespace-pre-wrap container.
-        const hasUndo = text.includes('undo') || text.includes('撤銷') || text.includes('撤销') || text.includes('元に戻す');
-        return hasUndo || el.querySelector('.whitespace-pre-wrap');
+        if (el.closest('.text-ide-message-block-bot-color')) return false;
+        if (el.closest('.rendered-markdown, .prose')) return false;
+        if (el.closest('[data-message-author-role="assistant"], [data-message-role="assistant"]')) return false;
+        return !!el.querySelector('.whitespace-pre-wrap');
     });
 
     if (userBubbles.length > 0) {
         const lastBubble = userBubbles[userBubbles.length - 1];
-        const clone = lastBubble.cloneNode(true);
-        const buttons = clone.querySelectorAll('button, [role="button"]');
-        for (let i = 0; i < buttons.length; i++) {
-            const btnText = (buttons[i].textContent || '').toLowerCase();
-            if (btnText.includes('undo') || btnText.includes('撤銷') || btnText.includes('撤销') || btnText.includes('元に戻す')) {
-                buttons[i].parentNode.removeChild(buttons[i]);
-            }
-        }
-        const textEl = clone.querySelector('.whitespace-pre-wrap') || clone;
-        let text = (textEl.textContent || '').trim();
-        // Fallback regex to strip trailing Undo text in case DOM removal missed it
-        text = text.replace(/\s*(?:Undo|撤銷|撤销|元に戻す)\s*$/i, '').trim();
-        if (text.length > 0) return { text };
-    }
-
-    // Strategy B (fallback): Direct whitespace-pre-wrap lookup
-    const textEls = Array.from(scope.querySelectorAll('.whitespace-pre-wrap'));
-    if (textEls.length > 0) {
-        for (let i = textEls.length - 1; i >= 0; i--) {
-            const el = textEls[i];
-            const parent = el.closest('.bg-input');
-            if (parent) {
-                let text = (el.textContent || '').trim();
-                text = text.replace(/\s*(?:Undo|撤銷|撤销|元に戻す)\s*$/i, '').trim();
-                if (text.length > 0) return { text };
-            }
+        // Surgical extraction: only the content of the message div
+        const textEl = lastBubble.querySelector('.whitespace-pre-wrap');
+        if (textEl) {
+            // Clone to strip buttons without affecting the real UI
+            const clone = textEl.cloneNode(true);
+            const buttons = clone.querySelectorAll('button, [role="button"]');
+            buttons.forEach(b => b.remove());
+            
+            let text = (clone.textContent || '').trim();
+            // Final safety strip
+            text = text.replace(/\\s*(?:Undo|撤銷|撤销|元に戻す)\\s*$/i, '').trim();
+            if (text.length > 0) return { text };
         }
     }
-
     return null;
 })()`;
 
@@ -114,6 +96,8 @@ export class UserMessageDetector extends EventEmitter {
     /** Set of all previously detected message hashes (defense-in-depth dedup) */
     private readonly seenHashes = new Set<string>();
     private static readonly MAX_SEEN_HASHES = 50;
+    /** The actual text of the last emitted message (extra safety dedup) */
+    private lastSentText: string | null = null;
     /** True during the first poll — seeds existing DOM state without firing callback */
     private isPriming: boolean = false;
 
@@ -136,11 +120,11 @@ export class UserMessageDetector extends EventEmitter {
         }, 60000);
     }
 
-    /** Start monitoring. The first poll seeds the current DOM state without firing the callback. */
     start(): void {
         if (this.isRunning) return;
         this.isRunning = true;
         this.lastDetectedHash = null;
+        this.lastSentText = null;
         this.seenHashes.clear();
         this.isPriming = true;
         // echoHashes are intentionally NOT cleared — they have their own 60s TTL
@@ -244,7 +228,14 @@ export class UserMessageDetector extends EventEmitter {
                     return;
                 }
 
+                if (info.text === this.lastSentText) {
+                    logger.debug(`[UserMessageDetector] lastSentText match, skipping: "${preview}..."`);
+                    this.lastDetectedHash = hash;
+                    return;
+                }
+
                 this.lastDetectedHash = hash;
+                this.lastSentText = info.text;
                 this.addToSeenHashes(hash);
                 logger.debug(`[UserMessageDetector] New message detected: "${preview}..."`);
                 this.emit('message', info);

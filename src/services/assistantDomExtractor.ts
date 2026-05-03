@@ -49,6 +49,8 @@ export interface ClassifyResult {
     diagnostics: {
         source: 'dom-structured' | 'legacy-fallback';
         segmentCounts: Record<string, number>;
+        allFingerprints: string[];
+        totalSegments: number;
         fallbackReason?: string;
     };
 }
@@ -72,6 +74,8 @@ export function classifyAssistantSegments(payload: unknown): ClassifyResult {
             diagnostics: {
                 source: 'legacy-fallback',
                 segmentCounts: {},
+                allFingerprints: [],
+                totalSegments: 0,
                 fallbackReason: 'invalid-payload',
             },
         };
@@ -84,6 +88,7 @@ export function classifyAssistantSegments(payload: unknown): ClassifyResult {
     const activityLines: string[] = [];
     const feedbackTexts: string[] = [];
     const segmentCounts: Record<string, number> = {};
+    const allFingerprints: string[] = [];
 
     for (const seg of segments) {
         segmentCounts[seg.kind] = (segmentCounts[seg.kind] ?? 0) + 1;
@@ -92,6 +97,8 @@ export function classifyAssistantSegments(payload: unknown): ClassifyResult {
             case 'assistant-body':
                 if (seg.text && seg.text.trim()) {
                     bodyTexts.push(seg.text);
+                    const fp = seg.text.length + ':' + seg.text.slice(0, 50) + ':' + seg.text.slice(-50);
+                    allFingerprints.push(fp);
                 }
                 break;
             case 'thinking':
@@ -109,9 +116,10 @@ export function classifyAssistantSegments(payload: unknown): ClassifyResult {
         }
     }
 
-    // Join body segments and apply HTML-to-Markdown conversion
-    const rawBody = bodyTexts.join('\n\n');
-    const finalOutputText = htmlToDiscordMarkdown(rawBody);
+    // The CDP script traverses DOM backwards, so bodyTexts[0] is the NEWEST segment.
+    // We want the newest body for progress tracking.
+    const lastBody = bodyTexts[0] || '';
+    const finalOutputText = htmlToDiscordMarkdown(lastBody);
 
     return {
         finalOutputText,
@@ -120,6 +128,8 @@ export function classifyAssistantSegments(payload: unknown): ClassifyResult {
         diagnostics: {
             source: 'dom-structured',
             segmentCounts,
+            allFingerprints,
+            totalSegments: segments.length,
         },
     };
 }
@@ -153,7 +163,6 @@ export function extractAssistantSegmentsPayloadScript(): string {
         '.text-ide-message-block-bot-color',
         '.rendered-markdown',
         '.leading-relaxed.select-text',
-        '.flex.flex-col.gap-y-3',
         '[data-message-author-role="assistant"]',
         '[data-message-role="assistant"]',
         '[class*="assistant-message"]',
@@ -190,6 +199,7 @@ export function extractAssistantSegmentsPayloadScript(): string {
         if (node.closest('.notify-user-container')) return true;
         if (node.closest('[role="dialog"]')) return true;
         if (node.closest('form')) return true;
+        if (node.closest('[data-message-author-role="user"], [data-message-role="user"]')) return true;
         if (node.querySelector('textarea') || node.closest('textarea')) return true;
         var text = (node.innerText || '').toLowerCase();
         if (text.includes('ask anything, @ to mention')) return true;
@@ -276,11 +286,40 @@ export function extractAssistantSegmentsPayloadScript(): string {
                 kind: 'assistant-body',
                 text: bodyHtml,
                 role: 'assistant',
-                messageIndex: 0,
-                domPath: 'multi-selector'
+                domPath: ''
             });
             bodyFound = true;
-            break; // Only take the last (most recent) output node
+        }
+    }
+
+    // Pass 3: Thinking logs and tool calls
+    var thinkingNodes = scope.querySelectorAll('[class*="thinking"], [class*="thought"]');
+    for (var j = 0; j < thinkingNodes.length; j++) {
+        var tnode = thinkingNodes[j];
+        if (isInsideExcludedContainer(tnode)) continue;
+        var ttext = (tnode.innerText || tnode.textContent || '').trim();
+        if (ttext) {
+            segments.push({
+                kind: 'thinking',
+                text: ttext,
+                role: 'assistant',
+                domPath: ''
+            });
+        }
+    }
+
+    var toolNodes = scope.querySelectorAll('[class*="tool-interaction"], [class*="call-summary"]');
+    for (var k = 0; k < toolNodes.length; k++) {
+        var knode = toolNodes[k];
+        if (isInsideExcludedContainer(knode)) continue;
+        var ktext = (knode.innerText || knode.textContent || '').trim();
+        if (ktext) {
+            segments.push({
+                kind: 'tool-call',
+                text: ktext,
+                role: 'assistant',
+                domPath: ''
+            });
         }
     }
 
