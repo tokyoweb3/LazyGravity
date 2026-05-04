@@ -35,7 +35,11 @@ function createMockInteraction(customId: string) {
 }
 
 describe('createTemplateButtonAction', () => {
-    const bridge = { lastActiveWorkspace: null, pool: { getConnected: jest.fn().mockReturnValue(null) } } as any;
+    const bridge = { 
+        lastActiveWorkspace: null, 
+        pool: { getConnected: jest.fn().mockReturnValue(null) },
+        cdpHost: '127.0.0.1' 
+    } as any;
     const templateRepo = {
         findById: jest.fn(),
         findAll: jest.fn().mockReturnValue([]),

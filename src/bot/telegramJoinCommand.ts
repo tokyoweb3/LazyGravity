@@ -1,3 +1,4 @@
+import * as path from 'path';
 import { CdpBridge, ensureUserMessageDetector, getCurrentChatTitle } from '../services/cdpBridgeManager';
 import { CdpService } from '../services/cdpService';
 import { ResponseMonitor } from '../services/responseMonitor';
@@ -13,6 +14,7 @@ import { resolveScopedAccountName } from '../utils/accountUtils';
 import type { AccountPreferenceRepository } from '../database/accountPreferenceRepository';
 import type { ChannelPreferenceRepository } from '../database/channelPreferenceRepository';
 import type { AntigravityAccountConfig } from '../utils/configLoader';
+import { MirrorPersistenceService, MirrorState } from '../services/mirrorPersistenceService';
 
 export interface TelegramJoinCommandDeps {
     readonly bridge: CdpBridge;
@@ -27,6 +29,24 @@ export interface TelegramJoinCommandDeps {
 }
 
 const activeResponseMonitors = new Map<string, ResponseMonitor>();
+
+// Centralized state for mirroring persistence
+let persistenceService: MirrorPersistenceService | null = null;
+const activeMirrors = new Map<string, MirrorState>();
+
+function buildMonitorKey(channelId: string, workspacePath: string): string {
+    return `${channelId}::${workspacePath}`;
+}
+
+export function initMirrorPersistence(projectRoot: string): void {
+    persistenceService = new MirrorPersistenceService(projectRoot);
+}
+
+function updatePersistence(): void {
+    if (persistenceService) {
+        persistenceService.save(Array.from(activeMirrors.values()));
+    }
+}
 
 function resolveAccount(deps: TelegramJoinCommandDeps, chatId: string, userId: string): string {
     return resolveScopedAccountName({
@@ -136,20 +156,29 @@ export async function handleMirror(deps: TelegramJoinCommandDeps, message: Platf
         ? deps.workspaceService.getWorkspacePath(binding.workspacePath)
         : binding.workspacePath;
 
+    const monitorKey = buildMonitorKey(message.channel.id, resolvedWorkspacePath);
+    const mirrorEntry = activeMirrors.get(monitorKey);
     const projectName = deps.bridge.pool.extractProjectName(resolvedWorkspacePath);
-    const account = resolveAccount(deps, message.channel.id, message.author.id);
-    const detector = deps.bridge.pool.getUserMessageDetector(projectName, account);
 
-    if (detector?.isActive()) {
-        detector.stop();
-        const responseMonitor = activeResponseMonitors.get(resolvedWorkspacePath);
+    if (mirrorEntry) {
+        const activeAccount = mirrorEntry.accountName ?? undefined;
+        const detector = deps.bridge.pool.getUserMessageDetector(projectName, activeAccount);
+        if (detector?.isActive()) {
+            detector.stop();
+        }
+        const responseMonitor = activeResponseMonitors.get(monitorKey);
         if (responseMonitor?.isActive()) {
             await responseMonitor.stop();
-            activeResponseMonitors.delete(resolvedWorkspacePath);
         }
+        if (activeResponseMonitors.get(monitorKey) === responseMonitor) {
+            activeResponseMonitors.delete(monitorKey);
+        }
+        activeMirrors.delete(monitorKey);
+        updatePersistence();
 
         await message.reply({ text: '📡 Mirroring OFF\nPC-to-Telegram message mirroring has been stopped.' }).catch(logger.error);
     } else {
+        const account = resolveAccount(deps, message.channel.id, message.author.id);
         let cdp: CdpService;
         try {
             cdp = await deps.bridge.pool.getOrConnect(resolvedWorkspacePath, { name: account });
@@ -169,34 +198,71 @@ export async function handleMirror(deps: TelegramJoinCommandDeps, message: Platf
             });
         }, account);
 
+        activeMirrors.set(monitorKey, {
+            channelId: message.channel.id,
+            workspacePath: resolvedWorkspacePath,
+            accountName: account
+        });
+        updatePersistence();
+
         await message.reply({ text: '📡 Mirroring ON\nMessages typed in Antigravity on your PC will now appear here.' }).catch(logger.error);
     }
 }
 
-async function routeMirroredMessage(
+export async function routeMirroredMessage(
     deps: TelegramJoinCommandDeps,
     cdp: CdpService,
     workspacePath: string,
     info: { text: string },
     channel: any
 ): Promise<void> {
+    // Broadcast the hash to all other detectors for this project to prevent echoes
+    const projectName = deps.bridge.pool.extractProjectName(workspacePath);
+    const detectors = deps.bridge.pool.getUserMessageDetectorsForProject(projectName);
+    for (const d of detectors) {
+        d.addEchoHash(info.text);
+    }
+
     const chatTitle = await getCurrentChatTitle(cdp);
+    
+    // Capture the baseline BEFORE sending the user message notification,
+    // so that the passive monitor knows which assistant messages are old.
+    let baselineText: string | null = null;
+    let baselineCount = 0;
+    let baselineFingerprints: string[] = [];
+    let baselineProcessLogKeys: string[] = [];
+
+    try {
+        const { captureResponseMonitorBaseline } = require('../services/responseMonitor');
+        const baseline = await captureResponseMonitorBaseline(cdp);
+        baselineText = baseline.text;
+        baselineCount = baseline.count;
+        baselineFingerprints = baseline.fingerprints;
+        baselineProcessLogKeys = baseline.processLogKeys;
+    } catch (err) {
+        logger.error('[TelegramMirror] Error capturing passive baseline:', err);
+    }
     
     await channel.send({
         text: `🖥️ <b>User typed in Antigravity:</b>\n<pre>${escapeHtml(info.text)}</pre>\n<i>Session: ${escapeHtml(chatTitle || 'Unknown')}</i>`
     }).catch((err: any) => logger.error('[TelegramMirror] Failed to send user message:', err));
 
-    startResponseMirror(deps, cdp, workspacePath, channel, chatTitle || 'Unknown');
+    startResponseMirror(deps, cdp, workspacePath, channel, chatTitle || 'Unknown', baselineText, baselineCount, baselineFingerprints, baselineProcessLogKeys);
 }
 
-function startResponseMirror(
+export function startResponseMirror(
     deps: TelegramJoinCommandDeps,
     cdp: CdpService,
     workspacePath: string,
     channel: any,
-    chatTitle: string
+    chatTitle: string,
+    baselineText?: string | null,
+    baselineCount?: number,
+    baselineFingerprints?: string[],
+    baselineProcessLogKeys?: string[]
 ): void {
-    const prev = activeResponseMonitors.get(workspacePath);
+    const monitorKey = buildMonitorKey(channel.id, workspacePath);
+    const prev = activeResponseMonitors.get(monitorKey);
     if (prev?.isActive()) {
         prev.stop().catch(() => {});
     }
@@ -206,8 +272,12 @@ function startResponseMirror(
         pollIntervalMs: 2000,
         maxDurationMs: 300000,
         extractionMode: deps.extractionMode,
+        initialBaselineText: baselineText,
+        initialBaselineCount: baselineCount,
+        initialBaselineFingerprints: baselineFingerprints,
+        initialSeenProcessLogKeys: baselineProcessLogKeys,
         onComplete: (finalText: string) => {
-            activeResponseMonitors.delete(workspacePath);
+            if (activeResponseMonitors.get(monitorKey) === monitor) activeResponseMonitors.delete(monitorKey);
             if (!finalText || finalText.trim().length === 0) return;
 
             const maxLen = 3000;
@@ -220,13 +290,53 @@ function startResponseMirror(
             }).catch((err: any) => logger.error('[TelegramMirror] Failed to send AI response:', err));
         },
         onTimeout: () => {
-            activeResponseMonitors.delete(workspacePath);
+            if (activeResponseMonitors.get(monitorKey) === monitor) activeResponseMonitors.delete(monitorKey);
         },
     });
 
-    activeResponseMonitors.set(workspacePath, monitor);
+    activeResponseMonitors.set(monitorKey, monitor);
     monitor.startPassive().catch((err) => {
         logger.error('[TelegramMirror] Failed to start response monitor:', err);
-        activeResponseMonitors.delete(workspacePath);
+        if (activeResponseMonitors.get(monitorKey) === monitor) activeResponseMonitors.delete(monitorKey);
     });
 }
+
+/**
+ * Restore active mirrors from persistent storage on startup.
+ */
+export async function restoreMirrors(deps: TelegramJoinCommandDeps): Promise<void> {
+    if (!persistenceService) return;
+    if (!deps.botApi) {
+        logger.warn('[MirrorPersistence] botApi is unavailable; skipping mirror restoration.');
+        return;
+    }
+    
+    const states = persistenceService.load();
+    if (states.length === 0) return;
+
+    logger.info(`[MirrorPersistence] Restoring ${states.length} active mirrors...`);
+
+    for (const state of states) {
+        try {
+            const projectName = path.basename(state.workspacePath);
+            const account = state.accountName || resolveAccount(deps, state.channelId, 'system');
+            
+            const cdp = await deps.bridge.pool.getOrConnect(state.workspacePath, { name: account });
+            const channel = { id: state.channelId, send: (m: any) => deps.botApi.sendMessage(state.channelId, m.text, { parse_mode: 'HTML' }) };
+
+            ensureUserMessageDetector(deps.bridge, cdp, projectName, (info) => {
+                routeMirroredMessage(deps, cdp, state.workspacePath, info, channel).catch((err) => {
+                    logger.error('[TelegramMirror] Error routing restored mirrored message:', err);
+                });
+            }, account);
+
+            const monitorKey = buildMonitorKey(state.channelId, state.workspacePath);
+            activeMirrors.set(monitorKey, state);
+            
+            logger.debug(`[MirrorPersistence] Restored mirror for ${projectName} in channel ${state.channelId}`);
+        } catch (error) {
+            logger.warn(`[MirrorPersistence] Failed to restore mirror for ${state.workspacePath}:`, error);
+        }
+    }
+}
+

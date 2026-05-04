@@ -12,7 +12,7 @@
 import type { PlatformMessage, PlatformChannel, PlatformSentMessage } from '../platform/types';
 import type { TelegramBindingRepository } from '../database/telegramBindingRepository';
 import type { WorkspaceService } from '../services/workspaceService';
-import { CdpBridge, registerApprovalWorkspaceChannel, ensureApprovalDetector, ensureErrorPopupDetector, ensurePlanningDetector, ensureRunCommandDetector } from '../services/cdpBridgeManager';
+import { CdpBridge, registerApprovalWorkspaceChannel, ensureApprovalDetector, ensureErrorPopupDetector, ensurePlanningDetector, ensureRunCommandDetector, ensureUserMessageDetector } from '../services/cdpBridgeManager';
 import { CdpService } from '../services/cdpService';
 import { ResponseMonitor, captureResponseMonitorBaseline } from '../services/responseMonitor';
 import { ProcessLogBuffer } from '../utils/processLogBuffer';
@@ -31,30 +31,48 @@ import type { ExtractionMode } from '../utils/config';
 import type { ChatSessionService } from '../services/chatSessionService';
 import type { AccountPreferenceRepository } from '../database/accountPreferenceRepository';
 import type { ChannelPreferenceRepository } from '../database/channelPreferenceRepository';
+import { routeMirroredMessage } from './telegramJoinCommand';
 import type { AntigravityAccountConfig } from '../utils/configLoader';
 import { resolveScopedAccountName } from '../utils/accountUtils';
 
+/**
+ * Dependencies required by the Telegram message handler.
+ */
 export interface TelegramMessageHandlerDeps {
+    /** Bridge to manage CDP connections and detectors */
     readonly bridge: CdpBridge;
+    /** Repository for Telegram-to-workspace bindings */
     readonly telegramBindingRepo: TelegramBindingRepository;
+    /** Service for resolving workspace paths */
     readonly workspaceService?: WorkspaceService;
+    /** Service for managing UI modes (Planning, Fast, etc.) */
     readonly modeService?: ModeService;
+    /** Service for managing model preferences */
     readonly modelService?: ModelService;
+    /** Content extraction strategy (structured or legacy) */
     readonly extractionMode?: ExtractionMode;
+    /** Repository for message templates */
     readonly templateRepo?: import('../database/templateRepository').TemplateRepository;
+    /** Function to fetch user quota info */
     readonly fetchQuota?: () => Promise<any[]>;
-    /** Shared map of active ResponseMonitors keyed by project name.
-     *  Used by /stop to halt monitoring and prevent stale re-sends. */
+    /** 
+     * Shared map of active ResponseMonitors keyed by project name.
+     * Used by /stop to halt monitoring and prevent stale re-sends.
+     */
     readonly activeMonitors?: Map<string, ResponseMonitor>;
     /** Bot token for downloading Telegram file attachments. */
     readonly botToken?: string;
     /** Bot API object for getFile calls. */
     readonly botApi?: import('../platform/telegram/wrappers').TelegramBotLike['api'];
+    /** Service for managing chat sessions in Antigravity */
     readonly chatSessionService?: ChatSessionService;
     /** Response monitor inactivity timeout in ms. Defaults to ResponseMonitor default (900000). */
     readonly responseTimeoutMs?: number;
+    /** Repository for user-specific account preferences */
     readonly accountPrefRepo?: AccountPreferenceRepository;
+    /** Repository for channel-specific account preferences */
     readonly channelPrefRepo?: ChannelPreferenceRepository;
+    /** Configured Antigravity accounts (CDP ports, etc.) */
     readonly antigravityAccounts?: AntigravityAccountConfig[];
 }
 
@@ -238,6 +256,13 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
             const effectivePrompt = promptText || 'Please review the attached images and respond accordingly.';
             const baseline = await captureResponseMonitorBaseline(cdp);
 
+            // Add to echo hashes to prevent mirroring this message back to Telegram
+            // Broadcast to all detectors for this project to prevent ghosting across different account contexts
+            const detectors = deps.bridge.pool.getUserMessageDetectorsForProject(projectName);
+            for (const detector of detectors) {
+                detector.addEchoHash(effectivePrompt);
+            }
+
             // Inject prompt (with or without images) into Antigravity
             logger.prompt(effectivePrompt);
             let injectResult;
@@ -276,6 +301,9 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
             const processLogBuffer = new ProcessLogBuffer({ maxChars: 3500, maxEntries: 120, maxEntryLength: 220 });
             let lastActivityLogText = '';
             let statusMsg: PlatformSentMessage | null = null;
+            let lastSentProgressText = '';
+            let lastProgressSentTime = 0;
+            let lastProgressText = '';
 
             // Send initial status message
             statusMsg = await channel.send({ text: 'Processing...' }).catch(() => null);
@@ -299,25 +327,45 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
                     stopGoneConfirmCount: 3,
                     extractionMode: deps.extractionMode,
                     initialBaselineText: baseline.text,
+                    initialBaselineCount: baseline.count,
+                    initialBaselineFingerprints: baseline.fingerprints,
                     initialSeenProcessLogKeys: baseline.processLogKeys,
 
                     onProcessLog: (logText) => {
                         if (logText && logText.trim().length > 0) {
                             lastActivityLogText = processLogBuffer.append(logText);
                         }
-                        if (statusMsg && lastActivityLogText) {
+                        if (statusMsg && lastActivityLogText && !lastSentProgressText) {
                             const elapsed = Math.round((Date.now() - startTime) / 1000);
-                            // Escape HTML to prevent Telegram parse_mode errors
-                            // (activity logs may contain <, >, & from code/paths)
                             statusMsg.edit({
                                 text: `${escapeHtml(lastActivityLogText)}\n\n⏱️ ${elapsed}s`,
-                            }).catch(() => {});
+                            }).catch(() => { statusMsg = null; });
+                        }
+                    },
+
+                    onProgress: (text) => {
+                        lastProgressText = text;
+                        if (!text || text === lastSentProgressText) return;
+                        const now = Date.now();
+                        const isSignificant = text.length > lastSentProgressText.length + 150;
+                        const isTimedOut = now - lastProgressSentTime > 7000;
+
+                        if (isSignificant || isTimedOut) {
+                            lastSentProgressText = text;
+                            lastProgressSentTime = now;
+                            const display = text.length > 3500 ? text.slice(-3500) : text;
+                            const caption = `🤖 <b>Antigravity Response (Live):</b>\n${escapeHtml(display)}`;
+                            if (statusMsg) {
+                                statusMsg.edit({ text: caption }).catch(() => { statusMsg = null; });
+                            }
                         }
                     },
 
                     onComplete: async (finalText) => {
                         try {
                             const elapsed = Math.round((Date.now() - startTime) / 1000);
+                            
+                            const finalSource = finalText && finalText.trim().length > 0 ? finalText : lastProgressText;
 
                             // Console log output (mirroring Discord handler pattern)
                             const finalLogText = lastActivityLogText || processLogBuffer.snapshot();
@@ -326,7 +374,7 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
                                 console.info(finalLogText);
                             }
 
-                            const separated = splitOutputAndLogs(finalText || '');
+                            const separated = splitOutputAndLogs(finalSource || '');
                             const finalOutputText = separated.output || finalText || '';
                             if (finalOutputText && finalOutputText.trim().length > 0) {
                                 logger.divider(`Output (${finalOutputText.length} chars)`);
@@ -346,8 +394,8 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
                             // Send the final response
                             if (finalOutputText && finalOutputText.trim().length > 0) {
                                 await sendTextChunked(channel, finalOutputText);
-                            } else if (finalText && finalText.trim().length > 0) {
-                                await sendTextChunked(channel, finalText);
+                            } else if (finalSource && finalSource.trim().length > 0) {
+                                await sendTextChunked(channel, finalSource);
                             } else {
                                 await channel.send({ text: '(Empty response from Antigravity)' }).catch(logger.error);
                             }
@@ -400,7 +448,9 @@ async function sendTextChunked(
     text: string,
 ): Promise<void> {
     const MAX_LENGTH = 4096;
-    let remaining = text;
+    // Escape first, then chunk — escaping can expand characters (e.g. < → &lt;)
+    // so chunking raw text then escaping could exceed Telegram's limit.
+    let remaining = escapeHtml(text);
     while (remaining.length > 0) {
         const chunk = remaining.slice(0, MAX_LENGTH);
         remaining = remaining.slice(MAX_LENGTH);

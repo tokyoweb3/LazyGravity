@@ -2,7 +2,7 @@
 
 Central reference for all CSS selectors and DOM structures used to interact with the Antigravity (Windsurf/Cascade) UI via CDP.
 
-> **Last verified**: 2026-04 (model picker updated for Antigravity v1.107.0+; other selectors verified 2025-02)
+> **Last verified**: 2026-05 (added .text-ide-message-block-bot-color and UI exclusions for Antigravity v0.3.0+; previous update 2026-04)
 
 ---
 
@@ -64,6 +64,7 @@ The assistant's response body, rendered with markdown formatting.
 
 | Score | Selector | Status | File |
 |-------|----------|--------|------|
+| 11 | `.text-ide-message-block-bot-color` | **Verified (v0.3.0+)** | `responseMonitor.ts`, `assistantDomExtractor.ts` |
 | 10 | `.rendered-markdown` | **Verified** | `responseMonitor.ts`, `assistantDomExtractor.ts` |
 | 9 | `.leading-relaxed.select-text` | **Verified** | `responseMonitor.ts`, `planningDetector.ts`, `assistantDomExtractor.ts` |
 | 8 | `.flex.flex-col.gap-y-3` | Unverified — generic | `responseMonitor.ts`, `assistantDomExtractor.ts` |
@@ -74,7 +75,7 @@ The assistant's response body, rendered with markdown formatting.
 | 3 | `[class*="markdown-body"]` | **NOT FOUND** in DOM | `responseMonitor.ts`, `assistantDomExtractor.ts` |
 | 2 | `.prose` | Unverified | `responseMonitor.ts`, `assistantDomExtractor.ts` |
 
-> **Note**: Selectors scored 3-7 appear to be inherited from ChatGPT/generic patterns and do **not** exist in Antigravity's DOM. They are harmless (scored lower, never matched) but add noise. The top selectors (`.rendered-markdown`, `.leading-relaxed.select-text`) are the ones that actually match.
+> **Note**: Selectors scored 3-7 appear to be inherited from ChatGPT/generic patterns and do **not** exist in Antigravity's DOM. They are harmless (scored lower, never matched) but add noise. The top selectors (`.text-ide-message-block-bot-color`, `.rendered-markdown`, `.leading-relaxed.select-text`) are the ones that actually match.
 
 ### Exclusion Containers
 
@@ -86,6 +87,10 @@ Nodes inside these containers are skipped during response extraction:
 | `[class*="feedback"], footer` | Good/Bad feedback buttons |
 | `.notify-user-container` | Planning mode notification |
 | `[role="dialog"]` | Modal dialogs (error popup, etc.) |
+| `form` | Chat input area (to avoid UI leakage) |
+| `textarea` | Chat input field |
+| Text containing `Ask anything...` | Chat input placeholder |
+| Text containing `0 Files With Changes` | Git context panel |
 
 ---
 

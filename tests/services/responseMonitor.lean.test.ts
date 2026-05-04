@@ -72,6 +72,17 @@ describe('Lean ResponseMonitor (new API)', () => {
 
     // Helper: build a CDP result wrapper
     function cdpResult(value: unknown) {
+        if (typeof value === 'string') {
+            return {
+                result: {
+                    value: {
+                        text: value,
+                        count: 1,
+                        fingerprints: [value.length + ':' + value.slice(0, 50) + ':' + value.slice(-50)]
+                    }
+                }
+            };
+        }
         return { result: { value } };
     }
 
@@ -142,7 +153,7 @@ describe('Lean ResponseMonitor (new API)', () => {
         cdpService.call
             .mockResolvedValueOnce(cdpResult({ isGenerating: true }))
             .mockResolvedValueOnce(cdpResult(false))
-            .mockResolvedValueOnce(cdpResult('Hello'));
+            .mockResolvedValueOnce(cdpResult({ text: 'Hello' }));
 
         await jest.advanceTimersByTimeAsync(2000);
 
@@ -168,14 +179,14 @@ describe('Lean ResponseMonitor (new API)', () => {
         cdpService.call
             .mockResolvedValueOnce(cdpResult({ isGenerating: true }))
             .mockResolvedValueOnce(cdpResult(false))
-            .mockResolvedValueOnce(cdpResult('response'));
+            .mockResolvedValueOnce(cdpResult({ text: 'response' }));
         await jest.advanceTimersByTimeAsync(2000);
 
         // Poll 2: stop=false (gone count 1)
         cdpService.call
             .mockResolvedValueOnce(cdpResult({ isGenerating: false }))
             .mockResolvedValueOnce(cdpResult(false))
-            .mockResolvedValueOnce(cdpResult('response'));
+            .mockResolvedValueOnce(cdpResult({ text: 'response' }));
         await jest.advanceTimersByTimeAsync(2000);
         expect(completedText).toBeNull();
 
@@ -183,7 +194,7 @@ describe('Lean ResponseMonitor (new API)', () => {
         cdpService.call
             .mockResolvedValueOnce(cdpResult({ isGenerating: false }))
             .mockResolvedValueOnce(cdpResult(false))
-            .mockResolvedValueOnce(cdpResult('response'));
+            .mockResolvedValueOnce(cdpResult({ text: 'response' }));
         await jest.advanceTimersByTimeAsync(2000);
         expect(completedText).toBeNull();
 
@@ -191,7 +202,7 @@ describe('Lean ResponseMonitor (new API)', () => {
         cdpService.call
             .mockResolvedValueOnce(cdpResult({ isGenerating: false }))
             .mockResolvedValueOnce(cdpResult(false))
-            .mockResolvedValueOnce(cdpResult('response'));
+            .mockResolvedValueOnce(cdpResult({ text: 'response' }));
         await jest.advanceTimersByTimeAsync(2000);
         expect(completedText).toBe('response');
     });
@@ -212,35 +223,35 @@ describe('Lean ResponseMonitor (new API)', () => {
         cdpService.call
             .mockResolvedValueOnce(cdpResult({ isGenerating: true }))
             .mockResolvedValueOnce(cdpResult(false))
-            .mockResolvedValueOnce(cdpResult('resp'));
+            .mockResolvedValueOnce(cdpResult({ text: 'resp' }));
         await jest.advanceTimersByTimeAsync(2000);
 
         // Poll 2: stop=false (gone 1)
         cdpService.call
             .mockResolvedValueOnce(cdpResult({ isGenerating: false }))
             .mockResolvedValueOnce(cdpResult(false))
-            .mockResolvedValueOnce(cdpResult('resp'));
+            .mockResolvedValueOnce(cdpResult({ text: 'resp' }));
         await jest.advanceTimersByTimeAsync(2000);
 
         // Poll 3: stop=false (gone 2)
         cdpService.call
             .mockResolvedValueOnce(cdpResult({ isGenerating: false }))
             .mockResolvedValueOnce(cdpResult(false))
-            .mockResolvedValueOnce(cdpResult('resp'));
+            .mockResolvedValueOnce(cdpResult({ text: 'resp' }));
         await jest.advanceTimersByTimeAsync(2000);
 
         // Poll 4: stop=TRUE again -> resets counter
         cdpService.call
             .mockResolvedValueOnce(cdpResult({ isGenerating: true }))
             .mockResolvedValueOnce(cdpResult(false))
-            .mockResolvedValueOnce(cdpResult('resp'));
+            .mockResolvedValueOnce(cdpResult({ text: 'resp' }));
         await jest.advanceTimersByTimeAsync(2000);
 
         // Poll 5: stop=false (gone 1 again)
         cdpService.call
             .mockResolvedValueOnce(cdpResult({ isGenerating: false }))
             .mockResolvedValueOnce(cdpResult(false))
-            .mockResolvedValueOnce(cdpResult('resp'));
+            .mockResolvedValueOnce(cdpResult({ text: 'resp' }));
         await jest.advanceTimersByTimeAsync(2000);
 
         // Should NOT be complete yet (only 1 gone after reset)
@@ -265,28 +276,28 @@ describe('Lean ResponseMonitor (new API)', () => {
         cdpService.call
             .mockResolvedValueOnce(cdpResult({ isGenerating: true }))
             .mockResolvedValueOnce(cdpResult(false))
-            .mockResolvedValueOnce(cdpResult('first'));
+            .mockResolvedValueOnce(cdpResult({ text: 'first' }));
         await jest.advanceTimersByTimeAsync(2000);
 
         // Poll 2: stop=false (gone 1), text unchanged
         cdpService.call
             .mockResolvedValueOnce(cdpResult({ isGenerating: false }))
             .mockResolvedValueOnce(cdpResult(false))
-            .mockResolvedValueOnce(cdpResult('first'));
+            .mockResolvedValueOnce(cdpResult({ text: 'first' }));
         await jest.advanceTimersByTimeAsync(2000);
 
         // Poll 3: stop=false (gone 2), text changed — counter must NOT reset
         cdpService.call
             .mockResolvedValueOnce(cdpResult({ isGenerating: false }))
             .mockResolvedValueOnce(cdpResult(false))
-            .mockResolvedValueOnce(cdpResult('first updated'));
+            .mockResolvedValueOnce(cdpResult({ text: 'first updated' }));
         await jest.advanceTimersByTimeAsync(2000);
 
         // Poll 4: stop=false (gone 3) — should complete despite text change in poll 3
         cdpService.call
             .mockResolvedValueOnce(cdpResult({ isGenerating: false }))
             .mockResolvedValueOnce(cdpResult(false))
-            .mockResolvedValueOnce(cdpResult('first updated'));
+            .mockResolvedValueOnce(cdpResult({ text: 'first updated' }));
         await jest.advanceTimersByTimeAsync(2000);
 
         expect(completedText).toBe('first updated');
@@ -308,26 +319,26 @@ describe('Lean ResponseMonitor (new API)', () => {
         cdpService.call
             .mockResolvedValueOnce(cdpResult({ isGenerating: true }))
             .mockResolvedValueOnce(cdpResult(false))
-            .mockResolvedValueOnce(cdpResult('token1'));
+            .mockResolvedValueOnce(cdpResult({ text: 'token1' }));
         await jest.advanceTimersByTimeAsync(2000);
 
         // Polls 2-4: stop=false, text keeps changing every poll (streaming tail)
         cdpService.call
             .mockResolvedValueOnce(cdpResult({ isGenerating: false }))
             .mockResolvedValueOnce(cdpResult(false))
-            .mockResolvedValueOnce(cdpResult('token1 token2'));
+            .mockResolvedValueOnce(cdpResult({ text: 'token1 token2' }));
         await jest.advanceTimersByTimeAsync(2000);
 
         cdpService.call
             .mockResolvedValueOnce(cdpResult({ isGenerating: false }))
             .mockResolvedValueOnce(cdpResult(false))
-            .mockResolvedValueOnce(cdpResult('token1 token2 token3'));
+            .mockResolvedValueOnce(cdpResult({ text: 'token1 token2 token3' }));
         await jest.advanceTimersByTimeAsync(2000);
 
         cdpService.call
             .mockResolvedValueOnce(cdpResult({ isGenerating: false }))
             .mockResolvedValueOnce(cdpResult(false))
-            .mockResolvedValueOnce(cdpResult('token1 token2 token3 final'));
+            .mockResolvedValueOnce(cdpResult({ text: 'token1 token2 token3 final' }));
         await jest.advanceTimersByTimeAsync(2000);
 
         // Should be complete after 3 consecutive stop-gone, despite text changing each time
@@ -351,7 +362,7 @@ describe('Lean ResponseMonitor (new API)', () => {
         cdpService.call
             .mockResolvedValueOnce(cdpResult({ isGenerating: false }))
             .mockResolvedValueOnce(cdpResult(false))
-            .mockResolvedValueOnce(cdpResult('old response'));
+            .mockResolvedValueOnce(cdpResult({ text: 'old response' }));
         await jest.advanceTimersByTimeAsync(2000);
 
         // Should NOT have triggered progress with baseline text
@@ -370,7 +381,7 @@ describe('Lean ResponseMonitor (new API)', () => {
         });
 
         // Baseline captures old response
-        cdpService.call.mockResolvedValueOnce(cdpResult('old response'));
+        cdpService.call.mockResolvedValueOnce(cdpResult({ text: 'old response' }));
         await monitor.start();
 
         // Poll 1: generation starts but extracted text is still baseline (suppressed)
@@ -386,7 +397,7 @@ describe('Lean ResponseMonitor (new API)', () => {
             cdpService.call
                 .mockResolvedValueOnce(cdpResult({ isGenerating: false }))
                 .mockResolvedValueOnce(cdpResult(false))
-                .mockResolvedValueOnce(cdpResult('old response'));
+                .mockResolvedValueOnce(cdpResult({ text: 'old response' }));
             await jest.advanceTimersByTimeAsync(2000);
         }
 
@@ -415,7 +426,7 @@ describe('Lean ResponseMonitor (new API)', () => {
             cdpService.call
                 .mockResolvedValueOnce(cdpResult({ isGenerating: false }))
                 .mockResolvedValueOnce(cdpResult(false))
-                .mockResolvedValueOnce(cdpResult('new fast reply'));
+                .mockResolvedValueOnce(cdpResult({ text: 'new fast reply' }));
             await jest.advanceTimersByTimeAsync(2000);
         }
 
@@ -604,7 +615,7 @@ describe('Lean ResponseMonitor (new API)', () => {
 
         const monitor = createMonitor({ onProgress, onPhaseChange });
 
-        cdpService.call.mockResolvedValueOnce(cdpResult(null)); // baseline
+        cdpService.call.mockResolvedValueOnce(cdpResult({ text: null, count: 0, fingerprints: [] })); // baseline
         await monitor.start();
 
         // Poll 1: detect generation with text
@@ -656,14 +667,14 @@ describe('Lean ResponseMonitor (new API)', () => {
         const onTimeout = jest.fn();
         const monitor = createMonitor({ onTimeout });
 
-        cdpService.call.mockResolvedValueOnce(cdpResult(null)); // baseline
+        cdpService.call.mockResolvedValueOnce(cdpResult({ text: null, count: 0, fingerprints: [] })); // baseline
         await monitor.start();
 
         // Poll 1: detect text
         cdpService.call
             .mockResolvedValueOnce(cdpResult({ isGenerating: true }))
             .mockResolvedValueOnce(cdpResult(false))
-            .mockResolvedValueOnce(cdpResult('Partial'))
+            .mockResolvedValueOnce(cdpResult({ text: 'Partial' }))
             .mockResolvedValueOnce(cdpResult([]));
         await jest.advanceTimersByTimeAsync(2000);
 
@@ -696,7 +707,7 @@ describe('Lean ResponseMonitor (new API)', () => {
             onTimeout: (text) => { timedOutText = text; },
         });
 
-        cdpService.call.mockResolvedValueOnce(cdpResult(null)); // baseline
+        cdpService.call.mockResolvedValueOnce(cdpResult({ text: null, count: 0, fingerprints: [] })); // baseline
         await monitor.start();
 
         // Poll 1 at 2s: text changes → activity resets
@@ -736,14 +747,14 @@ describe('Lean ResponseMonitor (new API)', () => {
             onTimeout: (text) => { timedOutText = text; },
         });
 
-        cdpService.call.mockResolvedValueOnce(cdpResult(null)); // baseline
+        cdpService.call.mockResolvedValueOnce(cdpResult({ text: null, count: 0, fingerprints: [] })); // baseline
         await monitor.start();
 
         // Poll 1 at 2s: text appears → activity resets
         cdpService.call
             .mockResolvedValueOnce(cdpResult({ isGenerating: true }))
             .mockResolvedValueOnce(cdpResult(false))
-            .mockResolvedValueOnce(cdpResult('Line 1'))
+            .mockResolvedValueOnce(cdpResult({ text: 'Line 1' }))
             .mockResolvedValueOnce(cdpResult([]));
         await jest.advanceTimersByTimeAsync(2000);
 
@@ -751,7 +762,7 @@ describe('Lean ResponseMonitor (new API)', () => {
         cdpService.call
             .mockResolvedValueOnce(cdpResult({ isGenerating: true }))
             .mockResolvedValueOnce(cdpResult(false))
-            .mockResolvedValueOnce(cdpResult('Line 1\nLine 2'))
+            .mockResolvedValueOnce(cdpResult({ text: 'Line 1\nLine 2' }))
             .mockResolvedValueOnce(cdpResult([]));
         await jest.advanceTimersByTimeAsync(2000);
 
@@ -762,7 +773,7 @@ describe('Lean ResponseMonitor (new API)', () => {
         cdpService.call
             .mockResolvedValueOnce(cdpResult({ isGenerating: true }))
             .mockResolvedValueOnce(cdpResult(false))
-            .mockResolvedValueOnce(cdpResult('Line 1\nLine 2\nLine 3'))
+            .mockResolvedValueOnce(cdpResult({ text: 'Line 1\nLine 2\nLine 3' }))
             .mockResolvedValueOnce(cdpResult([]));
         await jest.advanceTimersByTimeAsync(2000);
 

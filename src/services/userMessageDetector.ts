@@ -37,38 +37,31 @@ const DETECT_USER_MESSAGE_SCRIPT = `(() => {
     const panel = document.querySelector('.antigravity-agent-side-panel');
     const scope = panel || document;
 
-    // Strategy A (primary): Query .whitespace-pre-wrap elements directly inside
-    // user bubble containers. This avoids the parent-container problem where
-    // querySelectorAll matches a wrapper that contains multiple bubbles.
-    const textEls = scope.querySelectorAll(
-        '[class*="bg-gray-500/15"][class*="select-text"] .whitespace-pre-wrap'
-    );
+    const bubbles = Array.from(scope.querySelectorAll('.bg-input.p-2'));
+    const userBubbles = bubbles.filter(el => {
+        if (el.closest('.text-ide-message-block-bot-color')) return false;
+        if (el.closest('.rendered-markdown, .prose')) return false;
+        if (el.closest('[data-message-author-role="assistant"], [data-message-role="assistant"]')) return false;
+        return !!el.querySelector('.whitespace-pre-wrap');
+    });
 
-    if (textEls.length > 0) {
-        const lastTextEl = textEls[textEls.length - 1];
-        const text = (lastTextEl.textContent || '').trim();
-        if (text.length > 0) return { text };
+    if (userBubbles.length > 0) {
+        const lastBubble = userBubbles[userBubbles.length - 1];
+        // Surgical extraction: only the content of the message div
+        const textEl = lastBubble.querySelector('.whitespace-pre-wrap');
+        if (textEl) {
+            // Clone to strip buttons without affecting the real UI
+            const clone = textEl.cloneNode(true);
+            const buttons = clone.querySelectorAll('button, [role="button"]');
+            buttons.forEach(b => b.remove());
+            
+            let text = (clone.textContent || '').trim();
+            // Final safety strip
+            text = text.replace(/\\s*(?:Undo|撤銷|撤销|元に戻す)\\s*$/i, '').trim();
+            if (text.length > 0) return { text };
+        }
     }
-
-    // Strategy B (fallback): Find individual bubble containers, filtering out
-    // any element that itself contains nested bubble elements (i.e., a parent wrapper).
-    const userBubbles = Array.from(scope.querySelectorAll(
-        '[class*="bg-gray-500/15"][class*="rounded-lg"][class*="select-text"]'
-    )).filter(el => !el.querySelector('[class*="bg-gray-500/15"][class*="select-text"]'));
-
-    if (userBubbles.length === 0) return null;
-
-    const lastBubble = userBubbles[userBubbles.length - 1];
-    const textEl = lastBubble.querySelector('.whitespace-pre-wrap')
-        || lastBubble.querySelector('[style*="word-break"]');
-
-    const text = textEl
-        ? (textEl.textContent || '').trim()
-        : (lastBubble.textContent || '').trim();
-
-    if (!text || text.length < 1) return null;
-
-    return { text };
+    return null;
 })()`;
 
 /**
@@ -103,6 +96,8 @@ export class UserMessageDetector extends EventEmitter {
     /** Set of all previously detected message hashes (defense-in-depth dedup) */
     private readonly seenHashes = new Set<string>();
     private static readonly MAX_SEEN_HASHES = 50;
+    /** The actual text of the last emitted message (extra safety dedup) */
+    private lastSentText: string | null = null;
     /** True during the first poll — seeds existing DOM state without firing callback */
     private isPriming: boolean = false;
 
@@ -125,11 +120,11 @@ export class UserMessageDetector extends EventEmitter {
         }, 60000);
     }
 
-    /** Start monitoring. The first poll seeds the current DOM state without firing the callback. */
     start(): void {
         if (this.isRunning) return;
         this.isRunning = true;
         this.lastDetectedHash = null;
+        this.lastSentText = null;
         this.seenHashes.clear();
         this.isPriming = true;
         // echoHashes are intentionally NOT cleared — they have their own 60s TTL
@@ -233,7 +228,14 @@ export class UserMessageDetector extends EventEmitter {
                     return;
                 }
 
+                if (info.text === this.lastSentText) {
+                    logger.debug(`[UserMessageDetector] lastSentText match, skipping: "${preview}..."`);
+                    this.lastDetectedHash = hash;
+                    return;
+                }
+
                 this.lastDetectedHash = hash;
+                this.lastSentText = info.text;
                 this.addToSeenHashes(hash);
                 logger.debug(`[UserMessageDetector] New message detected: "${preview}..."`);
                 this.emit('message', info);
