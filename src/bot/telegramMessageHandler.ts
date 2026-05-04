@@ -448,11 +448,12 @@ async function sendTextChunked(
     text: string,
 ): Promise<void> {
     const MAX_LENGTH = 4096;
-    let remaining = text;
+    // Escape first, then chunk — escaping can expand characters (e.g. < → &lt;)
+    // so chunking raw text then escaping could exceed Telegram's limit.
+    let remaining = escapeHtml(text);
     while (remaining.length > 0) {
         const chunk = remaining.slice(0, MAX_LENGTH);
         remaining = remaining.slice(MAX_LENGTH);
-        // Ensure HTML escaping for Telegram compatibility
-        await channel.send({ text: escapeHtml(chunk) }).catch(logger.error);
+        await channel.send({ text: chunk }).catch(logger.error);
     }
 }
