@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] – [0.8.1]
+
+CHANGELOG entries for these versions were not committed back to the repo
+because `semantic-release` was not configured to write `CHANGELOG.md`.
+Release notes for each version are available on
+[GitHub Releases](https://github.com/tokyoweb3/LazyGravity/releases).
+
+From this point forward, every release auto-updates this file via
+`@semantic-release/changelog` + `@semantic-release/git`.
+
 ## [0.3.0] - 2026-03-03
 
 ### Added

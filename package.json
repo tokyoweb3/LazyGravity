@@ -1,6 +1,6 @@
 {
   "name": "lazy-gravity",
-  "version": "0.3.0",
+  "version": "0.8.1",
   "description": "Control Antigravity from anywhere — a local, secure bot (Discord + Telegram) that lets you remotely operate Antigravity on your home PC from your smartphone.",
   "main": "dist/index.js",
   "bin": {
@@ -58,6 +58,8 @@
   },
   "devDependencies": {
     "@mermaid-js/mermaid-cli": "^11.12.0",
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/git": "^10.0.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/jest": "^30.0.0",
     "@types/node": "^25.3.0",
