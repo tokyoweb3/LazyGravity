@@ -48,7 +48,7 @@ import type { AntigravityAccountConfig } from '../utils/configLoader';
 // Known commands (used by both parser and /help output)
 // ---------------------------------------------------------------------------
 
-const KNOWN_COMMANDS = ['start', 'help', 'status', 'stop', 'ping', 'mode', 'model', 'screenshot', 'autoaccept', 'account', 'project_reopen', 'template', 'template_add', 'template_delete', 'project_create', 'logs', 'new', 'join', 'mirror'] as const;
+const KNOWN_COMMANDS = ['start', 'help', 'status', 'stop', 'ping', 'mode', 'model', 'screenshot', 'autoaccept', 'account', 'project_reopen', 'template', 'template_add', 'template_delete', 'project_create', 'logs', 'new', 'join', 'mirror', 'bind'] as const;
 type KnownCommand = typeof KNOWN_COMMANDS[number];
 
 // ---------------------------------------------------------------------------
@@ -182,6 +182,9 @@ export async function handleTelegramCommand(
         case 'mirror':
             await handleMirror(deps, message);
             break;
+        case 'bind':
+            await handleBind(deps, message, parsed.args);
+            break;
         default:
             // Should not happen — parser filters unknowns
             break;
@@ -230,6 +233,7 @@ async function handleHelp(message: PlatformMessage): Promise<void> {
         '/logs — Show recent log entries',
         '/stop — Interrupt active LLM generation',
         '/ping — Check bot latency',
+        '/bind — Bind a workspace by absolute path or remote URI',
         '/help — Show this help message',
         '',
         'Any other message is forwarded to Antigravity.',
@@ -682,6 +686,7 @@ async function handleProjectReopen(deps: TelegramCommandDeps, message: PlatformM
             accountUserDataDirs,
             cdpCallTimeout: 15000,
             maxReconnectAttempts: 0,
+            cdpHost: deps.bridge.cdpHost,
         });
 
         try {
@@ -703,3 +708,63 @@ async function handleProjectReopen(deps: TelegramCommandDeps, message: PlatformM
         }).catch(logger.error);
     }
 }
+
+/**
+ * Handle `/bind <workspace_name>` — bind this chat to a known workspace.
+ *
+ * Only accepts workspace names that exist under the configured
+ * WORKSPACE_BASE_DIR (i.e. names returned by `scanWorkspaces()`).
+ * This prevents path-traversal issues downstream where
+ * `resolveSafePath()` would reject absolute paths or `../` sequences.
+ */
+async function handleBind(deps: TelegramCommandDeps, message: PlatformMessage, args: string): Promise<void> {
+    const name = args.trim();
+    if (!name) {
+        const available = deps.workspaceService
+            ? deps.workspaceService.scanWorkspaces()
+            : [];
+        const listText = available.length > 0
+            ? `\nAvailable: ${available.map(escapeHtml).join(', ')}`
+            : '';
+        await message.reply({
+            text: `Usage: /bind &lt;workspace_name&gt;${listText}\nExample: /bind my-project`,
+        }).catch(logger.error);
+        return;
+    }
+
+    if (!deps.workspaceService) {
+        await message.reply({ text: 'Workspace service not available.' }).catch(logger.error);
+        return;
+    }
+
+    // Validate against known workspaces to prevent path traversal
+    const available = deps.workspaceService.scanWorkspaces();
+    if (!available.includes(name)) {
+        await message.reply({
+            text: `⚠️ Unknown workspace: <b>${escapeHtml(name)}</b>\nAvailable: ${available.map(escapeHtml).join(', ') || '(none)'}`,
+        }).catch(logger.error);
+        return;
+    }
+
+    if (!deps.telegramBindingRepo) {
+        await message.reply({ text: 'Binding repository not available.' }).catch(logger.error);
+        return;
+    }
+
+    const chatId = message.channel.id;
+    try {
+        deps.telegramBindingRepo.upsert({
+            chatId,
+            workspacePath: name,
+        });
+
+        const projectName = deps.bridge.pool.extractProjectName(name);
+        await message.reply({
+            text: `✅ Bound to workspace: <b>${escapeHtml(projectName)}</b>\nSend a message to start chatting.`,
+        }).catch(logger.error);
+    } catch (err: any) {
+        logger.error('[TelegramCommand:bind]', err?.message || err);
+        await message.reply({ text: 'Failed to save workspace binding.' }).catch(logger.error);
+    }
+}
+

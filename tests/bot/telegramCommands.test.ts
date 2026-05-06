@@ -98,6 +98,7 @@ function createMockBridge(overrides: Record<string, unknown> = {}) {
         lastActiveChannel: null,
         approvalChannelByWorkspace: new Map(),
         approvalChannelBySession: new Map(),
+        cdpHost: '127.0.0.1',
         autoAccept: {
             isEnabled: jest.fn().mockReturnValue(false),
             handle: jest.fn().mockReturnValue({
@@ -143,6 +144,7 @@ describe('parseTelegramCommand', () => {
         ['/new', 'new', ''],
         ['/join', 'join', ''],
         ['/mirror', 'mirror', ''],
+        ['/bind', 'bind', ''],
     ])('parses %s as command=%s args=%s', (input, command, args) => {
         expect(parseTelegramCommand(input)).toEqual({ command, args });
     });
@@ -1127,5 +1129,130 @@ describe('handleTelegramCommand — /new', () => {
         expect(chatSessionService.startNewChat).toHaveBeenCalledWith(mockCdp);
         expect(message.reply).toHaveBeenCalledTimes(1);
         expect(message.reply).toHaveBeenCalledWith({ text: '❌ Failed to connect to Antigravity. Is it running?' });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// handleTelegramCommand — /bind
+// ---------------------------------------------------------------------------
+
+describe('handleTelegramCommand — /bind', () => {
+    function createMockWorkspaceService(workspaces: string[] = ['my-project', 'other-project']) {
+        return {
+            scanWorkspaces: jest.fn().mockReturnValue(workspaces),
+            getWorkspacePath: jest.fn((name: string) => `/home/user/workspaces/${name}`),
+            validatePath: jest.fn((name: string) => `/home/user/workspaces/${name}`),
+        } as any;
+    }
+
+    it('binds to a valid workspace and replies with project name', async () => {
+        const message = createMockMessage();
+        const bridge = createMockBridge({
+            pool: {
+                getActiveWorkspaceNames: jest.fn().mockReturnValue([]),
+                getConnected: jest.fn().mockReturnValue(null),
+                extractProjectName: jest.fn().mockReturnValue('my-project'),
+            },
+        });
+        const workspaceService = createMockWorkspaceService();
+        const telegramBindingRepo = { upsert: jest.fn() } as any;
+
+        await handleTelegramCommand(
+            { bridge, workspaceService, telegramBindingRepo },
+            message as any,
+            { command: 'bind', args: 'my-project' },
+        );
+
+        expect(telegramBindingRepo.upsert).toHaveBeenCalledWith({
+            chatId: 'chat-123',
+            workspacePath: 'my-project',
+        });
+        const text = message.reply.mock.calls[0][0].text;
+        expect(text).toContain('Bound to workspace');
+        expect(text).toContain('my-project');
+    });
+
+    it('shows usage with available workspaces when no args', async () => {
+        const message = createMockMessage();
+        const bridge = createMockBridge();
+        const workspaceService = createMockWorkspaceService();
+
+        await handleTelegramCommand(
+            { bridge, workspaceService },
+            message as any,
+            { command: 'bind', args: '' },
+        );
+
+        const text = message.reply.mock.calls[0][0].text;
+        expect(text).toContain('Usage:');
+        expect(text).toContain('my-project');
+        expect(text).toContain('other-project');
+    });
+
+    it('rejects unknown workspace name', async () => {
+        const message = createMockMessage();
+        const bridge = createMockBridge();
+        const workspaceService = createMockWorkspaceService();
+
+        await handleTelegramCommand(
+            { bridge, workspaceService },
+            message as any,
+            { command: 'bind', args: 'nonexistent' },
+        );
+
+        const text = message.reply.mock.calls[0][0].text;
+        expect(text).toContain('Unknown workspace');
+        expect(text).toContain('nonexistent');
+        expect(text).toContain('my-project');
+    });
+
+    it('replies error when workspaceService is missing', async () => {
+        const message = createMockMessage();
+        const bridge = createMockBridge();
+
+        await handleTelegramCommand(
+            { bridge },
+            message as any,
+            { command: 'bind', args: 'my-project' },
+        );
+
+        expect(message.reply).toHaveBeenCalledWith({ text: 'Workspace service not available.' });
+    });
+
+    it('replies error when telegramBindingRepo is missing', async () => {
+        const message = createMockMessage();
+        const bridge = createMockBridge();
+        const workspaceService = createMockWorkspaceService();
+
+        await handleTelegramCommand(
+            { bridge, workspaceService },
+            message as any,
+            { command: 'bind', args: 'my-project' },
+        );
+
+        expect(message.reply).toHaveBeenCalledWith({ text: 'Binding repository not available.' });
+    });
+
+    it('handles upsert errors gracefully', async () => {
+        const message = createMockMessage();
+        const bridge = createMockBridge({
+            pool: {
+                getActiveWorkspaceNames: jest.fn().mockReturnValue([]),
+                getConnected: jest.fn().mockReturnValue(null),
+                extractProjectName: jest.fn().mockReturnValue('my-project'),
+            },
+        });
+        const workspaceService = createMockWorkspaceService();
+        const telegramBindingRepo = {
+            upsert: jest.fn().mockImplementation(() => { throw new Error('DB write failed'); }),
+        } as any;
+
+        await handleTelegramCommand(
+            { bridge, workspaceService, telegramBindingRepo },
+            message as any,
+            { command: 'bind', args: 'my-project' },
+        );
+
+        expect(message.reply).toHaveBeenCalledWith({ text: 'Failed to save workspace binding.' });
     });
 });
