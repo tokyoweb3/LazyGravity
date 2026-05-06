@@ -54,3 +54,9 @@ coverage/
 
 # npm pack artifacts
 *.tgz
+
+# Mirroring runtime state
+.mirror_state.json
+
+# TypeScript build cache
+tsconfig.tsbuildinfo

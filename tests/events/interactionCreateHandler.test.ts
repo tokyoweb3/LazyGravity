@@ -62,6 +62,7 @@ describe('interactionCreateHandler', () => {
                     getApprovalDetector: jest.fn().mockReturnValue(detector),
                 },
                 lastActiveWorkspace: null,
+                cdpHost: '127.0.0.1',
             } as any,
             cleanupHandler: {} as any,
             modeService: {} as any,
@@ -116,7 +117,7 @@ describe('interactionCreateHandler', () => {
 
         const handler = createInteractionCreateHandler({
             config: { allowedUserIds: ['allowed'] },
-            bridge: { autoAccept: { handle } } as any,
+            bridge: { autoAccept: { handle }, cdpHost: '127.0.0.1' } as any,
             cleanupHandler: {} as any,
             modeService: {} as any,
             modelService: {} as any,
@@ -173,6 +174,7 @@ describe('interactionCreateHandler', () => {
             bridge: {
                 selectedAccountByChannel: new Map<string, string>(),
                 pool: {},
+                cdpHost: '127.0.0.1',
             } as any,
             cleanupHandler: {} as any,
             modeService: {} as any,
@@ -240,6 +242,7 @@ describe('interactionCreateHandler', () => {
             bridge: {
                 selectedAccountByChannel: new Map<string, string>(),
                 pool: {},
+                cdpHost: '127.0.0.1',
             } as any,
             cleanupHandler: {} as any,
             modeService: {} as any,

@@ -174,6 +174,16 @@ export class CdpConnectionPool {
         return this.userMessageDetectors.get(buildConnectionKey(projectName, effectiveAccount));
     }
 
+    getUserMessageDetectorsForProject(projectName: string): UserMessageDetector[] {
+        const detectors: UserMessageDetector[] = [];
+        for (const [key, detector] of this.userMessageDetectors.entries()) {
+            if (key.endsWith(`::${projectName}`)) {
+                detectors.push(detector);
+            }
+        }
+        return detectors;
+    }
+
     setPreferredAccountForWorkspace(workspacePath: string, accountName: string): void {
         const projectName = this.extractProjectName(workspacePath);
         this.workspaceToAccount.set(projectName, accountName);

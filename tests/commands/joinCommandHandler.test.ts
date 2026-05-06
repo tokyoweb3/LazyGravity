@@ -60,6 +60,7 @@ describe('JoinCommandHandler', () => {
             getApprovalDetector: jest.fn(),
             getUserMessageDetector: jest.fn(),
             registerUserMessageDetector: jest.fn(),
+            getUserMessageDetectorsForProject: jest.fn().mockReturnValue([]),
             extractProjectName: jest.fn((path: string) => path.split(/[/\\]/).filter(Boolean).pop() || path),
         } as any;
 

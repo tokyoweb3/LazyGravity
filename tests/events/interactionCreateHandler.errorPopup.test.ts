@@ -18,6 +18,7 @@ describe('interactionCreateHandler - error popup buttons', () => {
                     getPlanningDetector: jest.fn(),
                 },
                 lastActiveWorkspace: null,
+                cdpHost: '127.0.0.1',
                 autoAccept: { handle: jest.fn(), isEnabled: jest.fn().mockReturnValue(false) },
             } as any,
             cleanupHandler: {} as any,

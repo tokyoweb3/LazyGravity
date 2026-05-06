@@ -47,6 +47,7 @@ describe('createModeSelectAction', () => {
         bridge = {
             lastActiveWorkspace: null,
             pool: { getConnected: jest.fn().mockReturnValue(null) },
+            cdpHost: '127.0.0.1',
         };
     });
 

@@ -1,4 +1,6 @@
 import fs from 'fs';
+import path from 'path';
+import os from 'os';
 import { resolveSafePath } from '../middleware/sanitize';
 
 /**
@@ -39,6 +41,19 @@ export class WorkspaceService {
      * @throws On path traversal detection
      */
     public validatePath(relativePath: string): string {
+        // Skip validation for remote URIs
+        if (relativePath.includes('://')) {
+            return relativePath;
+        }
+
+        // Support absolute paths and home dir expansion
+        if (relativePath.startsWith('/') || relativePath.startsWith('~')) {
+            const expanded = relativePath.startsWith('~')
+                ? path.join(os.homedir(), relativePath.slice(1))
+                : path.resolve(relativePath);
+            return expanded;
+        }
+
         return resolveSafePath(relativePath, this.baseDir);
     }
 
@@ -55,6 +70,7 @@ export class WorkspaceService {
     public getWorkspacePath(workspaceName: string): string {
         return this.validatePath(workspaceName);
     }
+
 
     /**
      * Check if the specified workspace exists

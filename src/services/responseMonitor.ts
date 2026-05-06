@@ -17,9 +17,9 @@ export const RESPONSE_SELECTORS = {
         const scopes = [panel, document].filter(Boolean);
 
         const selectors = [
-            { sel: '.rendered-markdown', score: 10 },
-            { sel: '.leading-relaxed.select-text', score: 9 },
-            { sel: '.flex.flex-col.gap-y-3', score: 8 },
+            { sel: '.text-ide-message-block-bot-color', score: 10 },
+            { sel: '.rendered-markdown', score: 9 },
+            { sel: '.leading-relaxed.select-text', score: 8 },
             { sel: '[data-message-author-role="assistant"]', score: 7 },
             { sel: '[data-message-role="assistant"]', score: 6 },
             { sel: '[class*="assistant-message"]', score: 5 },
@@ -49,6 +49,12 @@ export const RESPONSE_SELECTORS = {
             if (node.closest('[class*="feedback"], footer')) return true;
             if (node.closest('.notify-user-container')) return true;
             if (node.closest('[role="dialog"]')) return true;
+            if (node.closest('form')) return true;
+            if (node.closest('[data-message-author-role="user"], [data-message-role="user"]')) return true;
+            if (node.querySelector('textarea') || node.closest('textarea')) return true;
+            const text = (node.innerText || '').toLowerCase();
+            if (text.includes('ask anything, @ to mention')) return true;
+            if (text.includes('0 files with changes')) return true;
             return false;
         };
 
@@ -75,9 +81,15 @@ export const RESPONSE_SELECTORS = {
         const combinedSelector = selectors.map((s) => s.sel).join(', ');
         const seen = new Set();
 
+        let foundText = null;
+        let foundIndex = -1;
+        const allFingerprints = [];
+        let globalNodeCount = 0;
+
+        let foundFingerprint = null;
         for (const scope of scopes) {
             const nodes = scope.querySelectorAll(combinedSelector);
-            for (let i = nodes.length - 1; i >= 0; i--) {
+            for (let i = 0; i < nodes.length; i++) {
                 const node = nodes[i];
                 if (!node || seen.has(node)) continue;
                 seen.add(node);
@@ -88,12 +100,24 @@ export const RESPONSE_SELECTORS = {
                 if (looksLikeFeedbackFooter(text)) continue;
                 if (looksLikeToolOutput(text)) continue;
                 if (looksLikeQuotaPopup(text)) continue;
-                // Prefer recency first: return the newest acceptable node.
-                return text;
+
+                const fp = text.length + ':' + text.slice(0, 50) + ':' + text.slice(-50);
+                allFingerprints.push(fp);
+
+                foundText = text;
+                foundIndex = globalNodeCount + i;
+                foundFingerprint = fp;
             }
+            globalNodeCount += nodes.length;
         }
 
-        return null;
+        return { 
+            text: foundText, 
+            index: foundIndex, 
+            count: globalNodeCount, 
+            fingerprints: allFingerprints,
+            fingerprint: foundFingerprint
+        };
     })()`,
     /** Stop button detection via tooltip-id + text fallback */
     STOP_BUTTON: `(() => {
@@ -101,8 +125,13 @@ export const RESPONSE_SELECTORS = {
         const scopes = [panel, document].filter(Boolean);
 
         for (const scope of scopes) {
-            const el = scope.querySelector('[data-tooltip-id="input-send-button-cancel-tooltip"]');
-            if (el) return { isGenerating: true };
+            const els = scope.querySelectorAll('[data-tooltip-id="input-send-button-cancel-tooltip"]');
+            for (let i = 0; i < els.length; i++) {
+                const el = els[i];
+                if (el.offsetWidth > 0 || el.offsetHeight > 0 || el.getClientRects().length > 0) {
+                    return { isGenerating: true };
+                }
+            }
         }
 
         const normalize = (value) => (value || '').toLowerCase().replace(/\\s+/g, ' ').trim();
@@ -142,10 +171,16 @@ export const RESPONSE_SELECTORS = {
         const scopes = [panel, document].filter(Boolean);
 
         for (const scope of scopes) {
-            const el = scope.querySelector('[data-tooltip-id="input-send-button-cancel-tooltip"]');
-            if (el && typeof el.click === 'function') {
-                el.click();
-                return { ok: true, method: 'tooltip-id' };
+            const els = scope.querySelectorAll('[data-tooltip-id="input-send-button-cancel-tooltip"]');
+            for (let i = 0; i < els.length; i++) {
+                const el = els[i];
+                if (el && typeof el.click === 'function') {
+                    const style = window.getComputedStyle(el);
+                    if (style.display !== 'none' && style.visibility !== 'hidden' && parseFloat(style.opacity) > 0) {
+                        el.click();
+                        return { ok: true, method: 'tooltip-id' };
+                    }
+                }
             }
         }
 
@@ -187,9 +222,9 @@ export const RESPONSE_SELECTORS = {
         const scopes = [panel, document].filter(Boolean);
 
         const selectors = [
+            { sel: '.text-ide-message-block-bot-color', score: 11 },
             { sel: '.rendered-markdown', score: 10 },
             { sel: '.leading-relaxed.select-text', score: 9 },
-            { sel: '.flex.flex-col.gap-y-3', score: 8 },
             { sel: '[data-message-author-role="assistant"]', score: 7 },
             { sel: '[data-message-role="assistant"]', score: 6 },
             { sel: '[class*="assistant-message"]', score: 5 },
@@ -217,6 +252,12 @@ export const RESPONSE_SELECTORS = {
             if (node.closest('[class*="feedback"], footer')) return true;
             if (node.closest('.notify-user-container')) return true;
             if (node.closest('[role="dialog"]')) return true;
+            if (node.closest('form')) return true;
+            if (node.closest('[data-message-author-role="user"], [data-message-role="user"]')) return true;
+            if (node.querySelector('textarea') || node.closest('textarea')) return true;
+            const text = (node.innerText || '').toLowerCase();
+            if (text.includes('ask anything, @ to mention')) return true;
+            if (text.includes('0 files with changes')) return true;
             return false;
         };
         const looksLikeToolOutput = (text) => {
@@ -236,11 +277,19 @@ export const RESPONSE_SELECTORS = {
         for (const scope of scopes) {
             for (const { sel, score } of selectors) {
                 const nodes = scope.querySelectorAll(sel);
+                // Since extractor iterates backwards (newest node first), segments[0] is the newest.
+                // We want the newest assistant-body.
+                for (let i = 0; i < segments.length; i++) {
+                    if (segments[i].kind === 'assistant-body') {
+                        lastBody = segments[i].text;
+                        break;
+                    }
+                }
                 for (let i = nodes.length - 1; i >= 0; i--) {
                     const node = nodes[i];
                     if (!node || seen.has(node)) continue;
                     seen.add(node);
-                    const text = (node.innerText || node.textContent || '').replace(/\\r/g, '').trim();
+                    const text = (node.innerText || node.textContent || '').replace(/\r/g, '').trim();
                     let skip = null;
                     if (!text || text.length < 2) skip = 'too-short';
                     else if (isInsideExcludedContainer(node)) skip = 'excluded-container';
@@ -273,9 +322,9 @@ export const RESPONSE_SELECTORS = {
         const scopes = [panel, document].filter(Boolean);
 
         const selectors = [
+            { sel: '.text-ide-message-block-bot-color', score: 11 },
             { sel: '.rendered-markdown', score: 10 },
             { sel: '.leading-relaxed.select-text', score: 9 },
-            { sel: '.flex.flex-col.gap-y-3', score: 8 },
             { sel: '[data-message-author-role="assistant"]', score: 7 },
             { sel: '[data-message-role="assistant"]', score: 6 },
             { sel: '[class*="assistant-message"]', score: 5 },
@@ -310,6 +359,12 @@ export const RESPONSE_SELECTORS = {
             if (node.closest('[class*="feedback"], footer')) return true;
             if (node.closest('.notify-user-container')) return true;
             if (node.closest('[role="dialog"]')) return true;
+            if (node.closest('form')) return true;
+            if (node.closest('[data-message-author-role="user"], [data-message-role="user"]')) return true;
+            if (node.querySelector('textarea') || node.closest('textarea')) return true;
+            const text = (node.innerText || '').toLowerCase();
+            if (text.includes('ask anything, @ to mention')) return true;
+            if (text.includes('0 files with changes')) return true;
             return false;
         };
 
@@ -463,7 +518,10 @@ export interface ResponseMonitorOptions {
     onProcessLog?: (text: string) => void;
     /** Optional pre-captured baseline response text from before prompt injection */
     initialBaselineText?: string | null;
-    /** Optional pre-captured process log keys from before prompt injection */
+    /** Optional pre-captured baseline node count from before prompt injection */
+    initialBaselineCount?: number;
+    /** Optional fingerprints of existing messages to ignore */
+    initialBaselineFingerprints?: string[];
     initialSeenProcessLogKeys?: string[];
 }
 
@@ -472,6 +530,8 @@ export interface ResponseMonitorOptions {
  */
 export interface ResponseMonitorBaselineSnapshot {
     text: string | null;
+    count: number;
+    fingerprints: string[];
     processLogKeys: string[];
 }
 
@@ -601,16 +661,67 @@ async function evaluateAcrossContexts<T = unknown>(
 export async function captureResponseMonitorBaseline(
     cdpService: CdpService,
 ): Promise<ResponseMonitorBaselineSnapshot> {
+    const fingerprints: string[] = [];
     let text: string | null = null;
+    let count: number = 0;
+    
+    // Attempt structured baseline capture first, as it is much more accurate than the legacy selector.
     try {
-        const textResult = await evaluateAcrossContexts<string | null>(
+        const structuredResult = await evaluateAcrossContexts<unknown>(
             cdpService,
-            RESPONSE_SELECTORS.RESPONSE_TEXT,
-            (value) => typeof value === 'string' && value.trim().length > 0,
+            RESPONSE_SELECTORS.RESPONSE_STRUCTURED,
+            (value) => {
+                try {
+                    const diag = classifyAssistantSegments(value).diagnostics;
+                    return diag.source === 'dom-structured';
+                } catch {
+                    return false;
+                }
+            }
         );
-        text = typeof textResult.value === 'string' ? textResult.value.trim() || null : null;
-    } catch {
-        text = null;
+        const classified = classifyAssistantSegments(structuredResult.value);
+        if (classified.diagnostics.source === 'dom-structured') {
+            text = classified.finalOutputText.trim() || null;
+            // Fingerprint all structured segments found in the baseline
+            if (Array.isArray(classified.diagnostics.allFingerprints)) {
+                for (const fp of classified.diagnostics.allFingerprints) {
+                    if (!fingerprints.includes(fp)) fingerprints.push(fp);
+                }
+            }
+            // Count can just be 1 for structured, or we can rely on segments
+            const counts = Object.values(classified.diagnostics.segmentCounts) as number[];
+            count = counts.reduce((a, b) => a + b, 0) || 1;
+        }
+    } catch (err) {
+        logger.warn('[ResponseMonitor] Structured baseline capture failed, falling back to legacy:', err);
+    }
+
+    if (!text) {
+        // Aggressive retry for legacy fallback
+        for (let i = 0; i < 5; i++) {
+            try {
+                const result = await evaluateAcrossContexts<{text: string | null, index: number, count: number, fingerprints: string[]} | null>(
+                    cdpService,
+                    RESPONSE_SELECTORS.RESPONSE_TEXT,
+                    (value) => !!value && typeof (value as any).count === 'number',
+                );
+                const val = result.value;
+                text = typeof val?.text === 'string' ? val.text.trim() || null : null;
+                count = val?.count ?? 0;
+                
+                if (Array.isArray(val?.fingerprints)) {
+                    for (const fp of val.fingerprints) {
+                        if (!fingerprints.includes(fp)) fingerprints.push(fp);
+                    }
+                }
+                
+                if (count > 0) break;
+                await new Promise(r => setTimeout(r, 200)); 
+            } catch {
+                text = null;
+                count = 0;
+            }
+        }
     }
 
     const processLogKeys = new Set<string>();
@@ -633,6 +744,8 @@ export async function captureResponseMonitorBaseline(
 
     return {
         text,
+        count,
+        fingerprints,
         processLogKeys: Array.from(processLogKeys),
     };
 }
@@ -645,10 +758,21 @@ export async function captureResponseMonitorBaseline(
  * Simple baseline suppression via string comparison.
  * NO network event subscription.
  */
+/**
+ * Monitors the Antigravity UI for AI responses and execution logs.
+ *
+ * This class handles:
+ * - Detecting when the AI starts and stops generating.
+ * - Extracting text and structured content (tool calls, diffs) from the DOM.
+ * - Monitoring the "Process Log" for diagnostic information.
+ * - Handling CDP connection interruptions and reconnections.
+ * - Providing real-time progress updates via callbacks.
+ */
 export class ResponseMonitor {
     private readonly cdpService: CdpService;
     private readonly pollIntervalMs: number;
     private readonly maxDurationMs: number;
+    private baselineFingerprints: Set<string> = new Set();
     private readonly stopGoneConfirmCount: number;
     private readonly extractionMode: ExtractionMode;
     private readonly onProgress?: (text: string) => void;
@@ -657,12 +781,15 @@ export class ResponseMonitor {
     private readonly onPhaseChange?: (phase: ResponsePhase, text: string | null) => void;
     private readonly onProcessLog?: (text: string) => void;
     private readonly initialBaselineText?: string | null;
+    private readonly initialBaselineCount?: number;
+    private readonly initialBaselineFingerprints?: string[];
     private readonly initialSeenProcessLogKeys?: string[];
 
     private pollTimer: ReturnType<typeof setTimeout> | null = null;
     private isRunning: boolean = false;
     private lastText: string | null = null;
     private baselineText: string | null = null;
+    private baselineCount: number = 0;
     private generationStarted: boolean = false;
     private currentPhase: ResponsePhase = 'waiting';
     private stopGoneCount: number = 0;
@@ -680,6 +807,10 @@ export class ResponseMonitor {
     // Activity-based timeout (#49)
     private lastActivityTime: number = 0;
 
+    /**
+     * Initializes a new ResponseMonitor instance.
+     * @param options Configuration options for monitoring.
+     */
     constructor(options: ResponseMonitorOptions) {
         this.cdpService = options.cdpService;
         this.pollIntervalMs = options.pollIntervalMs ?? 2000;
@@ -692,6 +823,8 @@ export class ResponseMonitor {
         this.onPhaseChange = options.onPhaseChange;
         this.onProcessLog = options.onProcessLog;
         this.initialBaselineText = options.initialBaselineText;
+        this.initialBaselineCount = options.initialBaselineCount;
+        this.initialBaselineFingerprints = options.initialBaselineFingerprints;
         this.initialSeenProcessLogKeys = options.initialSeenProcessLogKeys;
     }
 
@@ -716,26 +849,41 @@ export class ResponseMonitor {
         this.isRunning = true;
         this.isPaused = false;
         this.lastText = null;
-        this.baselineText = null;
+        this.baselineText = this.initialBaselineText ?? null;
+        this.baselineCount = this.initialBaselineCount ?? 0;
+        this.baselineFingerprints.clear();
+        if (Array.isArray(this.initialBaselineFingerprints)) {
+            for (const fp of this.initialBaselineFingerprints) {
+                this.baselineFingerprints.add(fp);
+            }
+        }
         this.generationStarted = passive;
         this.currentPhase = passive ? 'generating' : 'waiting';
         this.stopGoneCount = 0;
         this.quotaDetected = false;
-        this.seenProcessLogKeys = new Set();
+        this.seenProcessLogKeys = new Set(this.initialSeenProcessLogKeys || []);
+        this.lastActivityTime = Date.now();
 
         this.onPhaseChange?.(this.currentPhase, null);
 
-        if (this.initialBaselineText !== undefined) {
-            this.baselineText = this.initialBaselineText;
-        } else {
+        // If no baseline text or fingerprints provided, try a quick capture now
+        if (this.baselineText === null && this.baselineFingerprints.size === 0) {
             try {
-                const baseResult = await this.evaluateAcrossContexts<string | null>(
+                const baseResult = await this.evaluateAcrossContexts<{ text: string | null; fingerprints: string[] } | null>(
                     RESPONSE_SELECTORS.RESPONSE_TEXT,
-                    (value) => typeof value === 'string' && value.trim().length > 0,
+                    (value) => value !== null && typeof value === 'object',
                 );
-                this.baselineText = typeof baseResult.value === 'string' ? baseResult.value.trim() || null : null;
+                const val = baseResult.value;
+                if (val) {
+                    // Use robust normalization matching the poll() method
+                    const raw = typeof val.text === 'string' ? val.text : null;
+                    this.baselineText = raw ? raw.replace(/[\s\r\n]+/g, ' ').trim() || null : null;
+                    if (Array.isArray(val.fingerprints)) {
+                        for (const fp of val.fingerprints) this.baselineFingerprints.add(fp);
+                    }
+                }
             } catch {
-                this.baselineText = null;
+                // Ignore best-effort capture failure
             }
         }
 
@@ -803,7 +951,10 @@ export class ResponseMonitor {
         this.schedulePoll();
     }
 
-    /** Stop monitoring */
+    /**
+     * Stop monitoring and clean up resources.
+     * Unregisters CDP listeners and clears polling timers.
+     */
     async stop(): Promise<void> {
         this.isRunning = false;
         this.isPaused = false;
@@ -1091,7 +1242,10 @@ export class ResponseMonitor {
 
             // 3. Text extraction (structured or legacy)
             let currentText: string | null = null;
+            let currentCount = 0;
+            let currentIndex = -1;
             let structuredHandledLogs = false;
+            let segmentCountIncreased = false;
 
             if (this.extractionMode === 'structured') {
                 // Structured: use DOM segment extraction with HTML-to-Markdown
@@ -1105,6 +1259,13 @@ export class ResponseMonitor {
 
                     if (classified.diagnostics.source === 'dom-structured') {
                         currentText = classified.finalOutputText.trim() || null;
+                        const currentTotalSegments = classified.diagnostics.totalSegments;
+                        
+                        // Strict segment count check for baseline suppression
+                        if (currentTotalSegments > this.baselineCount) {
+                            segmentCountIncreased = true;
+                        }
+
                         structuredHandledLogs = true;
 
                         if (!this.structuredDiagLogged) {
@@ -1127,18 +1288,30 @@ export class ResponseMonitor {
                         await this.logStructuredExtractionDiagnostics(payload);
                     }
                 } catch (error) {
-                    logger.warn('[ResponseMonitor:poll] RESPONSE_STRUCTURED failed, falling back to legacy:', error);
+                    logger.warn('[ResponseMonitor:poll] RESPONSE_STRUCTURED failed:', error);
+                }
+            } else {
+                // Legacy: use scored selector approach
+                try {
+                    const textResult = await this.evaluateAcrossContexts<{ text: string | null } | null>(
+                        RESPONSE_SELECTORS.RESPONSE_TEXT,
+                        (value) => !!(value && typeof value === 'object' && (value as any).text),
+                    );
+                    const val = textResult.value;
+                    currentText = typeof val?.text === 'string' ? val.text.trim() || null : null;
+                } catch (error) {
+                    logger.warn('[ResponseMonitor:poll] RESPONSE_TEXT failed:', error);
                 }
             }
 
-            // Legacy path (or fallback from structured)
-            if (currentText === null) {
-                const textResult = await this.evaluateAcrossContexts<string | null>(
-                    RESPONSE_SELECTORS.RESPONSE_TEXT,
-                    (value) => typeof value === 'string' && value.trim().length > 0,
-                );
-                currentText = typeof textResult.value === 'string' ? textResult.value.trim() || null : null;
-            }
+            // Normalization helper for baseline comparison
+            const normalize = (t: string | null) => (t || '').replace(/[\s\r\n]+/g, ' ').trim();
+
+            // Baseline suppression: do not emit progress for pre-existing text, unless segment count increased
+            const isBaseline = !segmentCountIncreased && currentText !== null && this.baselineText !== null && normalize(currentText) === normalize(this.baselineText);
+            
+            // If the text perfectly matches the baseline, and we haven't emitted anything new yet, it's an echo.
+            const effectiveText = (isBaseline && this.lastText === null) ? null : currentText;
 
             // 4. Process log extraction — always when structured didn't handle it
             if (!structuredHandledLogs) {
@@ -1184,29 +1357,43 @@ export class ResponseMonitor {
                 }
             }
 
-            // Baseline suppression: do not emit progress for pre-existing text.
-            // IMPORTANT: do not early-return here; completion logic must still run.
-            const effectiveText = (
-                currentText !== null &&
-                this.baselineText !== null &&
-                currentText === this.baselineText &&
-                this.lastText === null
-            ) ? null : currentText;
+
 
             // Text change handling
             const textChanged = effectiveText !== null && effectiveText !== this.lastText;
             if (textChanged) {
-                this.lastActivityTime = Date.now();
-                this.lastText = effectiveText;
-
-                if (this.currentPhase === 'waiting' || this.currentPhase === 'thinking') {
-                    this.setPhase('generating', effectiveText);
-                    if (!this.generationStarted) {
-                        this.generationStarted = true;
-                    }
+                // 1. Fingerprint suppression: skip if this text matches any baseline fingerprint.
+                // Critical Fix: Always check, even if lastText is not null, to prevent 
+                // historical messages from being picked up during DOM re-renders.
+                const currentFp = effectiveText.length + ':' + effectiveText.slice(0, 50) + ':' + effectiveText.slice(-50);
+                if (this.baselineFingerprints.has(currentFp)) {
+                    return;
                 }
 
-                this.onProgress?.(effectiveText);
+                // 2. Exact baseline match suppression: 
+                // Even if the stop button is visible (isGenerating), if the text perfectly 
+                // matches the baseline and we haven't sent anything yet, it's a ghost.
+                if (isBaseline && this.lastText === null) {
+                    return;
+                }
+
+                // If we haven't detected generation start yet (no stop button), 
+                // be very conservative about emitting text changes unless they are clearly different from baseline.
+                if (!this.generationStarted && !isGenerating && isBaseline) {
+                    // Still looking at old text, skip
+                } else {
+                    this.lastActivityTime = Date.now();
+                    this.lastText = effectiveText;
+
+                    if (this.currentPhase === 'waiting' || this.currentPhase === 'thinking') {
+                        this.setPhase('generating', effectiveText);
+                        if (!this.generationStarted) {
+                            this.generationStarted = true;
+                        }
+                    }
+
+                    this.onProgress?.(effectiveText);
+                }
             }
 
             // Completion: stop button gone N consecutive times

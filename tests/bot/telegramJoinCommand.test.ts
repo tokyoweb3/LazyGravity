@@ -20,6 +20,7 @@ describe('telegramJoinCommand.handleMirror', () => {
             pool: {
                 extractProjectName: jest.fn().mockReturnValue('project-a'),
                 getUserMessageDetector,
+                getUserMessageDetectorsForProject: jest.fn().mockReturnValue([]),
                 getOrConnect,
             },
         } as any;
