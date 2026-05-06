@@ -16,6 +16,7 @@ export interface CdpServiceOptions {
     accountName?: string;
     accountPorts?: Record<string, number>;
     accountUserDataDirs?: Record<string, string>;
+    cdpHost?: string;
 }
 
 export interface CdpContext {
@@ -76,11 +77,15 @@ const WORKSPACE_STATE_SCRIPT = `(() => {
 
     let isGenerating = false;
     for (const scope of scopes) {
-        const stopEl = scope.querySelector('[data-tooltip-id="input-send-button-cancel-tooltip"]');
-        if (stopEl) {
-            isGenerating = true;
-            break;
+        const els = scope.querySelectorAll('[data-tooltip-id="input-send-button-cancel-tooltip"]');
+        for (let i = 0; i < els.length; i++) {
+            const style = window.getComputedStyle(els[i]);
+            if (style.display !== 'none' && style.visibility !== 'hidden' && parseFloat(style.opacity) > 0) {
+                isGenerating = true;
+                break;
+            }
         }
+        if (isGenerating) break;
     }
 
     if (!isGenerating) {
@@ -159,6 +164,7 @@ export class CdpService extends EventEmitter {
     /** Workspace switching flag (suppresses disconnected event) */
     private isSwitchingWorkspace: boolean = false;
     private accountName: string;
+    private cdpHost: string;
     private accountPorts: Record<string, number>;
     private accountUserDataDirs: Record<string, string>;
 
@@ -171,6 +177,7 @@ export class CdpService extends EventEmitter {
         if (options.cdpCallTimeout) this.cdpCallTimeout = options.cdpCallTimeout;
         this.maxReconnectAttempts = options.maxReconnectAttempts ?? 3;
         this.reconnectDelayMs = options.reconnectDelayMs ?? 2000;
+        this.cdpHost = options.cdpHost ?? '127.0.0.1';
     }
 
     private resolveAccountPorts(accountName: string): number[] {
@@ -205,7 +212,7 @@ export class CdpService extends EventEmitter {
         let allPages: any[] = [];
         for (const port of this.ports) {
             try {
-                const list = await this.getJson(`http://127.0.0.1:${port}/json/list`);
+                const list = await this.getJson(`http://${this.cdpHost}:${port}/json/list`);
                 allPages.push(...list);
             } catch (e) {
                 // Ignore port not found
@@ -522,7 +529,7 @@ export class CdpService extends EventEmitter {
 
         for (const port of this.ports) {
             try {
-                const list = await this.getJson(`http://127.0.0.1:${port}/json/list`);
+                const list = await this.getJson(`http://${this.cdpHost}:${port}/json/list`);
                 pages.push(...list);
                 // Prioritize recording ports that contain workbench pages
                 const hasWorkbench = list.some((t: any) => t.url?.includes('workbench'));
@@ -633,8 +640,8 @@ export class CdpService extends EventEmitter {
                     return true;
                 }
 
-                // If title is "Untitled (Workspace)", verify by folder path
-                if (normalizedLiveTitle.includes('untitled') && workspacePath) {
+                // If title match failed, or if it's "Untitled", verify by folder path
+                if (workspacePath) {
                     const folderMatch = await this.probeWorkspaceFolderPath(projectName, workspacePath);
                     if (folderMatch) {
                         return true;
@@ -813,7 +820,7 @@ export class CdpService extends EventEmitter {
         let knownPageIds: Set<string> = new Set();
         for (const port of this.ports) {
             try {
-                const preLaunchPages = await this.getJson(`http://127.0.0.1:${port}/json/list`);
+                const preLaunchPages = await this.getJson(`http://${this.cdpHost}:${port}/json/list`);
                 preLaunchPages.forEach((p: any) => {
                     if (p.id) knownPageIds.add(p.id);
                 });
@@ -828,7 +835,7 @@ export class CdpService extends EventEmitter {
             let pages: any[] = [];
             for (const port of this.ports) {
                 try {
-                    const list = await this.getJson(`http://127.0.0.1:${port}/json/list`);
+                    const list = await this.getJson(`http://${this.cdpHost}:${port}/json/list`);
                     pages.push(...list);
                 } catch {
                     // Next port
@@ -885,7 +892,7 @@ export class CdpService extends EventEmitter {
         let allPages: any[] = [];
         for (const port of this.ports) {
             try {
-                const list = await this.getJson(`http://127.0.0.1:${port}/json/list`);
+                const list = await this.getJson(`http://${this.cdpHost}:${port}/json/list`);
                 allPages.push(...list);
             } catch {
                 // port not responding
@@ -1143,7 +1150,7 @@ export class CdpService extends EventEmitter {
                 let stillOpen = false;
                 for (const port of this.ports) {
                     try {
-                        const list = await this.getJson(`http://127.0.0.1:${port}/json/list`);
+                        const list = await this.getJson(`http://${this.cdpHost}:${port}/json/list`);
                         if (list.some((page: any) => page?.id === closingTargetId)) {
                             stillOpen = true;
                             break;

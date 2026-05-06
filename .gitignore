@@ -54,3 +54,6 @@ coverage/
 
 # npm pack artifacts
 *.tgz
+
+# TypeScript build cache
+tsconfig.tsbuildinfo

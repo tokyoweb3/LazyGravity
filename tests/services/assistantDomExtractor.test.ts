@@ -64,6 +64,8 @@ describe('assistantDomExtractor', () => {
 
         const result = classifyAssistantSegments(payload);
 
+        // Note: The script iterates backwards, but the test payload provides them directly.
+        // classifyAssistantSegments will take bodyTexts[0], which is '最終回答: 1ドル=154.8円です。'
         expect(result.finalOutputText).toBe('最終回答: 1ドル=154.8円です。');
         expect(result.activityLines).toEqual([
             'Analyzing current exchange data...',
@@ -103,6 +105,7 @@ describe('assistantDomExtractor', () => {
 
         const result = classifyAssistantSegments(payload);
 
+        // Multi-segment body text is concatenated with double newline
         expect(result.finalOutputText).toBe('前半です。\n\n後半です。');
         expect(result.activityLines).toEqual(['mcp.search']);
         expect(result.feedback).toEqual([]);

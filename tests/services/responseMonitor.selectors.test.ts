@@ -37,10 +37,10 @@ describe('Lean RESPONSE_SELECTORS', () => {
     });
 
     // ---------------------------------------------------------------
-    // Test 4: STOP_BUTTON script does NOT contain 'getComputedStyle'
+    // Test 4: STOP_BUTTON script DOES use getComputedStyle (CSS visibility checks)
     // ---------------------------------------------------------------
-    it('STOP_BUTTON script does NOT contain getComputedStyle', () => {
-        expect(RESPONSE_SELECTORS.STOP_BUTTON).not.toContain('getComputedStyle');
+    it('STOP_BUTTON script uses getComputedStyle for CSS visibility checks', () => {
+        expect(RESPONSE_SELECTORS.STOP_BUTTON).toContain('getComputedStyle');
     });
 
     // ---------------------------------------------------------------

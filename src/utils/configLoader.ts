@@ -36,6 +36,7 @@ export interface PersistedConfig {
     platforms?: PlatformType[];
     responseTimeoutMs?: number;
     antigravityAccounts?: string | AntigravityAccountConfig[];
+    cdpHost?: string;
 }
 
 export interface AntigravityAccountConfig {
@@ -142,6 +143,9 @@ function mergeConfig(persisted: PersistedConfig): AppConfig {
     const telegramToken = process.env.TELEGRAM_BOT_TOKEN ?? persisted.telegramToken ?? undefined;
     const telegramAllowedUserIds = resolveTelegramAllowedUserIds(persisted);
 
+    const rawCdpHost = (process.env.CDP_HOST ?? persisted.cdpHost ?? '').trim();
+    const cdpHost = rawCdpHost || '127.0.0.1';
+
     if (platforms.includes('telegram') && !telegramToken) {
         throw new Error(
             'TELEGRAM_BOT_TOKEN is required when platforms include "telegram"',
@@ -162,6 +166,7 @@ function mergeConfig(persisted: PersistedConfig): AppConfig {
         telegramToken,
         telegramAllowedUserIds,
         platforms,
+        cdpHost,
     };
 }
 
