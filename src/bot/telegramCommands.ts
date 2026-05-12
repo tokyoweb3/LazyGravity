@@ -233,7 +233,7 @@ async function handleHelp(message: PlatformMessage): Promise<void> {
         '/logs — Show recent log entries',
         '/stop — Interrupt active LLM generation',
         '/ping — Check bot latency',
-        '/bind — Bind a workspace by absolute path or remote URI',
+        '/bind — Bind this chat to a known workspace by name',
         '/help — Show this help message',
         '',
         'Any other message is forwarded to Antigravity.',
