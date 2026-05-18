@@ -241,3 +241,6 @@ function startResponseMirror(
         activeResponseMonitors.delete(workspacePath);
     });
 }
+
+export { startResponseMirror };
+
