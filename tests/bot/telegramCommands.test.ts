@@ -1,4 +1,5 @@
 import { parseTelegramCommand, handleTelegramCommand } from '../../src/bot/telegramCommands';
+import { startResponseMirror } from '../../src/bot/telegramJoinCommand';
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -63,6 +64,10 @@ import { buildAutoAcceptPayload } from '../../src/ui/autoAcceptUi';
 import { buildTemplatePayload } from '../../src/ui/templateUi';
 import { buildScreenshotPayload } from '../../src/ui/screenshotUi';
 import { logBuffer } from '../../src/utils/logBuffer';
+
+beforeEach(() => {
+  jest.clearAllMocks();
+});
 
 // ---------------------------------------------------------------------------
 // Helpers
