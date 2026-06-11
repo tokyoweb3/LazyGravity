@@ -62,7 +62,10 @@ export interface UiSyncResult {
 /** Antigravity UI DOM selector constants */
 const SELECTORS = {
     /** Chat input box: textbox excluding xterm */
-    CHAT_INPUT: 'div[role="textbox"]:not(.xterm-helper-textarea)',
+    CHAT_INPUT: [
+        'div[role="textbox"]:not(.xterm-helper-textarea)',
+        'div[role="combobox"][contenteditable="true"][aria-label="Message input"]',
+    ].join(', '),
     /** Submit button search target tag */
     SUBMIT_BUTTON_CONTAINER: 'button',
     /** Submit icon SVG class candidates */
@@ -1485,6 +1488,13 @@ export class CdpService extends EventEmitter {
         imageFilePaths?: string[],
     ): Promise<InjectResult> {
         logger.warn(`[CdpService] Initial message injection failed: ${firstError}. Retrying once after readiness check...`);
+
+        if (this.isTransientInjectError(firstError)) {
+            const target = await this.findWorkbenchTarget();
+            if (target?.webSocketDebuggerUrl) {
+                await this.openChatPanelViaKeyboard(target.webSocketDebuggerUrl);
+            }
+        }
 
         try {
             await this.reconnectOnDemand(INJECT_RETRY_READY_TIMEOUT_MS);
