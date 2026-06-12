@@ -128,6 +128,18 @@ describe('ChatSessionService', () => {
             expect(info.hasActiveChat).toBe(false);
         });
 
+        it('checks the highlighted conversation row when the header is the generic Agent label', async () => {
+            mockCdpService.call.mockResolvedValue({
+                result: { value: { title: 'Listing Repository Files', hasActiveChat: true } }
+            });
+
+            const info = await service.getCurrentSessionInfo(mockCdpService);
+            const expression = String(mockCdpService.call.mock.calls[0][1]?.expression || '');
+
+            expect(expression).toContain('focusBackground');
+            expect(info).toEqual({ title: 'Listing Repository Files', hasActiveChat: true });
+        });
+
         it('returns fallback values when a CDP call throws an exception', async () => {
             mockCdpService.call.mockRejectedValue(new Error('CDPエラー'));
 
@@ -210,6 +222,27 @@ describe('ChatSessionService', () => {
                 (c) => c.method === 'Input.dispatchKeyEvent' && c.params?.key === 'Escape',
             );
             expect(escapeCall).toBeDefined();
+        });
+
+        it('accepts an exact Past Conversations selection when the header remains Agent', async () => {
+            mockCdpService.call.mockImplementation(async (method: string, params: any) => {
+                const expression = String(params?.expression || '');
+                if (method !== 'Runtime.evaluate') return {};
+                if (expression.includes('const header = panel.querySelector')) {
+                    return { result: { value: { title: 'Agent', hasActiveChat: false } } };
+                }
+                if (expression.includes('Chat title not found in side panel')) {
+                    return { result: { value: { ok: false, error: 'not found' } } };
+                }
+                if (expression.includes('Past Conversations button not found')) {
+                    return { result: { value: { ok: true } } };
+                }
+                return { result: { value: null } };
+            });
+
+            const result = await service.activateSessionByTitle(mockCdpService, 'target-session');
+
+            expect(result).toEqual({ ok: true });
         });
 
         it('retries activation while UI is still loading and eventually succeeds', async () => {
