@@ -128,12 +128,12 @@ describe('CdpService - Cross-Platform Workspace Launching', () => {
             await service.discoverAndConnectForWorkspace(workspacePath);
 
             expect(mockRunCommand).toHaveBeenCalledWith(
-                'C:\\Users\\TestUser\\AppData\\Local\\Programs\\Antigravity\\Antigravity.exe',
+                'C:\\Users\\TestUser\\AppData\\Local\\Programs\\Antigravity IDE\\Antigravity IDE.exe',
                 ['--remote-debugging-port=9999', '--new-window', workspacePath]
             );
         });
 
-        it('should fallback to Antigravity.exe if LOCALAPPDATA is missing on Windows', async () => {
+        it('should fallback to Antigravity IDE.exe if LOCALAPPDATA is missing on Windows', async () => {
             setPlatform('win32');
             delete process.env.LOCALAPPDATA;
 
@@ -151,7 +151,36 @@ describe('CdpService - Cross-Platform Workspace Launching', () => {
             await service.discoverAndConnectForWorkspace(workspacePath);
 
             expect(mockRunCommand).toHaveBeenCalledWith(
-                'Antigravity.exe',
+                'Antigravity IDE.exe',
+                ['--remote-debugging-port=9999', '--new-window', workspacePath]
+            );
+        });
+
+        it('should honor ANTIGRAVITY_PATH when opening another Windows workspace', async () => {
+            setPlatform('win32');
+            process.env.ANTIGRAVITY_PATH = 'C:\\Custom\\Antigravity IDE.exe';
+
+            mockGetJson
+                .mockResolvedValueOnce([{
+                    id: 'existing-id',
+                    type: 'page',
+                    title: 'ExistingProject - Antigravity IDE',
+                    webSocketDebuggerUrl: 'ws://existing',
+                    url: 'file:///workbench'
+                }])
+                .mockResolvedValue([{
+                    id: 'new-id',
+                    type: 'page',
+                    title: 'MyProject - Antigravity IDE',
+                    webSocketDebuggerUrl: 'ws://new',
+                    url: 'file:///workbench'
+                }]);
+
+            const workspacePath = 'C:\\Source\\MyProject';
+            await service.discoverAndConnectForWorkspace(workspacePath);
+
+            expect(mockRunCommand).toHaveBeenCalledWith(
+                'C:\\Custom\\Antigravity IDE.exe',
                 ['--remote-debugging-port=9999', '--new-window', workspacePath]
             );
         });
