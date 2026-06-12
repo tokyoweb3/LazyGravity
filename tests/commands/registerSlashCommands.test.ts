@@ -92,6 +92,12 @@ describe('registerSlashCommands', () => {
         expect(names).toContain('output');
     });
 
+    it('registers both stop and shutdown commands', () => {
+        const names = slashCommands.map((cmd) => cmd.toJSON().name);
+        expect(names).toContain('stop');
+        expect(names).toContain('shutdown');
+    });
+
     beforeEach(() => {
         jest.clearAllMocks();
     });

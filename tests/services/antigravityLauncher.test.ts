@@ -3,9 +3,18 @@ import { EventEmitter } from 'events';
 jest.mock('http', () => ({
     get: jest.fn(),
 }));
+jest.mock('child_process', () => ({
+    execFile: jest.fn(),
+    spawn: jest.fn(),
+}));
 
 import * as http from 'http';
-import { ensureAntigravityRunning } from '../../src/services/antigravityLauncher';
+import { execFile, spawn } from 'child_process';
+import {
+    ensureAntigravityRunning,
+    startAntigravity,
+    stopAntigravity,
+} from '../../src/services/antigravityLauncher';
 import { logger } from '../../src/utils/logger';
 
 function mockHttpSuccessOnce(port: number): void {
@@ -86,6 +95,44 @@ describe('ensureAntigravityRunning', () => {
         expect(consoleWarnSpy).toHaveBeenCalledWith(
             expect.stringContaining('\x1b[33m[WARN]\x1b[0m'),
             expect.stringContaining('  Antigravity CDP ports are not responding')
+        );
+    });
+});
+
+describe('Antigravity lifecycle', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+    });
+
+    it('does not launch when the requested CDP port is already running', async () => {
+        mockHttpSuccessOnce(9222);
+
+        await expect(startAntigravity(9222)).resolves.toBe('already-running');
+
+        expect(spawn).not.toHaveBeenCalled();
+    });
+
+    it('reports already stopped when the requested CDP port is unavailable', async () => {
+        mockHttpErrorAlways();
+
+        await expect(stopAntigravity(9222)).resolves.toBe('already-stopped');
+
+        expect(execFile).not.toHaveBeenCalled();
+    });
+
+    it('stops the process owning the requested CDP port', async () => {
+        mockHttpSuccessOnce(9222);
+        (execFile as unknown as jest.Mock).mockImplementation(
+            (_file: string, _args: string[], _options: unknown, callback: (error?: Error) => void) => callback(),
+        );
+
+        await expect(stopAntigravity(9222)).resolves.toBe('stopped');
+
+        expect(execFile).toHaveBeenCalledWith(
+            'powershell.exe',
+            expect.arrayContaining(['-Command', expect.stringContaining('LocalPort 9222')]),
+            expect.objectContaining({ windowsHide: true }),
+            expect.any(Function),
         );
     });
 });
