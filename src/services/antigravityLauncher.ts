@@ -2,11 +2,14 @@ import { logger } from '../utils/logger';
 import { CDP_PORTS } from '../utils/cdpPorts';
 import { getAntigravityCdpHint } from '../utils/pathUtils';
 import * as http from 'http';
+import { execFile, spawn } from 'child_process';
+
+let lifecycleOperation: Promise<unknown> | null = null;
 
 /**
  * Check if CDP responds on the specified port.
  */
-function checkPort(port: number): Promise<boolean> {
+export function checkPort(port: number): Promise<boolean> {
     return new Promise((resolve) => {
         const req = http.get(`http://127.0.0.1:${port}/json/list`, (res) => {
             let data = '';
@@ -25,6 +28,65 @@ function checkPort(port: number): Promise<boolean> {
             req.destroy();
             resolve(false);
         });
+    });
+}
+
+async function waitForPort(port: number, timeoutMs: number = 30000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    do {
+        if (await checkPort(port)) return true;
+        await new Promise((resolve) => setTimeout(resolve, 500));
+    } while (Date.now() < deadline);
+    return false;
+}
+
+function serializeLifecycle<T>(operation: () => Promise<T>): Promise<T> {
+    if (lifecycleOperation) {
+        return lifecycleOperation.then(operation, operation);
+    }
+    const pending = operation();
+    lifecycleOperation = pending;
+    pending.finally(() => {
+        if (lifecycleOperation === pending) lifecycleOperation = null;
+    }).catch(() => {});
+    return pending;
+}
+
+export function startAntigravity(port: number = CDP_PORTS[0]): Promise<'started' | 'already-running'> {
+    return serializeLifecycle(async () => {
+        if (await checkPort(port)) return 'already-running';
+
+        const executable = process.env.ANTIGRAVITY_PATH || 'Antigravity IDE.exe';
+        const child = spawn(executable, [`--remote-debugging-port=${port}`], {
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: true,
+        });
+        child.unref();
+
+        if (!await waitForPort(port)) {
+            throw new Error(`Antigravity did not become ready on CDP port ${port}.`);
+        }
+        return 'started';
+    });
+}
+
+export function stopAntigravity(port: number = CDP_PORTS[0]): Promise<'stopped' | 'already-stopped'> {
+    return serializeLifecycle(async () => {
+        if (!await checkPort(port)) return 'already-stopped';
+
+        await new Promise<void>((resolve, reject) => {
+            const command = [
+                `$ownerPid=(Get-NetTCPConnection -State Listen -LocalPort ${port} -ErrorAction SilentlyContinue`,
+                '| Select-Object -First 1 -ExpandProperty OwningProcess);',
+                'if ($ownerPid) { Stop-Process -Id $ownerPid -Force }',
+            ].join(' ');
+            execFile('powershell.exe', ['-NoProfile', '-Command', command], { windowsHide: true }, (error) => {
+                if (error) reject(error);
+                else resolve();
+            });
+        });
+        return 'stopped';
     });
 }
 

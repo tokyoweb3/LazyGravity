@@ -70,6 +70,11 @@ const stopCommand = new SlashCommandBuilder()
     .setName('stop')
     .setDescription(t('Interrupt active LLM generation'));
 
+/** /shutdown command definition */
+const shutdownCommand = new SlashCommandBuilder()
+    .setName('shutdown')
+    .setDescription(t('Shut down Antigravity IDE'));
+
 /** /screenshot command definition */
 const screenshotCommand = new SlashCommandBuilder()
     .setName('screenshot')
@@ -219,6 +224,7 @@ export const slashCommands = [
     modelCommand,
     templateCommand,
     stopCommand,
+    shutdownCommand,
     screenshotCommand,
     statusCommand,
     autoAcceptCommand,

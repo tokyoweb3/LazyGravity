@@ -54,7 +54,7 @@ import { isSessionSelectId } from '../ui/sessionPickerUi';
 import { CdpService } from '../services/cdpService';
 import { ChatSessionService } from '../services/chatSessionService';
 import { ResponseMonitor, RESPONSE_SELECTORS, captureResponseMonitorBaseline } from '../services/responseMonitor';
-import { ensureAntigravityRunning } from '../services/antigravityLauncher';
+import { ensureAntigravityRunning, startAntigravity, stopAntigravity } from '../services/antigravityLauncher';
 import { getAntigravityCdpHint } from '../utils/pathUtils';
 import { AutoAcceptService } from '../services/autoAcceptService';
 import { PromptDispatcher } from '../services/promptDispatcher';
@@ -1076,6 +1076,9 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             }
 
             await bridge.pool.getOrConnect(workspacePath, { name: selectedAccount });
+        },
+        async () => {
+            await startAntigravity();
         },
     );
     const chatHandler = new ChatCommandHandler(
@@ -2151,6 +2154,21 @@ export async function handleSlashInteraction(
                 }
             } catch (e: any) {
                 await interaction.editReply({ content: `❌ Error during stop processing: ${e.message}` });
+            }
+            break;
+        }
+
+        case 'shutdown': {
+            try {
+                bridge.pool.disconnectAll();
+                const result = await stopAntigravity();
+                await interaction.editReply({
+                    content: result === 'stopped'
+                        ? '✅ Antigravity IDE shut down. Use `/project list` to start it again.'
+                        : 'ℹ️ Antigravity IDE is already stopped. Use `/project list` to start it.',
+                });
+            } catch (e: any) {
+                await interaction.editReply({ content: `❌ Failed to shut down Antigravity IDE: ${e.message}` });
             }
             break;
         }
