@@ -13,6 +13,11 @@ jest.mock('discord.js', () => {
             return this;
         }
 
+        setDefaultMemberPermissions(permissions: bigint) {
+            this.data.default_member_permissions = permissions.toString();
+            return this;
+        }
+
         addStringOption(fn: (option: any) => void) {
             const option = {
                 setName: jest.fn().mockReturnThis(),
@@ -69,6 +74,7 @@ jest.mock('discord.js', () => {
             applicationCommands: jest.fn().mockReturnValue('/global-commands'),
             applicationGuildCommands: jest.fn().mockReturnValue('/guild-commands'),
         },
+        PermissionFlagsBits: { Administrator: 8n },
     };
 });
 
@@ -96,6 +102,11 @@ describe('registerSlashCommands', () => {
         const names = slashCommands.map((cmd) => cmd.toJSON().name);
         expect(names).toContain('stop');
         expect(names).toContain('shutdown');
+    });
+
+    it('restricts shutdown visibility to administrators by default', () => {
+        const shutdown = slashCommands.find((cmd) => cmd.toJSON().name === 'shutdown');
+        expect(shutdown?.toJSON().default_member_permissions).toBe('8');
     });
 
     beforeEach(() => {

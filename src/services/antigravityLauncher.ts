@@ -1,6 +1,6 @@
 import { logger } from '../utils/logger';
 import { CDP_PORTS } from '../utils/cdpPorts';
-import { getAntigravityCdpHint } from '../utils/pathUtils';
+import { getAntigravityCdpHint, getAntigravityCliPath } from '../utils/pathUtils';
 import * as http from 'http';
 import { execFile, spawn } from 'child_process';
 
@@ -41,10 +41,9 @@ async function waitForPort(port: number, timeoutMs: number = 30000): Promise<boo
 }
 
 function serializeLifecycle<T>(operation: () => Promise<T>): Promise<T> {
-    if (lifecycleOperation) {
-        return lifecycleOperation.then(operation, operation);
-    }
-    const pending = operation();
+    const pending = lifecycleOperation
+        ? lifecycleOperation.then(operation, operation)
+        : operation();
     lifecycleOperation = pending;
     pending.finally(() => {
         if (lifecycleOperation === pending) lifecycleOperation = null;
@@ -56,7 +55,7 @@ export function startAntigravity(port: number = CDP_PORTS[0]): Promise<'started'
     return serializeLifecycle(async () => {
         if (await checkPort(port)) return 'already-running';
 
-        const executable = process.env.ANTIGRAVITY_PATH || 'Antigravity IDE.exe';
+        const executable = process.env.ANTIGRAVITY_PATH || getAntigravityCliPath();
         const child = spawn(executable, [`--remote-debugging-port=${port}`], {
             detached: true,
             stdio: 'ignore',
@@ -75,18 +74,59 @@ export function stopAntigravity(port: number = CDP_PORTS[0]): Promise<'stopped' 
     return serializeLifecycle(async () => {
         if (!await checkPort(port)) return 'already-stopped';
 
+        const targets = await getCdpTargets(port);
+        const identifiesAntigravity = targets.some((target) =>
+            JSON.stringify(target).toLowerCase().includes('antigravity'),
+        );
+        if (!identifiesAntigravity) {
+            throw new Error(`Refusing to stop non-Antigravity CDP service on port ${port}.`);
+        }
+
         await new Promise<void>((resolve, reject) => {
-            const command = [
-                `$ownerPid=(Get-NetTCPConnection -State Listen -LocalPort ${port} -ErrorAction SilentlyContinue`,
-                '| Select-Object -First 1 -ExpandProperty OwningProcess);',
-                'if ($ownerPid) { Stop-Process -Id $ownerPid -Force }',
-            ].join(' ');
-            execFile('powershell.exe', ['-NoProfile', '-Command', command], { windowsHide: true }, (error) => {
-                if (error) reject(error);
-                else resolve();
+            if (process.platform === 'win32') {
+                const command = [
+                    `$ownerPid=(Get-NetTCPConnection -State Listen -LocalPort ${port} -ErrorAction SilentlyContinue`,
+                    '| Select-Object -First 1 -ExpandProperty OwningProcess);',
+                    'if ($ownerPid) { Stop-Process -Id $ownerPid -Force }',
+                ].join(' ');
+                execFile('powershell.exe', ['-NoProfile', '-Command', command], { windowsHide: true }, (error) => {
+                    if (error) reject(error);
+                    else resolve();
+                });
+                return;
+            }
+
+            execFile('lsof', ['-tiTCP:' + port, '-sTCP:LISTEN'], (lookupError, stdout) => {
+                if (lookupError) return reject(lookupError);
+                const pid = String(stdout).trim().split(/\s+/)[0];
+                if (!/^\d+$/.test(pid)) return reject(new Error(`No listener PID found for CDP port ${port}.`));
+                execFile('kill', ['-TERM', pid], (killError) => killError ? reject(killError) : resolve());
             });
         });
         return 'stopped';
+    });
+}
+
+function getCdpTargets(port: number): Promise<Record<string, unknown>[]> {
+    return new Promise((resolve, reject) => {
+        const req = http.get(`http://127.0.0.1:${port}/json/list`, (res) => {
+            let data = '';
+            res.on('data', (chunk) => (data += chunk));
+            res.on('end', () => {
+                try {
+                    const parsed = JSON.parse(data);
+                    if (!Array.isArray(parsed)) throw new Error('CDP target list is not an array');
+                    resolve(parsed);
+                } catch (error) {
+                    reject(error);
+                }
+            });
+        });
+        req.on('error', reject);
+        req.setTimeout(2000, () => {
+            req.destroy();
+            reject(new Error(`Timed out reading CDP metadata from port ${port}.`));
+        });
     });
 }
 

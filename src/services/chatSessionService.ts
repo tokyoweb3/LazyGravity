@@ -519,15 +519,10 @@ function buildActivateViaPastConversationsScript(title: string): string {
                     pressEnter(selectedClickable);
                 }
             }
-            if (!selected && input) {
-                pressEnter(input);
-                await wait(220);
-                selected = true;
-            }
             if (!selected) {
                 return { ok: false, error: 'Conversation not found in Past Conversations' };
             }
-            return { ok: true };
+            return { ok: true, matchedTitle: wantedRaw };
         })();
     })()`;
 }
@@ -963,7 +958,7 @@ export class ChatSessionService {
 
         let usedPastConversations = false;
         let directResult: { ok: boolean; error?: string } = { ok: false, error: 'not attempted' };
-        let pastResult: { ok: boolean; error?: string } | null = null;
+        let pastResult: { ok: boolean; error?: string; matchedTitle?: string } | null = null;
         let clicked = false;
         let startedAt = Date.now();
         let attempts = 0;
@@ -1014,7 +1009,11 @@ export class ChatSessionService {
         // label even after an exact Past Conversations option is selected.
         // The selection script only reports success after matching the wanted
         // title inside this workspace's conversation picker.
-        if (usedPastConversations && after.title.trim() === 'Agent') {
+        if (
+            usedPastConversations &&
+            after.title.trim() === 'Agent' &&
+            pastResult?.matchedTitle?.trim() === title.trim()
+        ) {
             await this.closePanelWithEscape(cdpService);
             return { ok: true };
         }
@@ -1040,7 +1039,10 @@ export class ChatSessionService {
                     await this.closePanelWithEscape(cdpService);
                     return { ok: true };
                 }
-                if (afterPast.title.trim() === 'Agent') {
+                if (
+                    afterPast.title.trim() === 'Agent' &&
+                    viaPast.matchedTitle?.trim() === title.trim()
+                ) {
                     await this.closePanelWithEscape(cdpService);
                     return { ok: true };
                 }
@@ -1073,7 +1075,7 @@ export class ChatSessionService {
     private async tryActivateByPastConversations(
         cdpService: CdpService,
         title: string,
-    ): Promise<{ ok: boolean; error?: string }> {
+    ): Promise<{ ok: boolean; error?: string; matchedTitle?: string }> {
         return this.tryActivateWithScript(cdpService, buildActivateViaPastConversationsScript(title), true);
     }
 
@@ -1081,7 +1083,7 @@ export class ChatSessionService {
         cdpService: CdpService,
         script: string,
         awaitPromise: boolean,
-    ): Promise<{ ok: boolean; error?: string }> {
+    ): Promise<{ ok: boolean; error?: string; matchedTitle?: string }> {
         const contexts = cdpService.getContexts();
         let lastError = 'Activation script returned no match';
         for (const ctx of contexts) {
@@ -1094,7 +1096,12 @@ export class ChatSessionService {
                 });
                 const value = result?.result?.value;
                 if (value?.ok) {
-                    return { ok: true };
+                    return {
+                        ok: true,
+                        ...(typeof value.matchedTitle === 'string'
+                            ? { matchedTitle: value.matchedTitle }
+                            : {}),
+                    };
                 }
                 if (value?.error && typeof value.error === 'string') {
                     lastError = value.error;
