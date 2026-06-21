@@ -17,7 +17,7 @@ import {
 } from '../../src/services/antigravityLauncher';
 import { logger } from '../../src/utils/logger';
 
-function mockHttpSuccessOnce(port: number): void {
+function mockHttpSuccessOnce(port: number, targets: unknown[] = []): void {
     (http.get as unknown as jest.Mock).mockImplementationOnce((url: string, cb: (res: EventEmitter) => void) => {
         expect(url).toBe(`http://127.0.0.1:${port}/json/list`);
 
@@ -31,10 +31,24 @@ function mockHttpSuccessOnce(port: number): void {
         const res = new EventEmitter();
         cb(res);
         process.nextTick(() => {
-            res.emit('data', '[]');
+            res.emit('data', JSON.stringify(targets));
             res.emit('end');
         });
 
+        return req;
+    });
+}
+
+function mockHttpErrorOnce(port: number): void {
+    (http.get as unknown as jest.Mock).mockImplementationOnce((url: string) => {
+        expect(url).toBe(`http://127.0.0.1:${port}/json/list`);
+        const req = new EventEmitter() as EventEmitter & {
+            setTimeout: (ms: number, handler: () => void) => void;
+            destroy: jest.Mock;
+        };
+        req.setTimeout = () => {};
+        req.destroy = jest.fn();
+        process.nextTick(() => req.emit('error', new Error('connect failed')));
         return req;
     });
 }
@@ -112,6 +126,30 @@ describe('Antigravity lifecycle', () => {
         expect(spawn).not.toHaveBeenCalled();
     });
 
+    it('launches with the platform resolver when no path override is configured', async () => {
+        const originalPath = process.env.ANTIGRAVITY_PATH;
+        const originalLocalAppData = process.env.LOCALAPPDATA;
+        delete process.env.ANTIGRAVITY_PATH;
+        process.env.LOCALAPPDATA = 'C:\\Users\\test\\AppData\\Local';
+        mockHttpErrorOnce(9222);
+        mockHttpSuccessOnce(9222);
+        (spawn as unknown as jest.Mock).mockReturnValue({ unref: jest.fn() });
+
+        try {
+            await expect(startAntigravity(9222)).resolves.toBe('started');
+            expect(spawn).toHaveBeenCalledWith(
+                'C:\\Users\\test\\AppData\\Local\\Programs\\Antigravity IDE\\Antigravity IDE.exe',
+                ['--remote-debugging-port=9222'],
+                expect.objectContaining({ detached: true }),
+            );
+        } finally {
+            if (originalPath === undefined) delete process.env.ANTIGRAVITY_PATH;
+            else process.env.ANTIGRAVITY_PATH = originalPath;
+            if (originalLocalAppData === undefined) delete process.env.LOCALAPPDATA;
+            else process.env.LOCALAPPDATA = originalLocalAppData;
+        }
+    });
+
     it('reports already stopped when the requested CDP port is unavailable', async () => {
         mockHttpErrorAlways();
 
@@ -122,6 +160,7 @@ describe('Antigravity lifecycle', () => {
 
     it('stops the process owning the requested CDP port', async () => {
         mockHttpSuccessOnce(9222);
+        mockHttpSuccessOnce(9222, [{ title: 'project - Antigravity' }]);
         (execFile as unknown as jest.Mock).mockImplementation(
             (_file: string, _args: string[], _options: unknown, callback: (error?: Error) => void) => callback(),
         );
@@ -134,5 +173,13 @@ describe('Antigravity lifecycle', () => {
             expect.objectContaining({ windowsHide: true }),
             expect.any(Function),
         );
+    });
+
+    it('refuses to stop a non-Antigravity CDP listener', async () => {
+        mockHttpSuccessOnce(9222);
+        mockHttpSuccessOnce(9222, [{ title: 'Google Chrome' }]);
+
+        await expect(stopAntigravity(9222)).rejects.toThrow('Refusing to stop non-Antigravity');
+        expect(execFile).not.toHaveBeenCalled();
     });
 });
