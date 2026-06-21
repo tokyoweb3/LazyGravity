@@ -1,5 +1,6 @@
 import { ChatSessionService } from '../../src/services/chatSessionService';
 import { CdpService } from '../../src/services/cdpService';
+import { logger } from '../../src/utils/logger';
 
 jest.mock('../../src/services/cdpService');
 const MockedCdpService = CdpService as jest.MockedClass<typeof CdpService>;
@@ -225,6 +226,7 @@ describe('ChatSessionService', () => {
         });
 
         it('accepts an exact Past Conversations selection when the header remains Agent', async () => {
+            const debugSpy = jest.spyOn(logger, 'debug');
             mockCdpService.call.mockImplementation(async (method: string, params: any) => {
                 const expression = String(params?.expression || '');
                 if (method !== 'Runtime.evaluate') return {};
@@ -243,6 +245,11 @@ describe('ChatSessionService', () => {
             const result = await service.activateSessionByTitle(mockCdpService, 'target-session');
 
             expect(result).toEqual({ ok: true });
+            expect(debugSpy).toHaveBeenCalledWith(
+                expect.stringContaining(
+                    'usedPastConversations=true observedTitle="Agent" targetTitle="target-session"',
+                ),
+            );
         });
 
         it('retries activation while UI is still loading and eventually succeeds', async () => {
