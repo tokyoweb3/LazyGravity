@@ -1,4 +1,5 @@
 import { CdpService } from './cdpService';
+import { logger } from '../utils/logger';
 
 /** Session list item from the side panel */
 export interface SessionListItem {
@@ -1015,6 +1016,10 @@ export class ChatSessionService {
         // The selection script only reports success after matching the wanted
         // title inside this workspace's conversation picker.
         if (usedPastConversations && after.title.trim() === 'Agent') {
+            logger.debug(
+                `[ChatSession] Accepting Agent-header bypass: ` +
+                `usedPastConversations=true observedTitle="${after.title}" targetTitle="${title}"`,
+            );
             await this.closePanelWithEscape(cdpService);
             return { ok: true };
         }
@@ -1041,6 +1046,10 @@ export class ChatSessionService {
                     return { ok: true };
                 }
                 if (afterPast.title.trim() === 'Agent') {
+                    logger.debug(
+                        `[ChatSession] Accepting Agent-header bypass: ` +
+                        `usedPastConversations=true observedTitle="${afterPast.title}" targetTitle="${title}"`,
+                    );
                     await this.closePanelWithEscape(cdpService);
                     return { ok: true };
                 }

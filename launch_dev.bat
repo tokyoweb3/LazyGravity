@@ -14,7 +14,7 @@ if %errorlevel% equ 0 (
 echo [LazyLaunch] Found available CDP port: %AG_PORT%
 
 :: Path to Antigravity executable
-set "AG_PATH=%LOCALAPPDATA%\Programs\Antigravity\Antigravity.exe"
+set "AG_PATH=%LOCALAPPDATA%\Programs\Antigravity IDE\Antigravity IDE.exe"
 
 if not exist "%AG_PATH%" (
     echo [ERROR] Antigravity executable not found at: %AG_PATH%
