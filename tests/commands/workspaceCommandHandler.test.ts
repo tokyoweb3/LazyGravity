@@ -43,6 +43,7 @@ describe('WorkspaceCommandHandler', () => {
     }> = {}) => ({
         channelId: overrides.channelId ?? 'ch-1',
         guildId: overrides.guildId ?? 'guild-1',
+        user: { id: 'user-1' },
         editReply: jest.fn().mockResolvedValue(undefined),
     });
 
@@ -82,7 +83,7 @@ describe('WorkspaceCommandHandler', () => {
 
             await handler.handleShow(interaction as any);
 
-            expect(ensureIdeRunning).toHaveBeenCalledTimes(1);
+            expect(ensureIdeRunning).toHaveBeenCalledWith({ channelId: 'ch-1', userId: 'user-1' });
             expect(ensureIdeRunning.mock.invocationCallOrder[0])
                 .toBeLessThan(interaction.editReply.mock.invocationCallOrder[0]);
         });

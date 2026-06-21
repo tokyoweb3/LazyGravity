@@ -1077,8 +1077,18 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
 
             await bridge.pool.getOrConnect(workspacePath, { name: selectedAccount });
         },
-        async () => {
-            await startAntigravity();
+        async ({ channelId, userId }) => {
+            const accountName = resolveScopedAccountName({
+                channelId,
+                userId,
+                sessionAccountName: chatSessionRepo.findByChannelId(channelId)?.activeAccountName ?? null,
+                parentChannelId: null,
+                selectedAccountByChannel: bridge.selectedAccountByChannel,
+                channelPrefRepo,
+                accountPrefRepo,
+                accounts: config.antigravityAccounts,
+            });
+            await startAntigravity(accountPorts[accountName] ?? 9222);
         },
     );
     const chatHandler = new ChatCommandHandler(
@@ -2161,9 +2171,11 @@ export async function handleSlashInteraction(
         case 'shutdown': {
             try {
                 bridge.pool.disconnectAll();
-                const result = await stopAntigravity();
+                const ports = [...new Set(antigravityAccounts.map((account) => account.cdpPort))];
+                const results = await Promise.all(ports.map((port) => stopAntigravity(port)));
+                const stopped = results.some((result) => result === 'stopped');
                 await interaction.editReply({
-                    content: result === 'stopped'
+                    content: stopped
                         ? '✅ Antigravity IDE shut down. Use `/project list` to start it again.'
                         : 'ℹ️ Antigravity IDE is already stopped. Use `/project list` to start it.',
                 });

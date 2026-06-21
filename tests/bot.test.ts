@@ -28,6 +28,7 @@ jest.mock('discord.js', () => {
             const builder: any = {};
             builder.setName = jest.fn().mockReturnValue(builder);
             builder.setDescription = jest.fn().mockReturnValue(builder);
+            builder.setDefaultMemberPermissions = jest.fn().mockReturnValue(builder);
             builder.addStringOption = jest.fn().mockImplementation((fn) => {
                 const option: any = {};
                 option.setName = jest.fn().mockReturnValue(option);
@@ -74,6 +75,7 @@ jest.mock('discord.js', () => {
             applicationCommands: jest.fn().mockReturnValue('/commands'),
             applicationGuildCommands: jest.fn().mockReturnValue('/guild-commands'),
         },
+        PermissionFlagsBits: { Administrator: 8n },
         // Additional mocks used in wiring
         AttachmentBuilder: jest.fn(),
         ButtonBuilder: jest.fn().mockImplementation(() => ({

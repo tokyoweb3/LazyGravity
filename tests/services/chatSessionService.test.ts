@@ -211,7 +211,7 @@ describe('ChatSessionService', () => {
                 }
 
                 if (expression.includes('Past Conversations button not found')) {
-                    return { result: { value: { ok: true } } };
+                    return { result: { value: { ok: true, matchedTitle: 'target-session' } } };
                 }
 
                 return { result: { value: null } };
@@ -237,7 +237,7 @@ describe('ChatSessionService', () => {
                     return { result: { value: { ok: false, error: 'not found' } } };
                 }
                 if (expression.includes('Past Conversations button not found')) {
-                    return { result: { value: { ok: true } } };
+                    return { result: { value: { ok: true, matchedTitle: 'target-session' } } };
                 }
                 return { result: { value: null } };
             });
@@ -250,6 +250,28 @@ describe('ChatSessionService', () => {
                     'usedPastConversations=true observedTitle="Agent" targetTitle="target-session"',
                 ),
             );
+        });
+
+        it('rejects an Agent header when Past Conversations provides no deterministic match', async () => {
+            mockCdpService.call.mockImplementation(async (method: string, params: any) => {
+                const expression = String(params?.expression || '');
+                if (method !== 'Runtime.evaluate') return {};
+                if (expression.includes('const header = panel.querySelector')) {
+                    return { result: { value: { title: 'Agent', hasActiveChat: false } } };
+                }
+                if (expression.includes('Chat title not found in side panel')) {
+                    return { result: { value: { ok: false, error: 'not found' } } };
+                }
+                if (expression.includes('Past Conversations button not found')) {
+                    return { result: { value: { ok: true } } };
+                }
+                return { result: { value: null } };
+            });
+
+            const result = await service.activateSessionByTitle(mockCdpService, 'target-session');
+
+            expect(result.ok).toBe(false);
+            expect(result.error).toContain('did not match target title');
         });
 
         it('retries activation while UI is still loading and eventually succeeds', async () => {
