@@ -311,8 +311,13 @@ function buildActivateChatByTitleScript(title: string): string {
 
         const target = pick(exact) || pick(includes) || pick(fuzzy);
         if (!target) return { ok: false, error: 'Chat title not found in side panel' };
-        if (!clickTarget(target)) return { ok: false, error: 'Matched element is not clickable' };
-        return { ok: true };
+        const clickable = target.closest('button, [role="button"], a, li, [data-testid*="conversation"]') || target;
+        const rect = clickable.getBoundingClientRect();
+        return {
+            ok: true,
+            x: Math.round(rect.x + rect.width / 2),
+            y: Math.round(rect.y + rect.height / 2)
+        };
     })()`;
 }
 
@@ -540,22 +545,21 @@ function buildActivateViaPastConversationsScript(title: string): string {
                 await wait(260);
             }
 
-            let selected = clickByPatterns([wanted, wantedLoose], '[role="option"], li, button, [data-testid*="conversation"]');
-            if (selected) {
-                const selectedOption = pickBest(
-                    asArray(document.querySelectorAll('[role="option"], li, button, [data-testid*="conversation"]')),
-                    [wanted, wantedLoose],
-                );
-                const selectedClickable = getClickable(selectedOption);
-                if (selectedClickable) {
-                    selectedClickable.focus();
-                    pressEnter(selectedClickable);
-                }
-            }
-            if (!selected) {
+            const selectedOption = pickBest(
+                asArray(document.querySelectorAll('[role="option"], li, button, [data-testid*="conversation"]')),
+                [wanted, wantedLoose],
+            );
+            if (!selectedOption) {
                 return { ok: false, error: 'Conversation not found in Past Conversations' };
             }
-            return { ok: true, matchedTitle: wantedRaw };
+            const clickable = getClickable(selectedOption) || selectedOption;
+            const rect = clickable.getBoundingClientRect();
+            return {
+                ok: true,
+                x: Math.round(rect.x + rect.width / 2),
+                y: Math.round(rect.y + rect.height / 2),
+                matchedTitle: wantedRaw
+            };
         })();
     })()`;
 }
@@ -1137,6 +1141,9 @@ export class ChatSessionService {
                 });
                 const value = result?.result?.value;
                 if (value?.ok) {
+                    if (typeof value.x === 'number' && typeof value.y === 'number') {
+                        await this.cdpMouseClick(cdpService, value.x, value.y);
+                    }
                     return {
                         ok: true,
                         ...(typeof value.matchedTitle === 'string'
