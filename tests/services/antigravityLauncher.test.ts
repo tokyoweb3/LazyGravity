@@ -17,9 +17,9 @@ import {
 } from '../../src/services/antigravityLauncher';
 import { logger } from '../../src/utils/logger';
 
-function mockHttpSuccessOnce(port: number, targets: unknown[] = []): void {
+function mockHttpSuccessOnce(port: number, payload: unknown = []): void {
     (http.get as unknown as jest.Mock).mockImplementationOnce((url: string, cb: (res: EventEmitter) => void) => {
-        expect(url).toBe(`http://127.0.0.1:${port}/json/list`);
+        expect(url).toMatch(new RegExp(`http://127\\.0\\.0\\.1:${port}/json/(list|version)`));
 
         const req = new EventEmitter() as EventEmitter & {
             setTimeout: (ms: number, handler: () => void) => void;
@@ -31,7 +31,7 @@ function mockHttpSuccessOnce(port: number, targets: unknown[] = []): void {
         const res = new EventEmitter();
         cb(res);
         process.nextTick(() => {
-            res.emit('data', JSON.stringify(targets));
+            res.emit('data', JSON.stringify(payload));
             res.emit('end');
         });
 
@@ -41,7 +41,7 @@ function mockHttpSuccessOnce(port: number, targets: unknown[] = []): void {
 
 function mockHttpErrorOnce(port: number): void {
     (http.get as unknown as jest.Mock).mockImplementationOnce((url: string) => {
-        expect(url).toBe(`http://127.0.0.1:${port}/json/list`);
+        expect(url).toMatch(new RegExp(`http://127\\.0\\.0\\.1:${port}/json/(list|version)`));
         const req = new EventEmitter() as EventEmitter & {
             setTimeout: (ms: number, handler: () => void) => void;
             destroy: jest.Mock;
@@ -55,7 +55,7 @@ function mockHttpErrorOnce(port: number): void {
 
 function mockHttpErrorAlways(): void {
     (http.get as unknown as jest.Mock).mockImplementation((url: string, _cb: (res: EventEmitter) => void) => {
-        expect(url).toMatch(/http:\/\/127\.0\.0\.1:\d+\/json\/list/);
+        expect(url).toMatch(/http:\/\/127\.0\.0\.1:\d+\/json\/(list|version)/);
 
         const req = new EventEmitter() as EventEmitter & {
             setTimeout: (ms: number, handler: () => void) => void;
@@ -133,7 +133,7 @@ describe('Antigravity lifecycle', () => {
         process.env.LOCALAPPDATA = 'C:\\Users\\test\\AppData\\Local';
         mockHttpErrorOnce(9222);
         mockHttpSuccessOnce(9222);
-        (spawn as unknown as jest.Mock).mockReturnValue({ unref: jest.fn() });
+        (spawn as unknown as jest.Mock).mockReturnValue({ unref: jest.fn(), on: jest.fn() });
 
         try {
             await expect(startAntigravity(9222)).resolves.toBe('started');
@@ -160,7 +160,7 @@ describe('Antigravity lifecycle', () => {
 
     it('stops the process owning the requested CDP port', async () => {
         mockHttpSuccessOnce(9222);
-        mockHttpSuccessOnce(9222, [{ title: 'project - Antigravity' }]);
+        mockHttpSuccessOnce(9222, { Browser: 'Antigravity IDE' });
         (execFile as unknown as jest.Mock).mockImplementation(
             (_file: string, _args: string[], _options: unknown, callback: (error?: Error) => void) => callback(),
         );
@@ -177,7 +177,7 @@ describe('Antigravity lifecycle', () => {
 
     it('refuses to stop a non-Antigravity CDP listener', async () => {
         mockHttpSuccessOnce(9222);
-        mockHttpSuccessOnce(9222, [{ title: 'Google Chrome' }]);
+        mockHttpSuccessOnce(9222, { Browser: 'Google Chrome' });
 
         await expect(stopAntigravity(9222)).rejects.toThrow('Refusing to stop non-Antigravity');
         expect(execFile).not.toHaveBeenCalled();
