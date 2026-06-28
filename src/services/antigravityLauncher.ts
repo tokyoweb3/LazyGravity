@@ -86,7 +86,8 @@ export function stopAntigravity(port: number = CDP_PORTS[0]): Promise<'stopped' 
 
         const version = await getCdpVersion(port);
         const browser = typeof version?.Browser === 'string' ? version.Browser.toLowerCase() : '';
-        if (!browser.includes('antigravity')) {
+        const userAgent = typeof version?.['User-Agent'] === 'string' ? version['User-Agent'].toLowerCase() : '';
+        if (!browser.includes('antigravity') && !userAgent.includes('antigravity')) {
             throw new Error(`Refusing to stop non-Antigravity CDP service on port ${port}.`);
         }
 
