@@ -520,11 +520,6 @@ function buildActivateViaPastConversationsScript(title: string): string {
                     pressEnter(selectedClickable);
                 }
             }
-            if (!selected && input) {
-                pressEnter(input);
-                await wait(220);
-                selected = true;
-            }
             if (!selected) {
                 return { ok: false, error: 'Conversation not found in Past Conversations' };
             }

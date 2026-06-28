@@ -7,6 +7,10 @@ jest.mock('child_process', () => ({
     execFile: jest.fn(),
     spawn: jest.fn(),
 }));
+jest.mock('../../src/utils/pathUtils', () => ({
+    ...jest.requireActual('../../src/utils/pathUtils'),
+    getAntigravityCliPath: jest.fn(() => '/mock/antigravity'),
+}));
 
 import * as http from 'http';
 import { execFile, spawn } from 'child_process';
@@ -17,9 +21,9 @@ import {
 } from '../../src/services/antigravityLauncher';
 import { logger } from '../../src/utils/logger';
 
-function mockHttpSuccessOnce(port: number, targets: unknown[] = []): void {
+function mockHttpSuccessOnce(port: number, payload: unknown = []): void {
     (http.get as unknown as jest.Mock).mockImplementationOnce((url: string, cb: (res: EventEmitter) => void) => {
-        expect(url).toBe(`http://127.0.0.1:${port}/json/list`);
+        expect(url).toMatch(new RegExp(`http://127\\.0\\.0\\.1:${port}/json/(list|version)`));
 
         const req = new EventEmitter() as EventEmitter & {
             setTimeout: (ms: number, handler: () => void) => void;
@@ -31,7 +35,7 @@ function mockHttpSuccessOnce(port: number, targets: unknown[] = []): void {
         const res = new EventEmitter();
         cb(res);
         process.nextTick(() => {
-            res.emit('data', JSON.stringify(targets));
+            res.emit('data', JSON.stringify(payload));
             res.emit('end');
         });
 
@@ -41,7 +45,7 @@ function mockHttpSuccessOnce(port: number, targets: unknown[] = []): void {
 
 function mockHttpErrorOnce(port: number): void {
     (http.get as unknown as jest.Mock).mockImplementationOnce((url: string) => {
-        expect(url).toBe(`http://127.0.0.1:${port}/json/list`);
+        expect(url).toMatch(new RegExp(`http://127\\.0\\.0\\.1:${port}/json/(list|version)`));
         const req = new EventEmitter() as EventEmitter & {
             setTimeout: (ms: number, handler: () => void) => void;
             destroy: jest.Mock;
@@ -55,7 +59,7 @@ function mockHttpErrorOnce(port: number): void {
 
 function mockHttpErrorAlways(): void {
     (http.get as unknown as jest.Mock).mockImplementation((url: string, _cb: (res: EventEmitter) => void) => {
-        expect(url).toMatch(/http:\/\/127\.0\.0\.1:\d+\/json\/list/);
+        expect(url).toMatch(/http:\/\/127\.0\.0\.1:\d+\/json\/(list|version)/);
 
         const req = new EventEmitter() as EventEmitter & {
             setTimeout: (ms: number, handler: () => void) => void;
@@ -128,25 +132,22 @@ describe('Antigravity lifecycle', () => {
 
     it('launches with the platform resolver when no path override is configured', async () => {
         const originalPath = process.env.ANTIGRAVITY_PATH;
-        const originalLocalAppData = process.env.LOCALAPPDATA;
         delete process.env.ANTIGRAVITY_PATH;
-        process.env.LOCALAPPDATA = 'C:\\Users\\test\\AppData\\Local';
+
         mockHttpErrorOnce(9222);
         mockHttpSuccessOnce(9222);
-        (spawn as unknown as jest.Mock).mockReturnValue({ unref: jest.fn() });
+        (spawn as unknown as jest.Mock).mockReturnValue({ unref: jest.fn(), on: jest.fn() });
 
         try {
             await expect(startAntigravity(9222)).resolves.toBe('started');
             expect(spawn).toHaveBeenCalledWith(
-                'C:\\Users\\test\\AppData\\Local\\Programs\\Antigravity IDE\\Antigravity IDE.exe',
+                '/mock/antigravity',
                 ['--remote-debugging-port=9222'],
                 expect.objectContaining({ detached: true }),
             );
         } finally {
             if (originalPath === undefined) delete process.env.ANTIGRAVITY_PATH;
             else process.env.ANTIGRAVITY_PATH = originalPath;
-            if (originalLocalAppData === undefined) delete process.env.LOCALAPPDATA;
-            else process.env.LOCALAPPDATA = originalLocalAppData;
         }
     });
 
@@ -160,24 +161,45 @@ describe('Antigravity lifecycle', () => {
 
     it('stops the process owning the requested CDP port', async () => {
         mockHttpSuccessOnce(9222);
-        mockHttpSuccessOnce(9222, [{ title: 'project - Antigravity' }]);
+        mockHttpSuccessOnce(9222, { Browser: 'Antigravity IDE' });
         (execFile as unknown as jest.Mock).mockImplementation(
-            (_file: string, _args: string[], _options: unknown, callback: (error?: Error) => void) => callback(),
+            (file: string, _args: string[], optionsOrCallback: unknown, callback?: Function) => {
+                const cb = typeof optionsOrCallback === 'function' ? optionsOrCallback : callback;
+                if (file === 'lsof') {
+                    cb!(null, '12345\n');
+                } else {
+                    cb!();
+                }
+            }
         );
 
         await expect(stopAntigravity(9222)).resolves.toBe('stopped');
 
-        expect(execFile).toHaveBeenCalledWith(
-            'powershell.exe',
-            expect.arrayContaining(['-Command', expect.stringContaining('LocalPort 9222')]),
-            expect.objectContaining({ windowsHide: true }),
-            expect.any(Function),
-        );
+        const isWindows = process.platform === 'win32';
+        if (isWindows) {
+            expect(execFile).toHaveBeenCalledWith(
+                'powershell.exe',
+                expect.arrayContaining(['-Command', expect.stringContaining('LocalPort 9222')]),
+                expect.objectContaining({ windowsHide: true }),
+                expect.any(Function),
+            );
+        } else {
+            expect(execFile).toHaveBeenCalledWith(
+                'lsof',
+                ['-tiTCP:9222', '-sTCP:LISTEN'],
+                expect.any(Function),
+            );
+            expect(execFile).toHaveBeenCalledWith(
+                'kill',
+                ['-TERM', '12345'],
+                expect.any(Function),
+            );
+        }
     });
 
     it('refuses to stop a non-Antigravity CDP listener', async () => {
         mockHttpSuccessOnce(9222);
-        mockHttpSuccessOnce(9222, [{ title: 'Google Chrome' }]);
+        mockHttpSuccessOnce(9222, { Browser: 'Google Chrome' });
 
         await expect(stopAntigravity(9222)).rejects.toThrow('Refusing to stop non-Antigravity');
         expect(execFile).not.toHaveBeenCalled();

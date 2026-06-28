@@ -61,6 +61,16 @@ export function startAntigravity(port: number = CDP_PORTS[0]): Promise<'started'
             stdio: 'ignore',
             windowsHide: true,
         });
+
+        const spawnError = await new Promise<Error | null>((resolve) => {
+            child.on('error', resolve);
+            setTimeout(() => resolve(null), 100);
+        });
+
+        if (spawnError) {
+            throw spawnError;
+        }
+
         child.unref();
 
         if (!await waitForPort(port)) {
@@ -74,11 +84,9 @@ export function stopAntigravity(port: number = CDP_PORTS[0]): Promise<'stopped' 
     return serializeLifecycle(async () => {
         if (!await checkPort(port)) return 'already-stopped';
 
-        const targets = await getCdpTargets(port);
-        const identifiesAntigravity = targets.some((target) =>
-            JSON.stringify(target).toLowerCase().includes('antigravity'),
-        );
-        if (!identifiesAntigravity) {
+        const version = await getCdpVersion(port);
+        const browser = typeof version?.Browser === 'string' ? version.Browser.toLowerCase() : '';
+        if (!browser.includes('antigravity')) {
             throw new Error(`Refusing to stop non-Antigravity CDP service on port ${port}.`);
         }
 
@@ -104,6 +112,27 @@ export function stopAntigravity(port: number = CDP_PORTS[0]): Promise<'stopped' 
             });
         });
         return 'stopped';
+    });
+}
+
+function getCdpVersion(port: number): Promise<Record<string, unknown>> {
+    return new Promise((resolve, reject) => {
+        const req = http.get(`http://127.0.0.1:${port}/json/version`, (res) => {
+            let data = '';
+            res.on('data', (chunk) => (data += chunk));
+            res.on('end', () => {
+                try {
+                    resolve(JSON.parse(data));
+                } catch (error) {
+                    reject(error);
+                }
+            });
+        });
+        req.on('error', reject);
+        req.setTimeout(2000, () => {
+            req.destroy();
+            reject(new Error(`Timed out reading CDP version from port ${port}.`));
+        });
     });
 }
 
