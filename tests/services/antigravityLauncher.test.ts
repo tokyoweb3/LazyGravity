@@ -204,4 +204,37 @@ describe('Antigravity lifecycle', () => {
         await expect(stopAntigravity(9222)).rejects.toThrow('Refusing to stop non-Antigravity');
         expect(execFile).not.toHaveBeenCalled();
     });
+
+    it('stops the process when only User-Agent contains Antigravity', async () => {
+        mockHttpSuccessOnce(9222);
+        mockHttpSuccessOnce(9222, { Browser: 'Google Chrome', 'User-Agent': 'Mozilla/5.0 AntigravityIDE/1.0' });
+        (execFile as unknown as jest.Mock).mockImplementation(
+            (file: string, _args: string[], optionsOrCallback: unknown, callback?: Function) => {
+                const cb = typeof optionsOrCallback === 'function' ? optionsOrCallback : callback;
+                if (file === 'lsof') {
+                    cb!(null, '12345\n');
+                } else {
+                    cb!();
+                }
+            }
+        );
+
+        await expect(stopAntigravity(9222)).resolves.toBe('stopped');
+
+        const isWindows = process.platform === 'win32';
+        if (isWindows) {
+            expect(execFile).toHaveBeenCalledWith(
+                'powershell.exe',
+                expect.arrayContaining(['-Command', expect.stringContaining('LocalPort 9222')]),
+                expect.objectContaining({ windowsHide: true }),
+                expect.any(Function),
+            );
+        } else {
+            expect(execFile).toHaveBeenCalledWith(
+                'lsof',
+                ['-tiTCP:9222', '-sTCP:LISTEN'],
+                expect.any(Function),
+            );
+        }
+    });
 });
