@@ -7,6 +7,10 @@ jest.mock('child_process', () => ({
     execFile: jest.fn(),
     spawn: jest.fn(),
 }));
+jest.mock('../../src/utils/pathUtils', () => ({
+    ...jest.requireActual('../../src/utils/pathUtils'),
+    getAntigravityCliPath: jest.fn(() => '/mock/antigravity'),
+}));
 
 import * as http from 'http';
 import { execFile, spawn } from 'child_process';
@@ -128,9 +132,8 @@ describe('Antigravity lifecycle', () => {
 
     it('launches with the platform resolver when no path override is configured', async () => {
         const originalPath = process.env.ANTIGRAVITY_PATH;
-        const originalLocalAppData = process.env.LOCALAPPDATA;
         delete process.env.ANTIGRAVITY_PATH;
-        process.env.LOCALAPPDATA = 'C:\\Users\\test\\AppData\\Local';
+
         mockHttpErrorOnce(9222);
         mockHttpSuccessOnce(9222);
         (spawn as unknown as jest.Mock).mockReturnValue({ unref: jest.fn(), on: jest.fn() });
@@ -138,15 +141,13 @@ describe('Antigravity lifecycle', () => {
         try {
             await expect(startAntigravity(9222)).resolves.toBe('started');
             expect(spawn).toHaveBeenCalledWith(
-                'C:\\Users\\test\\AppData\\Local\\Programs\\Antigravity IDE\\Antigravity IDE.exe',
+                '/mock/antigravity',
                 ['--remote-debugging-port=9222'],
                 expect.objectContaining({ detached: true }),
             );
         } finally {
             if (originalPath === undefined) delete process.env.ANTIGRAVITY_PATH;
             else process.env.ANTIGRAVITY_PATH = originalPath;
-            if (originalLocalAppData === undefined) delete process.env.LOCALAPPDATA;
-            else process.env.LOCALAPPDATA = originalLocalAppData;
         }
     });
 
