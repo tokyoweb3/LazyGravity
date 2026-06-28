@@ -539,16 +539,23 @@ function buildActivateViaPastConversationsScript(title: string): string {
             clickByPatterns(['select a conversation', 'select conversation', 'conversation'], '[role="button"], button, [aria-haspopup], [data-testid*="conversation"]');
             await wait(220);
 
-            const input = findSearchInput();
-            if (input) {
-                setInputValue(input, wantedRaw);
-                await wait(260);
-            }
-
-            const selectedOption = pickBest(
+            let selectedOption = pickBest(
                 asArray(document.querySelectorAll('[role="option"], li, button, [data-testid*="conversation"]')),
                 [wanted, wantedLoose],
             );
+
+            if (!selectedOption) {
+                const input = findSearchInput();
+                if (input) {
+                    setInputValue(input, wantedRaw);
+                    await wait(600);
+                    selectedOption = pickBest(
+                        asArray(document.querySelectorAll('[role="option"], li, button, [data-testid*="conversation"]')),
+                        [wanted, wantedLoose],
+                    );
+                }
+            }
+
             if (!selectedOption) {
                 return { ok: false, error: 'Conversation not found in Past Conversations' };
             }
@@ -1009,7 +1016,13 @@ export class ChatSessionService {
             if (!clicked) {
                 pastResult = await this.tryActivateByPastConversations(cdpService, title);
                 clicked = pastResult.ok;
-                usedPastConversations = pastResult.ok;
+                // If we attempted past conversations, the panel is open (unless it clicked something)
+                usedPastConversations = true;
+                
+                // If it failed to click anything, the panel is still open and blocking the UI.
+                if (!clicked) {
+                    await this.closePanelWithEscape(cdpService);
+                }
             }
 
             if (clicked) {
@@ -1096,6 +1109,7 @@ export class ChatSessionService {
                     error: `Past Conversations selected a different chat (expected="${title}", actual="${afterPast.title}")`,
                 };
             }
+            await this.closePanelWithEscape(cdpService);
             return {
                 ok: false,
                 error:
