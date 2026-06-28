@@ -163,17 +163,38 @@ describe('Antigravity lifecycle', () => {
         mockHttpSuccessOnce(9222);
         mockHttpSuccessOnce(9222, { Browser: 'Antigravity IDE' });
         (execFile as unknown as jest.Mock).mockImplementation(
-            (_file: string, _args: string[], _options: unknown, callback: (error?: Error) => void) => callback(),
+            (file: string, _args: string[], optionsOrCallback: unknown, callback?: Function) => {
+                const cb = typeof optionsOrCallback === 'function' ? optionsOrCallback : callback;
+                if (file === 'lsof') {
+                    cb!(null, '12345\n');
+                } else {
+                    cb!();
+                }
+            }
         );
 
         await expect(stopAntigravity(9222)).resolves.toBe('stopped');
 
-        expect(execFile).toHaveBeenCalledWith(
-            'powershell.exe',
-            expect.arrayContaining(['-Command', expect.stringContaining('LocalPort 9222')]),
-            expect.objectContaining({ windowsHide: true }),
-            expect.any(Function),
-        );
+        const isWindows = process.platform === 'win32';
+        if (isWindows) {
+            expect(execFile).toHaveBeenCalledWith(
+                'powershell.exe',
+                expect.arrayContaining(['-Command', expect.stringContaining('LocalPort 9222')]),
+                expect.objectContaining({ windowsHide: true }),
+                expect.any(Function),
+            );
+        } else {
+            expect(execFile).toHaveBeenCalledWith(
+                'lsof',
+                ['-tiTCP:9222', '-sTCP:LISTEN'],
+                expect.any(Function),
+            );
+            expect(execFile).toHaveBeenCalledWith(
+                'kill',
+                ['-TERM', '12345'],
+                expect.any(Function),
+            );
+        }
     });
 
     it('refuses to stop a non-Antigravity CDP listener', async () => {
