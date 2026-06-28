@@ -272,11 +272,25 @@ function buildActivateChatByTitleScript(title: string): string {
             return true;
         };
 
+        const getWords = (str) => {
+            return (str || '').toLowerCase()
+                .replace(/[^a-z0-9\u3040-\u30ff\u4e00-\u9faf\s]/g, '')
+                .split(/\s+/)
+                .filter(w => w.length > 1 && !/^(ago|wks?|days?|mins?|hours?|hrs?|secs?|weeks?|months?|years?)$/i.test(w));
+        };
+        const wordsMatch = (t, p) => {
+            const tWords = getWords(t);
+            const pWords = getWords(p);
+            if (pWords.length === 0) return false;
+            return pWords.every(pw => tWords.some(tw => tw.startsWith(pw) || pw.startsWith(tw)));
+        };
+
         const nodes = Array.from(panel.querySelectorAll('button, [role="button"], a, li, div, span'))
             .filter(isVisible);
 
         const exact = [];
         const includes = [];
+        const fuzzy = [];
         for (const node of nodes) {
             const text = normalize(node.textContent || '');
             if (!text) continue;
@@ -284,6 +298,8 @@ function buildActivateChatByTitleScript(title: string): string {
                 exact.push({ node, textLength: text.length });
             } else if (text.includes(wanted)) {
                 includes.push({ node, textLength: text.length });
+            } else if (wordsMatch(text, wantedRaw)) {
+                fuzzy.push({ node, textLength: text.length });
             }
         }
 
@@ -293,7 +309,7 @@ function buildActivateChatByTitleScript(title: string): string {
             return list[0].node;
         };
 
-        const target = pick(exact) || pick(includes);
+        const target = pick(exact) || pick(includes) || pick(fuzzy);
         if (!target) return { ok: false, error: 'Chat title not found in side panel' };
         if (!clickTarget(target)) return { ok: false, error: 'Matched element is not clickable' };
         return { ok: true };
@@ -340,6 +356,19 @@ function buildActivateViaPastConversationsScript(title: string): string {
             const clickable = el.closest('button, [role="button"], a, li, [role="option"], [data-testid*="conversation"]');
             return clickable instanceof HTMLElement ? clickable : (el instanceof HTMLElement ? el : null);
         };
+        const getWords = (str) => {
+            return (str || '').toLowerCase()
+                .replace(/[^a-z0-9\u3040-\u30ff\u4e00-\u9faf\s]/g, '')
+                .split(/\s+/)
+                .filter(w => w.length > 1 && !/^(ago|wks?|days?|mins?|hours?|hrs?|secs?|weeks?|months?|years?)$/i.test(w));
+        };
+        const wordsMatch = (t, p) => {
+            const tWords = getWords(t);
+            const pWords = getWords(p);
+            if (pWords.length === 0) return false;
+            return pWords.every(pw => tWords.some(tw => tw.startsWith(pw) || pw.startsWith(tw)));
+        };
+
         const pickBest = (elements, patterns) => {
             const matched = [];
             for (const el of elements) {
@@ -357,6 +386,9 @@ function buildActivateViaPastConversationsScript(title: string): string {
                         (pLoose && (textLoose === pLoose || textLoose.includes(pLoose)))
                     ) {
                         matched.push({ el, score: Math.abs(text.length - pattern.length) });
+                        break;
+                    } else if (wordsMatch(text, pattern)) {
+                        matched.push({ el, score: Math.abs(text.length - pattern.length) + 1000 });
                         break;
                     }
                 }
