@@ -235,6 +235,11 @@ describe('Antigravity lifecycle', () => {
                 ['-tiTCP:9222', '-sTCP:LISTEN'],
                 expect.any(Function),
             );
+            expect(execFile).toHaveBeenCalledWith(
+                'kill',
+                ['-TERM', '12345'],
+                expect.any(Function),
+            );
         }
     });
 });
