@@ -93,6 +93,7 @@ Just type in any bound channel:
 - `🔗 /join` — Join an existing Antigravity session (shows up to 20 recent sessions)
 - `🔗 /mirror` — Toggle PC→Discord message mirroring for the current session
 - `🛑 /stop` — Force-stop a running Antigravity task
+- `🛑 /shutdown` — shutdown the IDE while keep the active CDP project connections and session bindings
 - `📸 /screenshot` — Capture and send Antigravity's current screen
 - `🔧 /status` — Show bot connection status, current mode, and active project
 - `✅ /autoaccept [on|off|status]` — Toggle auto-approval of file edit dialogs
