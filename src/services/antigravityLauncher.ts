@@ -90,7 +90,7 @@ export function startAntigravity(port: number = CDP_PORTS[0]): Promise<'started'
 }
 
 /**
- * Gracefully stops the running Antigravity IDE CDP process on the specified port.
+ * Stops the running Antigravity IDE CDP process on the specified port (SIGTERM on POSIX, Stop-Process -Force on Windows).
  */
 export function stopAntigravity(port: number = CDP_PORTS[0]): Promise<'stopped' | 'already-stopped'> {
     return serializeLifecycle(async () => {
