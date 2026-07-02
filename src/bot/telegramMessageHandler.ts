@@ -238,6 +238,11 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
             const effectivePrompt = promptText || 'Please review the attached images and respond accordingly.';
             const baseline = await captureResponseMonitorBaseline(cdp);
 
+            // Register echo hash before injection to avoid race window
+            const userMsgDetector = deps.bridge.pool.getUserMessageDetector?.(projectName, selectedAccount);
+            if (userMsgDetector) {
+                userMsgDetector.addEchoHash(effectivePrompt);
+            }
             // Inject prompt (with or without images) into Antigravity
             logger.prompt(effectivePrompt);
             let injectResult;
@@ -269,6 +274,8 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
                 }).catch(logger.error);
                 return;
             }
+
+
 
             // Monitor the response
             const channel = message.channel;

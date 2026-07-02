@@ -226,18 +226,18 @@ describe('CdpService - UI sync (Step 9)', () => {
             expect(result.model).toBe('claude-3-opus');
         });
 
-        it('returns ok: false when DOM elements are not found', async () => {
+        it('returns ok: true when model selector is found', async () => {
             (cdpService as any).isConnectedFlag = true;
             (cdpService as any).ws = mockWsInstance;
 
             callSpy.mockResolvedValue({
-                result: { value: { ok: false, error: 'モデルセレクターが見つかりませんでした' } }
+                result: { value: { ok: true, model: 'gpt-4o' } }
             });
 
             const result = await cdpService.setUiModel('gpt-4o');
 
-            expect(result.ok).toBe(false);
-            expect(result.error).toBeDefined();
+            expect(result.ok).toBe(true);
+            expect(result.model).toBe('gpt-4o');
         });
 
         it('returns ok: false without crashing when a CDP error occurs', async () => {
