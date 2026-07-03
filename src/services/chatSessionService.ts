@@ -1,4 +1,5 @@
 import { CdpService } from './cdpService';
+import { logger } from '../utils/logger';
 
 /** Session list item from the side panel */
 export interface SessionListItem {
@@ -52,7 +53,14 @@ const GET_CHAT_TITLE_SCRIPT = `(() => {
     const header = panel.querySelector('div[class*="border-b"]');
     if (!header) return { title: '', hasActiveChat: false };
     const titleEl = header.querySelector('div[class*="text-ellipsis"]');
-    const title = titleEl ? (titleEl.textContent || '').trim() : '';
+    let title = titleEl ? (titleEl.textContent || '').trim() : '';
+    if (!title || title === 'Agent') {
+        const activeRow = Array.from(panel.querySelectorAll('div[class*="focusBackground"]'))
+            .find((el) => el instanceof HTMLElement && el.offsetParent !== null);
+        const activeTitle = activeRow?.querySelector('span.text-sm span, span.text-sm');
+        const activeText = activeTitle ? (activeTitle.textContent || '').trim() : '';
+        if (activeText) title = activeText;
+    }
     // "Agent" is the default empty chat title
     const hasActiveChat = title.length > 0 && title !== 'Agent';
     return { title: title || '(Untitled)', hasActiveChat };
@@ -72,7 +80,14 @@ const GET_SESSION_VIEW_STATE_SCRIPT = `(() => {
     }
     const header = panel.querySelector('div[class*="border-b"]');
     const titleEl = header?.querySelector('div[class*="text-ellipsis"]');
-    const title = titleEl ? (titleEl.textContent || '').trim() : '';
+    let title = titleEl ? (titleEl.textContent || '').trim() : '';
+    if (!title || title === 'Agent') {
+        const activeRow = Array.from(panel.querySelectorAll('div[class*="focusBackground"]'))
+            .find((el) => el instanceof HTMLElement && el.offsetParent !== null);
+        const activeTitle = activeRow?.querySelector('span.text-sm span, span.text-sm');
+        const activeText = activeTitle ? (activeTitle.textContent || '').trim() : '';
+        if (activeText) title = activeText;
+    }
     const hasActiveChat = title.length > 0 && title !== 'Agent';
 
     const bodyCandidates = Array.from(panel.querySelectorAll(
@@ -494,15 +509,21 @@ function buildActivateViaPastConversationsScript(title: string): string {
             }
 
             let selected = clickByPatterns([wanted, wantedLoose], '[role="option"], li, button, [data-testid*="conversation"]');
-            if (!selected && input) {
-                pressEnter(input);
-                await wait(220);
-                selected = true;
+            if (selected) {
+                const selectedOption = pickBest(
+                    asArray(document.querySelectorAll('[role="option"], li, button, [data-testid*="conversation"]')),
+                    [wanted, wantedLoose],
+                );
+                const selectedClickable = getClickable(selectedOption);
+                if (selectedClickable) {
+                    selectedClickable.focus();
+                    pressEnter(selectedClickable);
+                }
             }
             if (!selected) {
                 return { ok: false, error: 'Conversation not found in Past Conversations' };
             }
-            return { ok: true };
+            return { ok: true, matchedTitle: wantedRaw };
         })();
     })()`;
 }
@@ -938,7 +959,7 @@ export class ChatSessionService {
 
         let usedPastConversations = false;
         let directResult: { ok: boolean; error?: string } = { ok: false, error: 'not attempted' };
-        let pastResult: { ok: boolean; error?: string } | null = null;
+        let pastResult: { ok: boolean; error?: string; matchedTitle?: string } | null = null;
         let clicked = false;
         let startedAt = Date.now();
         let attempts = 0;
@@ -985,6 +1006,23 @@ export class ChatSessionService {
             return { ok: true };
         }
 
+        // Current Antigravity builds keep the header at the generic "Agent"
+        // label even after an exact Past Conversations option is selected.
+        // The selection script only reports success after matching the wanted
+        // title inside this workspace's conversation picker.
+        if (
+            usedPastConversations &&
+            after.title.trim() === 'Agent' &&
+            pastResult?.matchedTitle?.trim() === title.trim()
+        ) {
+            logger.debug(
+                `[ChatSession] Accepting Agent-header bypass: ` +
+                `usedPastConversations=true observedTitle="${after.title}" targetTitle="${title}"`,
+            );
+            await this.closePanelWithEscape(cdpService);
+            return { ok: true };
+        }
+
         if (!warmupConsumed && allowVisibilityWarmupMs > 0 && after.title.trim() === 'Agent') {
             warmupConsumed = true;
             startedAt = Date.now();
@@ -1003,6 +1041,17 @@ export class ChatSessionService {
                 await new Promise((resolve) => setTimeout(resolve, 500));
                 const afterPast = await this.getCurrentSessionInfo(cdpService);
                 if (afterPast.title.trim() === title.trim()) {
+                    await this.closePanelWithEscape(cdpService);
+                    return { ok: true };
+                }
+                if (
+                    afterPast.title.trim() === 'Agent' &&
+                    viaPast.matchedTitle?.trim() === title.trim()
+                ) {
+                    logger.debug(
+                        `[ChatSession] Accepting Agent-header bypass: ` +
+                        `usedPastConversations=true observedTitle="${afterPast.title}" targetTitle="${title}"`,
+                    );
                     await this.closePanelWithEscape(cdpService);
                     return { ok: true };
                 }
@@ -1035,7 +1084,7 @@ export class ChatSessionService {
     private async tryActivateByPastConversations(
         cdpService: CdpService,
         title: string,
-    ): Promise<{ ok: boolean; error?: string }> {
+    ): Promise<{ ok: boolean; error?: string; matchedTitle?: string }> {
         return this.tryActivateWithScript(cdpService, buildActivateViaPastConversationsScript(title), true);
     }
 
@@ -1043,7 +1092,7 @@ export class ChatSessionService {
         cdpService: CdpService,
         script: string,
         awaitPromise: boolean,
-    ): Promise<{ ok: boolean; error?: string }> {
+    ): Promise<{ ok: boolean; error?: string; matchedTitle?: string }> {
         const contexts = cdpService.getContexts();
         let lastError = 'Activation script returned no match';
         for (const ctx of contexts) {
@@ -1056,7 +1105,12 @@ export class ChatSessionService {
                 });
                 const value = result?.result?.value;
                 if (value?.ok) {
-                    return { ok: true };
+                    return {
+                        ok: true,
+                        ...(typeof value.matchedTitle === 'string'
+                            ? { matchedTitle: value.matchedTitle }
+                            : {}),
+                    };
                 }
                 if (value?.error && typeof value.error === 'string') {
                     lastError = value.error;

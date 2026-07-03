@@ -22,7 +22,12 @@ exit /b 1
 
 :found
 echo [INFO] Starting Antigravity on port %SELECTED_PORT%...
-start "" "Antigravity.exe" --remote-debugging-port=%SELECTED_PORT%
+if defined LOCALAPPDATA (
+    set "AG_EXE=%LOCALAPPDATA%\Programs\Antigravity IDE\Antigravity IDE.exe"
+) else (
+    set "AG_EXE=Antigravity IDE.exe"
+)
+start "" "%AG_EXE%" --remote-debugging-port=%SELECTED_PORT%
 echo [OK] Launch complete! CDP port: %SELECTED_PORT%
 timeout /t 2 >nul
 exit /b 0

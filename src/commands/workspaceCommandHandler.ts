@@ -33,6 +33,7 @@ export class WorkspaceCommandHandler {
         sourceChannelId: string,
         userId: string,
     ) => Promise<void>;
+    private readonly ensureIdeRunning?: (scope: { channelId: string; userId: string }) => Promise<void>;
 
     private processingWorkspaces: Set<string> = new Set();
 
@@ -81,18 +82,24 @@ export class WorkspaceCommandHandler {
             sourceChannelId: string,
             userId: string,
         ) => Promise<void>,
+        ensureIdeRunning?: (scope: { channelId: string; userId: string }) => Promise<void>,
     ) {
         this.bindingRepo = bindingRepo;
         this.chatSessionRepo = chatSessionRepo;
         this.workspaceService = workspaceService;
         this.channelManager = channelManager;
         this.onSessionChannelCreated = onSessionChannelCreated;
+        this.ensureIdeRunning = ensureIdeRunning;
     }
 
     /**
      * /project list -- Display project list via select menu
      */
     public async handleShow(interaction: ChatInputCommandInteraction): Promise<void> {
+        await this.ensureIdeRunning?.({
+            channelId: interaction.channelId,
+            userId: interaction.user.id,
+        });
         const workspaces = this.workspaceService.scanWorkspaces();
         const { embeds, components } = buildProjectListUI(workspaces, 0);
 

@@ -58,7 +58,7 @@ describe('pathUtils', () => {
         it('returns exe hint on Windows', () => {
             withPlatform('win32', () => {
                 expect(getAntigravityCdpHint(9222)).toBe(
-                    'Antigravity.exe --remote-debugging-port=9222',
+                    '"Antigravity IDE.exe" --remote-debugging-port=9222',
                 );
             });
         });
