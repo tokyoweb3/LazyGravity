@@ -1,4 +1,11 @@
-import { ChatSessionService } from '../../src/services/chatSessionService';
+/**
+ * @jest-environment jsdom
+ */
+
+import {
+    ChatSessionService,
+    buildActivateViaPastConversationsScript,
+} from '../../src/services/chatSessionService';
 import { CdpService } from '../../src/services/cdpService';
 import { logger } from '../../src/utils/logger';
 
@@ -654,5 +661,97 @@ describe('ChatSessionService', () => {
             expect(sessions).toHaveLength(1);
             expect(sessions[0].title).toBe('Chat Session Only');
         });
+    });
+
+    describe('buildActivateViaPastConversationsScript() matchedTitle verification', () => {
+        // JSDOM performs no layout, so `offsetParent` is always null; the
+        // script's `isVisible` helper depends on it. Make attached elements
+        // report themselves as visible for the duration of these tests.
+        let originalOffsetParent: PropertyDescriptor | undefined;
+        beforeAll(() => {
+            originalOffsetParent = Object.getOwnPropertyDescriptor(
+                window.HTMLElement.prototype,
+                'offsetParent',
+            );
+            Object.defineProperty(window.HTMLElement.prototype, 'offsetParent', {
+                configurable: true,
+                get(this: HTMLElement) {
+                    return this.parentNode;
+                },
+            });
+        });
+        afterAll(() => {
+            if (originalOffsetParent) {
+                Object.defineProperty(
+                    window.HTMLElement.prototype,
+                    'offsetParent',
+                    originalOffsetParent,
+                );
+            }
+        });
+
+        /**
+         * Evaluate the Past Conversations activation script against a real DOM.
+         *
+         * The script is a browser-side IIFE that CDP would normally eval inside
+         * the Antigravity renderer. We run it in the JSDOM test environment so
+         * the acceptance gate's `matchedTitle` value reflects the element the
+         * script actually selected (Issue #187).
+         */
+        async function runPastConversationsScript(
+            bodyHtml: string,
+            title: string,
+        ): Promise<{ ok: boolean; matchedTitle?: string; error?: string }> {
+            document.body.innerHTML = bodyHtml;
+            const script = buildActivateViaPastConversationsScript(title);
+            const scriptEl = document.createElement('script');
+            scriptEl.textContent = `window.__pastConvResult = ${script};`;
+            document.body.appendChild(scriptEl);
+            return (window as any).__pastConvResult;
+        }
+
+        // A visible toggle so the script's "open Past Conversations" step
+        // succeeds immediately and proceeds to the selection phase.
+        const TOGGLE = '<div data-past-conversations-toggle></div>';
+
+        it('reports the actual visible text (not the requested title) when only a substring match exists', async () => {
+            const result = await runPastConversationsScript(
+                `${TOGGLE}<div role="option">Deploy v2</div>`,
+                'Deploy',
+            );
+
+            expect(result.ok).toBe(true);
+            // The script picked "Deploy v2" via substring match, so matchedTitle
+            // must be the real text - never a tautological echo of "Deploy".
+            expect(result.matchedTitle).toBe('Deploy v2');
+            expect(result.matchedTitle).not.toBe('Deploy');
+            // Acceptance gate condition (see activateSessionByTitle):
+            // matchedTitle.trim() === title.trim() must be false -> not accepted.
+            expect(result.matchedTitle?.trim() === 'Deploy'.trim()).toBe(false);
+        }, 15000);
+
+        it('reports the requested title when an exact-match option exists', async () => {
+            const result = await runPastConversationsScript(
+                `${TOGGLE}<div role="option">Deploy v2</div><div role="option">Deploy</div>`,
+                'Deploy',
+            );
+
+            expect(result.ok).toBe(true);
+            expect(result.matchedTitle).toBe('Deploy');
+            // Acceptance gate condition passes -> activation accepted.
+            expect(result.matchedTitle?.trim() === 'Deploy'.trim()).toBe(true);
+        }, 15000);
+
+        it('accepts an exact match carried on aria-label even when textContent differs', async () => {
+            const result = await runPastConversationsScript(
+                `${TOGGLE}<div role="option" aria-label="Deploy">Deploy · edited 2h ago</div>`,
+                'Deploy',
+            );
+
+            expect(result.ok).toBe(true);
+            // A single label component (aria-label) equals the requested title,
+            // so the join-based whole-string comparison trap is avoided.
+            expect(result.matchedTitle).toBe('Deploy');
+        }, 15000);
     });
 });

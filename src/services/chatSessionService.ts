@@ -304,7 +304,7 @@ function buildActivateChatByTitleScript(title: string): string {
  * Build a script that opens Past Conversations and selects a conversation by title.
  * This path is required for older chats that are not visible in the current side panel.
  */
-function buildActivateViaPastConversationsScript(title: string): string {
+export function buildActivateViaPastConversationsScript(title: string): string {
     const safeTitle = JSON.stringify(title);
     return `(() => {
         const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -323,9 +323,9 @@ function buildActivateViaPastConversationsScript(title: string): string {
 
         const isVisible = (el) => !!el && el instanceof HTMLElement && el.offsetParent !== null;
         const asArray = (nodeList) => Array.from(nodeList || []);
-        const getLabelText = (el) => {
-            if (!el || !(el instanceof Element)) return '';
-            const parts = [
+        const getLabelParts = (el) => {
+            if (!el || !(el instanceof Element)) return [];
+            return [
                 el.textContent || '',
                 el.getAttribute('aria-label') || '',
                 el.getAttribute('title') || '',
@@ -333,7 +333,26 @@ function buildActivateViaPastConversationsScript(title: string): string {
                 el.getAttribute('data-tooltip-content') || '',
                 el.getAttribute('data-testid') || '',
             ];
-            return parts.filter(Boolean).join(' ');
+        };
+        const getLabelText = (el) => getLabelParts(el).filter(Boolean).join(' ');
+        // Verify the option that was actually selected really is the requested
+        // title. getLabelText concatenates several attributes, so a naive
+        // whole-string comparison can fail even for a correct pick (e.g. when
+        // textContent and aria-label duplicate the same value). Instead, check
+        // each label component individually for an exact (or loose-exact) match.
+        // If any component matches, report the requested title; otherwise report
+        // the actual visible text so the acceptance gate rejects a mere
+        // substring/loose selection.
+        const resolveMatchedTitle = (el) => {
+            const parts = getLabelParts(el);
+            for (const part of parts) {
+                if (!part) continue;
+                if (normalize(part) === wanted || (wantedLoose && normalizeLoose(part) === wantedLoose)) {
+                    return wantedRaw;
+                }
+            }
+            const visible = (parts[0] || '').trim();
+            return visible || null;
         };
         const getClickable = (el) => {
             if (!el || !(el instanceof Element)) return null;
@@ -508,22 +527,23 @@ function buildActivateViaPastConversationsScript(title: string): string {
                 await wait(260);
             }
 
-            let selected = clickByPatterns([wanted, wantedLoose], '[role="option"], li, button, [data-testid*="conversation"]');
-            if (selected) {
-                const selectedOption = pickBest(
-                    asArray(document.querySelectorAll('[role="option"], li, button, [data-testid*="conversation"]')),
-                    [wanted, wantedLoose],
-                );
-                const selectedClickable = getClickable(selectedOption);
-                if (selectedClickable) {
-                    selectedClickable.focus();
-                    pressEnter(selectedClickable);
-                }
-            }
-            if (!selected) {
+            // Resolve the exact option element, then click + focus + press Enter
+            // on that same element so the click target and the verification
+            // target can never drift apart. Mirror clickByPatterns' scoped
+            // selector -> broad fallback behaviour.
+            const optionSelector = '[role="option"], li, button, [data-testid*="conversation"]';
+            const scopedOptions = asArray(document.querySelectorAll(optionSelector));
+            const broadOptions = asArray(document.querySelectorAll('button, [role="button"], a, li, div, span'));
+            const optionSource = scopedOptions.length > 0 ? scopedOptions : broadOptions;
+            const selectedOption = pickBest(optionSource, [wanted, wantedLoose]);
+            const selectedClickable = getClickable(selectedOption);
+            if (!selectedClickable) {
                 return { ok: false, error: 'Conversation not found in Past Conversations' };
             }
-            return { ok: true, matchedTitle: wantedRaw };
+            selectedClickable.click();
+            selectedClickable.focus();
+            pressEnter(selectedClickable);
+            return { ok: true, matchedTitle: resolveMatchedTitle(selectedOption) };
         })();
     })()`;
 }
