@@ -49,7 +49,7 @@
   "dependencies": {
     "@inquirer/select": "^5.1.0",
     "better-sqlite3": "^12.6.2",
-    "commander": "^14.0.3",
+    "commander": "^15.0.0",
     "discord.js": "^14.25.1",
     "dotenv": "^17.3.1",
     "grammy": "^1.41.1",
