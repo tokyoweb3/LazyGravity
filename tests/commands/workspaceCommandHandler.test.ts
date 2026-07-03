@@ -43,6 +43,7 @@ describe('WorkspaceCommandHandler', () => {
     }> = {}) => ({
         channelId: overrides.channelId ?? 'ch-1',
         guildId: overrides.guildId ?? 'guild-1',
+        user: { id: 'user-1' },
         editReply: jest.fn().mockResolvedValue(undefined),
     });
 
@@ -66,6 +67,41 @@ describe('WorkspaceCommandHandler', () => {
 
             const call = interaction.editReply.mock.calls[0][0];
             expect(call.components).toHaveLength(0);
+        });
+
+        it('ensures Antigravity is running before displaying projects', async () => {
+            const ensureIdeRunning = jest.fn().mockResolvedValue(undefined);
+            handler = new WorkspaceCommandHandler(
+                bindingRepo,
+                chatSessionRepo,
+                service,
+                channelManager,
+                undefined,
+                ensureIdeRunning,
+            );
+            const interaction = mockInteraction();
+
+            await handler.handleShow(interaction as any);
+
+            expect(ensureIdeRunning).toHaveBeenCalledWith({ channelId: 'ch-1', userId: 'user-1' });
+            expect(ensureIdeRunning.mock.invocationCallOrder[0])
+                .toBeLessThan(interaction.editReply.mock.invocationCallOrder[0]);
+        });
+
+        it('does not display projects when Antigravity startup fails', async () => {
+            const ensureIdeRunning = jest.fn().mockRejectedValue(new Error('startup failed'));
+            handler = new WorkspaceCommandHandler(
+                bindingRepo,
+                chatSessionRepo,
+                service,
+                channelManager,
+                undefined,
+                ensureIdeRunning,
+            );
+            const interaction = mockInteraction();
+
+            await expect(handler.handleShow(interaction as any)).rejects.toThrow('startup failed');
+            expect(interaction.editReply).not.toHaveBeenCalled();
         });
     });
 

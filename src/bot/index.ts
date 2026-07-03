@@ -54,7 +54,7 @@ import { isSessionSelectId } from '../ui/sessionPickerUi';
 import { CdpService } from '../services/cdpService';
 import { ChatSessionService } from '../services/chatSessionService';
 import { ResponseMonitor, RESPONSE_SELECTORS, captureResponseMonitorBaseline } from '../services/responseMonitor';
-import { ensureAntigravityRunning } from '../services/antigravityLauncher';
+import { ensureAntigravityRunning, startAntigravity, stopAntigravity } from '../services/antigravityLauncher';
 import { getAntigravityCdpHint } from '../utils/pathUtils';
 import { AutoAcceptService } from '../services/autoAcceptService';
 import { PromptDispatcher } from '../services/promptDispatcher';
@@ -1076,6 +1076,19 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             }
 
             await bridge.pool.getOrConnect(workspacePath, { name: selectedAccount });
+        },
+        async ({ channelId, userId }) => {
+            const accountName = resolveScopedAccountName({
+                channelId,
+                userId,
+                sessionAccountName: chatSessionRepo.findByChannelId(channelId)?.activeAccountName ?? null,
+                parentChannelId: null,
+                selectedAccountByChannel: bridge.selectedAccountByChannel,
+                channelPrefRepo,
+                accountPrefRepo,
+                accounts: config.antigravityAccounts,
+            });
+            await startAntigravity(accountPorts[accountName] ?? 9222);
         },
     );
     const chatHandler = new ChatCommandHandler(
@@ -2151,6 +2164,23 @@ export async function handleSlashInteraction(
                 }
             } catch (e: any) {
                 await interaction.editReply({ content: `❌ Error during stop processing: ${e.message}` });
+            }
+            break;
+        }
+
+        case 'shutdown': {
+            try {
+                bridge.pool.disconnectAll();
+                const ports = [...new Set(antigravityAccounts.map((account) => account.cdpPort))];
+                const results = await Promise.all(ports.map((port) => stopAntigravity(port)));
+                const stopped = results.some((result) => result === 'stopped');
+                await interaction.editReply({
+                    content: stopped
+                        ? '✅ Antigravity IDE shut down. Use `/project list` to start it again.'
+                        : 'ℹ️ Antigravity IDE is already stopped. Use `/project list` to start it.',
+                });
+            } catch (e: any) {
+                await interaction.editReply({ content: `❌ Failed to shut down Antigravity IDE: ${e.message}` });
             }
             break;
         }

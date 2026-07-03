@@ -1,12 +1,15 @@
 import { logger } from '../utils/logger';
 import { CDP_PORTS } from '../utils/cdpPorts';
-import { getAntigravityCdpHint } from '../utils/pathUtils';
+import { getAntigravityCdpHint, getAntigravityCliPath } from '../utils/pathUtils';
 import * as http from 'http';
+import { execFile, spawn } from 'child_process';
+
+let lifecycleOperation: Promise<unknown> | null = null;
 
 /**
  * Check if CDP responds on the specified port.
  */
-function checkPort(port: number): Promise<boolean> {
+export function checkPort(port: number): Promise<boolean> {
     return new Promise((resolve) => {
         const req = http.get(`http://127.0.0.1:${port}/json/list`, (res) => {
             let data = '';
@@ -24,6 +27,153 @@ function checkPort(port: number): Promise<boolean> {
         req.setTimeout(2000, () => {
             req.destroy();
             resolve(false);
+        });
+    });
+}
+
+/**
+ * Waits for a specific port to respond within the given timeout.
+ */
+async function waitForPort(port: number, timeoutMs: number = 30000): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    do {
+        if (await checkPort(port)) return true;
+        await new Promise((resolve) => setTimeout(resolve, 500));
+    } while (Date.now() < deadline);
+    return false;
+}
+
+/**
+ * Ensures lifecycle operations (start/stop) are executed sequentially to prevent race conditions.
+ */
+function serializeLifecycle<T>(operation: () => Promise<T>): Promise<T> {
+    const pending = lifecycleOperation
+        ? lifecycleOperation.then(operation, operation)
+        : operation();
+    lifecycleOperation = pending;
+    pending.finally(() => {
+        if (lifecycleOperation === pending) lifecycleOperation = null;
+    }).catch(() => {});
+    return pending;
+}
+
+/**
+ * Starts the Antigravity IDE process with CDP enabled on the specified port.
+ */
+export function startAntigravity(port: number = CDP_PORTS[0]): Promise<'started' | 'already-running'> {
+    return serializeLifecycle(async () => {
+        if (await checkPort(port)) return 'already-running';
+
+        const executable = process.env.ANTIGRAVITY_PATH || getAntigravityCliPath();
+        const child = spawn(executable, [`--remote-debugging-port=${port}`], {
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: true,
+        });
+
+        const spawnError = await new Promise<Error | null>((resolve) => {
+            child.on('error', resolve);
+            setTimeout(() => resolve(null), 100);
+        });
+
+        if (spawnError) {
+            throw spawnError;
+        }
+
+        child.unref();
+
+        if (!await waitForPort(port)) {
+            throw new Error(`Antigravity did not become ready on CDP port ${port}.`);
+        }
+        return 'started';
+    });
+}
+
+/**
+ * Stops the running Antigravity IDE CDP process on the specified port (SIGTERM on POSIX, Stop-Process -Force on Windows).
+ */
+export function stopAntigravity(port: number = CDP_PORTS[0]): Promise<'stopped' | 'already-stopped'> {
+    return serializeLifecycle(async () => {
+        if (!await checkPort(port)) return 'already-stopped';
+
+        const version = await getCdpVersion(port);
+        const browser = typeof version?.Browser === 'string' ? version.Browser.toLowerCase() : '';
+        const userAgent = typeof version?.['User-Agent'] === 'string' ? version['User-Agent'].toLowerCase() : '';
+        if (!browser.includes('antigravity') && !userAgent.includes('antigravity')) {
+            throw new Error(`Refusing to stop non-Antigravity CDP service on port ${port}.`);
+        }
+
+        await new Promise<void>((resolve, reject) => {
+            if (process.platform === 'win32') {
+                const command = [
+                    `$ownerPid=(Get-NetTCPConnection -State Listen -LocalPort ${port} -ErrorAction SilentlyContinue`,
+                    '| Select-Object -First 1 -ExpandProperty OwningProcess);',
+                    'if ($ownerPid) { Stop-Process -Id $ownerPid -Force }',
+                ].join(' ');
+                execFile('powershell.exe', ['-NoProfile', '-Command', command], { windowsHide: true }, (error) => {
+                    if (error) reject(error);
+                    else resolve();
+                });
+                return;
+            }
+
+            execFile('lsof', ['-tiTCP:' + port, '-sTCP:LISTEN'], (lookupError, stdout) => {
+                if (lookupError) return reject(lookupError);
+                const pid = String(stdout).trim().split(/\s+/)[0];
+                if (!/^\d+$/.test(pid)) return reject(new Error(`No listener PID found for CDP port ${port}.`));
+                execFile('kill', ['-TERM', pid], (killError) => killError ? reject(killError) : resolve());
+            });
+        });
+        return 'stopped';
+    });
+}
+
+/**
+ * Fetches the CDP /json/version payload to identify the connected browser target.
+ */
+function getCdpVersion(port: number): Promise<Record<string, unknown>> {
+    return new Promise((resolve, reject) => {
+        const req = http.get(`http://127.0.0.1:${port}/json/version`, (res) => {
+            let data = '';
+            res.on('data', (chunk) => (data += chunk));
+            res.on('end', () => {
+                try {
+                    resolve(JSON.parse(data));
+                } catch (error) {
+                    reject(error);
+                }
+            });
+        });
+        req.on('error', reject);
+        req.setTimeout(2000, () => {
+            req.destroy();
+            reject(new Error(`Timed out reading CDP version from port ${port}.`));
+        });
+    });
+}
+
+/**
+ * Fetches the CDP /json/list payload to discover available debugging targets.
+ */
+function getCdpTargets(port: number): Promise<Record<string, unknown>[]> {
+    return new Promise((resolve, reject) => {
+        const req = http.get(`http://127.0.0.1:${port}/json/list`, (res) => {
+            let data = '';
+            res.on('data', (chunk) => (data += chunk));
+            res.on('end', () => {
+                try {
+                    const parsed = JSON.parse(data);
+                    if (!Array.isArray(parsed)) throw new Error('CDP target list is not an array');
+                    resolve(parsed);
+                } catch (error) {
+                    reject(error);
+                }
+            });
+        });
+        req.on('error', reject);
+        req.setTimeout(2000, () => {
+            req.destroy();
+            reject(new Error(`Timed out reading CDP metadata from port ${port}.`));
         });
     });
 }
