@@ -1,10 +1,19 @@
-import { handleMirror } from '../../src/bot/telegramJoinCommand';
+import { handleMirror, startResponseMirror } from '../../src/bot/telegramJoinCommand';
 import { ensureUserMessageDetector } from '../../src/services/cdpBridgeManager';
+import { ResponseMonitor } from '../../src/services/responseMonitor';
 
 jest.mock('../../src/services/cdpBridgeManager', () => ({
     ...jest.requireActual('../../src/services/cdpBridgeManager'),
     ensureUserMessageDetector: jest.fn(),
     getCurrentChatTitle: jest.fn().mockResolvedValue(null),
+}));
+
+jest.mock('../../src/services/responseMonitor', () => ({
+    ResponseMonitor: jest.fn().mockImplementation(() => ({
+        startPassive: jest.fn().mockResolvedValue(undefined),
+        isActive: jest.fn().mockReturnValue(false),
+        stop: jest.fn().mockResolvedValue(undefined),
+    })),
 }));
 
 describe('telegramJoinCommand.handleMirror', () => {
@@ -58,5 +67,49 @@ describe('telegramJoinCommand.handleMirror', () => {
             expect.any(Function),
             'work1',
         );
+    });
+});
+
+describe('telegramJoinCommand.startResponseMirror', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+    });
+
+    function createDeps(activeMonitors?: Map<string, any>) {
+        return {
+            bridge: {
+                pool: {
+                    extractProjectName: jest.fn().mockImplementation(
+                        (workspacePath: string) => workspacePath.split('/').pop(),
+                    ),
+                },
+            },
+            activeMonitors,
+        } as any;
+    }
+
+    it('skips the passive mirror when a primary monitor is active for the project', () => {
+        const activeMonitors = new Map([['project-a', {} as any]]);
+        const channel = { send: jest.fn() };
+
+        startResponseMirror(createDeps(activeMonitors), {} as any, '/ws/project-a', channel, 'Chat');
+
+        expect(ResponseMonitor).not.toHaveBeenCalled();
+    });
+
+    it('starts a passive mirror when no primary monitor is active', () => {
+        const channel = { send: jest.fn() };
+
+        startResponseMirror(createDeps(new Map()), {} as any, '/ws/project-b', channel, 'Chat');
+
+        expect(ResponseMonitor).toHaveBeenCalledTimes(1);
+    });
+
+    it('starts a passive mirror when activeMonitors is not provided (legacy callers)', () => {
+        const channel = { send: jest.fn() };
+
+        startResponseMirror(createDeps(undefined), {} as any, '/ws/project-c', channel, 'Chat');
+
+        expect(ResponseMonitor).toHaveBeenCalledTimes(1);
     });
 });

@@ -215,6 +215,51 @@ describe('createTelegramMessageHandler', () => {
         expect(mockCdp.injectMessage).toHaveBeenCalledWith('test prompt');
     });
 
+    it('registers the echo hash with the effective prompt before injecting', async () => {
+        const callOrder: string[] = [];
+        const mockCdp = {
+            injectMessage: jest.fn().mockImplementation(async () => {
+                callOrder.push('injectMessage');
+                return { ok: true };
+            }),
+        };
+        const addEchoHash = jest.fn().mockImplementation(() => {
+            callOrder.push('addEchoHash');
+        });
+        const pool = {
+            ...createMockPool(mockCdp as any),
+            getUserMessageDetector: jest.fn().mockReturnValue({ addEchoHash }),
+        };
+        const bridge = createBridge(pool as any);
+        const binding = { chatId: 'chat-123', workspacePath: '/workspace/a' };
+        const telegramBindingRepo = createTelegramBindingRepo(binding);
+        const { message } = createMockMessage({ content: 'test prompt' });
+
+        const handler = createTelegramMessageHandler({ bridge, telegramBindingRepo });
+        await handler(message as any);
+
+        expect(pool.getUserMessageDetector).toHaveBeenCalledWith('test-project', 'default');
+        expect(addEchoHash).toHaveBeenCalledWith('test prompt');
+        expect(callOrder).toEqual(['addEchoHash', 'injectMessage']);
+    });
+
+    it('does not crash when the pool has no user message detector', async () => {
+        const mockCdp = createMockCdp();
+        const pool = {
+            ...createMockPool(mockCdp),
+            getUserMessageDetector: jest.fn().mockReturnValue(undefined),
+        };
+        const bridge = createBridge(pool as any);
+        const binding = { chatId: 'chat-123', workspacePath: '/workspace/a' };
+        const telegramBindingRepo = createTelegramBindingRepo(binding);
+        const { message } = createMockMessage({ content: 'test prompt' });
+
+        const handler = createTelegramMessageHandler({ bridge, telegramBindingRepo });
+        await handler(message as any);
+
+        expect(mockCdp.injectMessage).toHaveBeenCalledWith('test prompt');
+    });
+
     it('restores the saved account preference when reconnecting Telegram after restart', async () => {
         const mockCdp = createMockCdp();
         const pool = createMockPool(mockCdp);

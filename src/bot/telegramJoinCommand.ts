@@ -24,6 +24,9 @@ export interface TelegramJoinCommandDeps {
     readonly channelPrefRepo?: ChannelPreferenceRepository;
     readonly antigravityAccounts?: AntigravityAccountConfig[];
     readonly extractionMode?: import('../utils/config').ExtractionMode;
+    /** Primary active monitors from the main Telegram message handler (keyed by project name).
+     *  Used to skip passive mirror monitors when a primary monitor is already running. */
+    readonly activeMonitors?: Map<string, ResponseMonitor>;
 }
 
 const activeResponseMonitors = new Map<string, ResponseMonitor>();
@@ -189,13 +192,22 @@ async function routeMirroredMessage(
     startResponseMirror(deps, cdp, workspacePath, channel, chatTitle || 'Unknown');
 }
 
-function startResponseMirror(
+export function startResponseMirror(
     deps: TelegramJoinCommandDeps,
     cdp: CdpService,
     workspacePath: string,
     channel: any,
     chatTitle: string
 ): void {
+    // If the primary message handler already has an active monitor for this workspace,
+    // skip the passive mirror — the primary handler delivers the response itself, and
+    // running both would send the same AI response twice.
+    const projectName = deps.bridge.pool.extractProjectName(workspacePath);
+    if (deps.activeMonitors?.has(projectName)) {
+        logger.debug(`[TelegramMirror] Skipping passive monitor — primary monitor active for ${projectName}`);
+        return;
+    }
+
     const prev = activeResponseMonitors.get(workspacePath);
     if (prev?.isActive()) {
         prev.stop().catch(() => {});

@@ -1506,6 +1506,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                         accountPrefRepo,
                         channelPrefRepo,
                         antigravityAccounts: config.antigravityAccounts,
+                        activeMonitors,
                     }, interaction);
                     return;
                 }

@@ -238,6 +238,13 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
             const effectivePrompt = promptText || 'Please review the attached images and respond accordingly.';
             const baseline = await captureResponseMonitorBaseline(cdp);
 
+            // Register the echo hash BEFORE injecting (the Discord path registers it later):
+            // UserMessageDetector polls the DOM every ~2s, so registering only after
+            // injectMessage() resolves leaves a window where the injected prompt is detected
+            // as PC-side input and mirrored back to Telegram. If injection fails, the stale
+            // hash is harmless — it expires via its 60s TTL.
+            deps.bridge.pool.getUserMessageDetector?.(projectName, selectedAccount)?.addEchoHash(effectivePrompt);
+
             // Inject prompt (with or without images) into Antigravity
             logger.prompt(effectivePrompt);
             let injectResult;
