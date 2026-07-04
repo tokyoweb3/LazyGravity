@@ -46,7 +46,8 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
     const normalize = (text) => (text || '').toLowerCase().replace(/\\s+/g, ' ').trim();
 
     const allButtons = Array.from(document.querySelectorAll('button, [role="button"], span.cursor-pointer, div.cursor-pointer'))
-        .filter(btn => btn.offsetParent !== null);
+        .filter(btn => btn.offsetParent !== null)
+        .reverse();
 
     const STOP_PATTERNS_GEN = [/^stop$/, /^stop generating$/, /^stop response$/, /^停止$/, /^生成を停止$/, /^応答を停止$/];
     const isGenerating = allButtons.some(btn => {
@@ -96,9 +97,9 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
         return ALWAYS_ALLOW_PATTERNS.some(p => t.includes(p));
     }) || null;
 
-    const approveText = (approveBtn.textContent || '').trim();
-    const alwaysAllowText = alwaysAllowBtn ? (alwaysAllowBtn.textContent || '').trim() : '';
-    const denyText = (denyBtn.textContent || '').trim();
+    const approveText = (approveBtn.innerText || approveBtn.textContent || '').trim();
+    const alwaysAllowText = alwaysAllowBtn ? (alwaysAllowBtn.innerText || alwaysAllowBtn.textContent || '').trim() : '';
+    const denyText = (denyBtn.innerText || denyBtn.textContent || '').trim();
 
     // Description extraction (multiple fallbacks)
     let description = '';
@@ -266,7 +267,7 @@ export function buildClickScript(buttonText: string): string {
         const target = allButtons.find(btn => {
             const style = window.getComputedStyle(btn);
             if (style.display === 'none' || style.visibility === 'hidden' || btn.disabled) return false;
-            const buttonText = normalize(btn.textContent || '');
+            const buttonText = normalize(btn.innerText || btn.textContent || '');
             const ariaLabel = normalize(btn.getAttribute('aria-label') || '');
             return buttonText === wanted ||
                 ariaLabel === wanted ||
