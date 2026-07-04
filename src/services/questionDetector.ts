@@ -120,24 +120,33 @@ export class QuestionDetector extends EventEmitter {
                     
                     const targetOption = items[${index}];
                     
-                    const optionRect = targetOption.getBoundingClientRect();
-                    const btnRect = submitBtn.getBoundingClientRect();
-                    
-                    return {
-                        found: true,
-                        option: {
-                            x: Math.round(optionRect.left + optionRect.width / 2),
-                            y: Math.round(optionRect.top + optionRect.height / 2)
-                        },
-                        button: {
-                            x: Math.round(btnRect.left + btnRect.width / 2),
-                            y: Math.round(btnRect.top + btnRect.height / 2)
+                    const clickElement = (el) => {
+                        const rect = el.getBoundingClientRect();
+                        const clickX = rect.left + rect.width / 2;
+                        const clickY = rect.top + rect.height / 2;
+                        const events = ['pointerdown', 'mousedown', 'mouseup', 'click'];
+                        for (const type of events) {
+                            el.dispatchEvent(new MouseEvent(type, {
+                                bubbles: true,
+                                cancelable: true,
+                                view: window,
+                                clientX: clickX,
+                                clientY: clickY,
+                            }));
                         }
                     };
+                    
+                    return new Promise(resolve => {
+                        clickElement(targetOption);
+                        setTimeout(() => {
+                            clickElement(submitBtn);
+                            resolve({ found: true });
+                        }, 50);
+                    });
                 })()
                 `,
                 returnByValue: true,
-                awaitPromise: false,
+                awaitPromise: true,
             };
             if (contextId !== null) {
                 callParams.contextId = contextId;
@@ -150,40 +159,6 @@ export class QuestionDetector extends EventEmitter {
                 this.logger.warn(`[QuestionDetector:${this.projectName}] Could not find question modal elements during submission.`);
                 return false;
             }
-
-            // Click the option
-            await this.cdp.call('Input.dispatchMouseEvent', {
-                type: 'mousePressed',
-                x: result.option.x,
-                y: result.option.y,
-                button: 'left',
-                clickCount: 1,
-            });
-            await this.cdp.call('Input.dispatchMouseEvent', {
-                type: 'mouseReleased',
-                x: result.option.x,
-                y: result.option.y,
-                button: 'left',
-                clickCount: 1,
-            });
-            
-            await new Promise(resolve => setTimeout(resolve, 50));
-
-            // Click the submit button
-            await this.cdp.call('Input.dispatchMouseEvent', {
-                type: 'mousePressed',
-                x: result.button.x,
-                y: result.button.y,
-                button: 'left',
-                clickCount: 1,
-            });
-            await this.cdp.call('Input.dispatchMouseEvent', {
-                type: 'mouseReleased',
-                x: result.button.x,
-                y: result.button.y,
-                button: 'left',
-                clickCount: 1,
-            });
 
             this.lastQuestionDetected = false;
             return true;
@@ -222,14 +197,24 @@ export class QuestionDetector extends EventEmitter {
 
                     if (!skipBtn) return { found: false };
                     
-                    const btnRect = skipBtn.getBoundingClientRect();
-                    return {
-                        found: true,
-                        button: {
-                            x: Math.round(btnRect.left + btnRect.width / 2),
-                            y: Math.round(btnRect.top + btnRect.height / 2)
+                    const clickElement = (el) => {
+                        const rect = el.getBoundingClientRect();
+                        const clickX = rect.left + rect.width / 2;
+                        const clickY = rect.top + rect.height / 2;
+                        const events = ['pointerdown', 'mousedown', 'mouseup', 'click'];
+                        for (const type of events) {
+                            el.dispatchEvent(new MouseEvent(type, {
+                                bubbles: true,
+                                cancelable: true,
+                                view: window,
+                                clientX: clickX,
+                                clientY: clickY,
+                            }));
                         }
                     };
+                    
+                    clickElement(skipBtn);
+                    return { found: true };
                 })()
                 `,
                 returnByValue: true,
@@ -244,21 +229,6 @@ export class QuestionDetector extends EventEmitter {
                 this.logger.warn(`[QuestionDetector:${this.projectName}] Could not find skip button.`);
                 return false;
             }
-
-            await this.cdp.call('Input.dispatchMouseEvent', {
-                type: 'mousePressed',
-                x: result.button.x,
-                y: result.button.y,
-                button: 'left',
-                clickCount: 1,
-            });
-            await this.cdp.call('Input.dispatchMouseEvent', {
-                type: 'mouseReleased',
-                x: result.button.x,
-                y: result.button.y,
-                button: 'left',
-                clickCount: 1,
-            });
 
             this.lastQuestionDetected = false;
             return true;
