@@ -101,6 +101,7 @@ export class QuestionDetector extends EventEmitter {
                     let submitBtn = null;
                     
                     for (const container of containers) {
+                        if (container.querySelector('textarea, input[type="text"]')) continue;
                         const buttons = Array.from(container.querySelectorAll('button'));
                         let possibleSubmitBtn = null;
                         for (const btn of buttons) {
@@ -201,6 +202,7 @@ export class QuestionDetector extends EventEmitter {
                     let skipBtn = null;
                     
                     for (const container of containers) {
+                        if (container.querySelector('textarea, input[type="text"]')) continue;
                         const items = getInteractiveItems(container);
                         const hasList = items.length > 1;
                         
@@ -282,6 +284,7 @@ export class QuestionDetector extends EventEmitter {
                     let submitBtn = null;
                     
                     for (const container of containers) {
+                        if (container.querySelector('textarea, input[type="text"]')) continue;
                         const buttons = Array.from(container.querySelectorAll('button'));
                         let possibleSubmitBtn = null;
                         for (const btn of buttons) {

@@ -65,14 +65,18 @@ export function createPlanningButtonAction(
             if (action === 'open') {
 
                 let clicked = false;
-                if (detector.getLastDetectedInfo()?.hasOpenButton) {
-                    try {
-                        clicked = await detector.clickOpenButton();
-                        if (clicked) {
-                            await new Promise((resolve) => setTimeout(resolve, 500));
+                const info = detector.getLastDetectedInfo();
+                if (info?.hasOpenButton) {
+                    const isReview = info.openText?.toLowerCase().includes('review');
+                    if (!isReview) {
+                        try {
+                            clicked = await detector.clickOpenButton();
+                            if (clicked) {
+                                await new Promise((resolve) => setTimeout(resolve, 500));
+                            }
+                        } catch (e: any) {
+                            logger.error('[PlanningAction] clickOpenButton failed:', e);
                         }
-                    } catch (e: any) {
-                        logger.error('[PlanningAction] clickOpenButton failed:', e);
                     }
                 }
 
@@ -101,9 +105,14 @@ export function createPlanningButtonAction(
                     });
 
                 if (planContent) {
-                    const truncated = planContent.length > MAX_PLAN_CONTENT
+                    let truncated = planContent.length > MAX_PLAN_CONTENT
                         ? planContent.substring(0, MAX_PLAN_CONTENT - 15) + '\n\n(truncated)'
                         : planContent;
+
+                    if (info?.openText?.toLowerCase().includes('review')) {
+                        truncated += '\n\n💡 *To request changes to this plan, simply reply in this channel.*';
+                    }
+
                     await interaction
                         .followUp({ text: truncated })
                         .catch((err) => {
