@@ -308,9 +308,11 @@ function buildActivateChatByTitleScript(title: string): string {
         for (const node of nodes) {
             const text = normalize(node.textContent || '');
             if (!text) continue;
+            
+            const isShort = wanted.length < 5;
             if (text === wanted) {
                 exact.push({ node, textLength: text.length });
-            } else if (text.includes(wanted)) {
+            } else if (!isShort && text.includes(wanted)) {
                 includes.push({ node, textLength: text.length });
             } else if (wordsMatch(text, wantedRaw)) {
                 fuzzy.push({ node, textLength: text.length });
@@ -402,10 +404,12 @@ export function buildActivateViaPastConversationsScript(title: string): string {
                     if (!pattern) continue;
                     const p = normalize(pattern);
                     const pLoose = normalizeLoose(pattern);
+                    const isShort = p.length < 5;
+                    
                     if (
                         text === p ||
-                        text.includes(p) ||
-                        (pLoose && (textLoose === pLoose || textLoose.includes(pLoose)))
+                        (pLoose && textLoose === pLoose) ||
+                        (!isShort && (text.includes(p) || (pLoose && textLoose.includes(pLoose))))
                     ) {
                         matched.push({ el, score: Math.abs(text.length - pattern.length) });
                         break;
@@ -1231,6 +1235,7 @@ export class ChatSessionService {
     /**
      * Rename the current chat in the Antigravity UI directly by updating the DOM.
      * Note: This is a cosmetic change until Antigravity persists a rename.
+     * IDE syncing for chat renaming is strictly "best-effort".
      */
     async renameCurrentChatInUI(cdpService: CdpService, newTitle: string): Promise<{ ok: boolean; error?: string }> {
         try {
