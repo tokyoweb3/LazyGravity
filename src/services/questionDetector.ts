@@ -94,7 +94,7 @@ export class QuestionDetector extends EventEmitter {
                         let possibleSubmitBtn = null;
                         for (const btn of buttons) {
                             const text = btn.textContent?.toLowerCase() || '';
-                            if (text.includes('submit')) {
+                            if (text.includes('submit') || text.includes('continue')) {
                                 possibleSubmitBtn = btn;
                                 break;
                             }
@@ -284,7 +284,7 @@ export class QuestionDetector extends EventEmitter {
                         let possibleSubmitBtn = null;
                         for (const btn of buttons) {
                             const text = btn.textContent?.toLowerCase() || '';
-                            if (text.includes('submit')) {
+                            if (text.includes('submit') || text.includes('continue')) {
                                 possibleSubmitBtn = btn;
                                 break;
                             }
