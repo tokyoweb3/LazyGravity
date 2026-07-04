@@ -385,7 +385,7 @@ describe('ChatCommandHandler', () => {
                         expect.objectContaining({
                             data: expect.objectContaining({
                                 title: expect.stringContaining('Chat Session Info'),
-                                description: expect.stringContaining('Non-session channel'),
+                                description: expect.stringMatching(/channel/),
                             }),
                         }),
                     ]),

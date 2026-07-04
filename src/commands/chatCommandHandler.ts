@@ -196,8 +196,14 @@ export class ChatCommandHandler {
                 .addFields(
                     { name: t('Title'), value: info.title, inline: true },
                     { name: t('Status'), value: info.hasActiveChat ? t('🟢 Active') : t('⚪ Inactive'), inline: true },
-                )
-                .setDescription(t('※ Non-session channel.\nUse `/project` to create a project first.'))
+                );
+                const categoryId = (interaction.channel as any)?.parentId;
+                const isProjectChannel = categoryId ? !!this.bindingRepo.findByChannelId(categoryId) : false;
+                const desc = isProjectChannel
+                    ? t('※ Unbound project channel.\nSend a message or use `/new` to start a chat session.')
+                    : t('※ Non-session channel.\nUse `/project` to create a project first.');
+
+                embed.setDescription(desc)
                 .setTimestamp();
 
             await interaction.editReply({ embeds: [embed] });
