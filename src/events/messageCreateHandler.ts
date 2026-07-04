@@ -73,7 +73,7 @@ export interface MessageCreateHandlerDeps {
     ensureErrorPopupDetector?: (bridge: CdpBridge, cdp: CdpService, projectName: string) => void;
     ensurePlanningDetector?: (bridge: CdpBridge, cdp: CdpService, projectName: string) => void;
     ensureRunCommandDetector?: (bridge: CdpBridge, cdp: CdpService, projectName: string) => void;
-    ensureQuestionDetector?: (bridge: CdpBridge, cdp: CdpService, projectName: string) => void;
+    ensureQuestionDetector?: (bridge: CdpBridge, cdp: CdpService, projectName: string, accountName?: string) => void;
     registerApprovalWorkspaceChannel?: (bridge: CdpBridge, projectName: string, channel: PlatformChannel) => void;
     registerApprovalSessionChannel?: (bridge: CdpBridge, projectName: string, sessionTitle: string, channel: PlatformChannel) => void;
     downloadInboundImageAttachments?: (message: Message) => Promise<InboundImageAttachment[]>;
@@ -328,7 +328,12 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                 const chunk = textAttachments.slice(i, i + CONCURRENCY_LIMIT);
                 const results = await Promise.all(chunk.map(async (textAtt) => {
                     try {
-                        const res = await fetch(textAtt.url);
+                        const controller = new AbortController();
+                        const timeoutId = setTimeout(() => controller.abort(), 10000);
+                        
+                        const res = await fetch(textAtt.url, { signal: controller.signal as any });
+                        clearTimeout(timeoutId);
+                        
                         if (res.ok) {
                             const content = await res.text();
                             return `\n\n[Attached File: ${textAtt.name}]\n\`\`\`\n${content}\n\`\`\``;
