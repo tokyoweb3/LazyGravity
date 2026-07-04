@@ -19,16 +19,30 @@ export interface GenericActionButtonActionDeps {
  * @param customId The customId to parse
  * @returns Parsed action details, or null if not an action button
  */
-export function parseGenericActionCustomId(customId: string) {
+export interface ParsedGenericAction {
+    actionName: string;
+    projectName?: string;
+    channelId?: string;
+}
+
+export function parseGenericActionCustomId(customId: string): ParsedGenericAction | null {
     if (!customId.startsWith('action_btn_')) return null;
     const parts = customId.split(':');
     const actionName = parts[0].replace('action_btn_', '').replace(/_/g, ' ');
     // Capitalize first letter
     const formattedName = actionName.charAt(0).toUpperCase() + actionName.slice(1);
+    
+    if (parts.length < 3) {
+        return { actionName: formattedName };
+    }
+    
+    const channelId = parts[parts.length - 1];
+    const projectName = parts.slice(1, parts.length - 1).join(':');
+
     return {
         actionName: formattedName,
-        projectName: parts[1] || undefined,
-        channelId: parts[2] || undefined,
+        projectName: projectName || undefined,
+        channelId: channelId || undefined,
     };
 }
 

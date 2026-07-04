@@ -1,4 +1,4 @@
-import { createGenericActionButtonAction } from '../../src/handlers/genericActionButtonAction';
+import { createGenericActionButtonAction, parseGenericActionCustomId } from '../../src/handlers/genericActionButtonAction';
 import type { CdpBridge } from '../../src/services/cdpBridgeManager';
 import { getCurrentCdp } from '../../src/services/cdpBridgeManager';
 import { CdpService } from '../../src/services/cdpService';
@@ -8,6 +8,34 @@ jest.mock('../../src/services/cdpService');
 jest.mock('../../src/utils/projectResolver', () => ({
     resolveProjectName: jest.fn().mockReturnValue('mock-project'),
 }));
+
+describe('parseGenericActionCustomId', () => {
+    it('parses action with no project or channel', () => {
+        expect(parseGenericActionCustomId('action_btn_approve')).toEqual({
+            actionName: 'Approve'
+        });
+    });
+
+    it('parses action with project and channel', () => {
+        expect(parseGenericActionCustomId('action_btn_approve:my-project:12345')).toEqual({
+            actionName: 'Approve',
+            projectName: 'my-project',
+            channelId: '12345'
+        });
+    });
+
+    it('parses action where project name contains colons', () => {
+        expect(parseGenericActionCustomId('action_btn_approve:c:users:project:12345')).toEqual({
+            actionName: 'Approve',
+            projectName: 'c:users:project',
+            channelId: '12345'
+        });
+    });
+
+    it('returns null for non-action buttons', () => {
+        expect(parseGenericActionCustomId('other_btn_approve')).toBeNull();
+    });
+});
 
 describe('genericActionButtonAction', () => {
     let mockBridge: jest.Mocked<CdpBridge>;
