@@ -30,7 +30,7 @@ export interface ApprovalDetectorOptions {
  *
  * Detects allow/deny button pairs and extracts descriptions with fallbacks.
  */
-const DETECT_APPROVAL_SCRIPT = `(() => {
+export const DETECT_APPROVAL_SCRIPT = `(() => {
     const ALLOW_ONCE_PATTERNS = ['allow once', 'allow one time', 'yes, allow this time', '今回のみ許可', '1回のみ許可', '一度許可'];
     const ALWAYS_ALLOW_PATTERNS = [
         'allow this conversation',
@@ -83,7 +83,8 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
         || document.body;
 
     const containerButtons = Array.from(container.querySelectorAll('button, [role="button"], span.cursor-pointer, div.cursor-pointer'))
-        .filter(btn => btn.offsetParent !== null);
+        .filter(btn => btn.offsetParent !== null)
+        .reverse();
 
     const denyBtn = containerButtons.find(btn => {
         const t = normalize(btn.textContent || '');
