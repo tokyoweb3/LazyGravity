@@ -329,4 +329,58 @@ describe('interactionCreateHandler', () => {
         expect(accountPrefRepo.setAccountName).not.toHaveBeenCalled();
         expect(channelPrefRepo.setAccountName).not.toHaveBeenCalled();
     });
+
+    it('rejects file_open for files outside the workspace root using resolved path', async () => {
+        const { fileOpenCache } = require('../../src/utils/fileOpenCache');
+        fileOpenCache.set('testhash', 'file:////etc/passwd');
+
+        const deferUpdate = jest.fn().mockResolvedValue(undefined);
+        const followUp = jest.fn().mockResolvedValue(undefined);
+        const wsHandler = { getWorkspaceForChannel: jest.fn().mockReturnValue('/home/user/project') };
+
+        const interaction = {
+            isAutocomplete: () => false,
+            isButton: () => true,
+            isStringSelectMenu: () => false,
+            isChatInputCommand: () => false,
+            customId: 'file_open:testhash',
+            channelId: 'channel-a',
+            user: { id: 'allowed' },
+            deferUpdate,
+            followUp,
+        } as any;
+
+        const handler = createInteractionCreateHandler({
+            config: { allowedUserIds: ['allowed'] },
+            bridge: {} as any,
+            cleanupHandler: {} as any,
+            modeService: {} as any,
+            modelService: {} as any,
+            slashCommandHandler: {} as any,
+            wsHandler: wsHandler as any,
+            chatHandler: {} as any,
+            client: {} as any,
+            sendModeUI: jest.fn(),
+            sendModelsUI: jest.fn(),
+            sendAutoAcceptUI: jest.fn(),
+            handleScreenshot: jest.fn(),
+            getCurrentCdp: jest.fn(),
+            parseApprovalCustomId: jest.fn().mockReturnValue(null),
+            parseErrorPopupCustomId: jest.fn().mockReturnValue(null),
+            parsePlanningCustomId: jest.fn().mockReturnValue(null),
+            parseFileChangeCustomId: jest.fn().mockReturnValue(null),
+            parseRunCommandCustomId: jest.fn().mockReturnValue(null),
+            handleSlashInteraction: jest.fn(),
+        });
+
+        await handler(interaction);
+
+        expect(deferUpdate).toHaveBeenCalled();
+        expect(wsHandler.getWorkspaceForChannel).toHaveBeenCalledWith('channel-a');
+        expect(followUp).toHaveBeenCalledWith(
+            expect.objectContaining({
+                content: expect.stringContaining('Cannot open files outside the workspace root'),
+            })
+        );
+    });
 });
