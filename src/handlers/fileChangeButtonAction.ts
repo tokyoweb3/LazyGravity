@@ -6,8 +6,7 @@ import { resolveProjectName } from '../utils/projectResolver';
 import type { WorkspaceCommandHandler } from '../commands/workspaceCommandHandler';
 import { logger } from '../utils/logger';
 
-import { buildClickScript } from '../services/approvalDetector';
-
+import { executeBrowserClick } from '../utils/questionActionUtils';
 export interface FileChangeButtonActionDeps {
     readonly bridge: CdpBridge;
     readonly wsHandler: WorkspaceCommandHandler;
@@ -55,31 +54,20 @@ export function createFileChangeButtonAction(
 
             const targetText = action === 'accept' ? 'Accept all' : 'Reject all';
 
-            try {
-                const result = await cdp.call('Runtime.evaluate', {
-                    expression: buildClickScript(targetText),
-                    returnByValue: true,
-                    awaitPromise: true,
-                });
+            const success = await executeBrowserClick(cdp, targetText);
 
-                if (result?.result?.value?.ok) {
-                    await interaction
-                        .update({
-                            text: `${action === 'accept' ? '✅ Accepted' : '❌ Rejected'} file changes.`,
-                            components: [],
-                        })
-                        .catch((err) => {
-                            logger.warn('[FileChangeAction] update failed:', err);
-                        });
-                } else {
-                    await interaction
-                        .followUp({ text: `Could not find the "${targetText}" button in the IDE. The file change prompt may have been dismissed.` })
-                        .catch(() => {});
-                }
-            } catch (error) {
-                logger.error('[FileChangeAction] Error clicking button:', error);
+            if (success) {
                 await interaction
-                    .followUp({ text: 'An error occurred while interacting with the IDE.' })
+                    .update({
+                        text: `${action === 'accept' ? '✅ Accepted' : '❌ Rejected'} file changes.`,
+                        components: [],
+                    })
+                    .catch((err) => {
+                        logger.warn('[FileChangeAction] update failed:', err);
+                    });
+            } else {
+                await interaction
+                    .followUp({ text: `Could not find the "${targetText}" button in the IDE. The file change prompt may have been dismissed.` })
                     .catch(() => {});
             }
         },

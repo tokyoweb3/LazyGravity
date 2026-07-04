@@ -268,9 +268,10 @@ export function extractAssistantSegmentsPayloadScript(): string {
         if (node.closest('details')) return true;
         if (node.closest('[class*="feedback"], footer')) return true;
         if (node.closest('.notify-user-container')) return true;
-        // Guard against approval dialogs leaking into the output (they contain plan cards or review buttons)
-        var dialogNode = node.closest('dialog, [role="dialog"], form');
-        if (dialogNode && dialogNode.querySelector('[data-testid="plan-card"], [class*="plan-summary"], .actions-container, .review-button')) {
+        if (node.closest('dialog, [role="dialog"]')) return true;
+        // Guard against other approval forms leaking into the output
+        var formNode = node.closest('form');
+        if (formNode && formNode.querySelector('[data-testid="plan-card"], [class*="plan-summary"], .actions-container, .review-button')) {
             return true;
         }
         

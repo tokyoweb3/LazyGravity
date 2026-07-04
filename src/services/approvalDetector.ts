@@ -264,12 +264,18 @@ export function buildClickScript(buttonText: string): string {
         const normalize = (text) => (text || '').toLowerCase().replace(/\\s+/g, ' ').trim();
         const text = ${safeText};
         const wanted = normalize(text);
-        const allButtons = Array.from(document.querySelectorAll('button, [role="button"], a, [class*="btn"], [class*="button"], [class*="action"]')).reverse();
+        const allButtons = Array.from(document.querySelectorAll('button, [role="button"], a.action-btn, a[class*="btn"]')).reverse();
         const target = allButtons.find(btn => {
             const style = window.getComputedStyle(btn);
             if (style.display === 'none' || style.visibility === 'hidden' || btn.disabled) return false;
             const buttonText = normalize(btn.innerText || btn.textContent || '');
             const ariaLabel = normalize(btn.getAttribute('aria-label') || '');
+            
+            const isShort = wanted.length < 5;
+            if (isShort) {
+                return buttonText === wanted || ariaLabel === wanted;
+            }
+            
             return buttonText === wanted ||
                 ariaLabel === wanted ||
                 (buttonText.includes(wanted) && buttonText.length < wanted.length + 10) ||

@@ -211,7 +211,7 @@ describe('assistantDomExtractor', () => {
             }
         });
 
-        it('captures text inside role="dialog" container for interactive tools', () => {
+        it('skips text inside role="dialog" container for interactive tools', () => {
             const panel = document.createElement('div');
             panel.className = 'antigravity-agent-side-panel';
             const dialog = document.createElement('div');
@@ -237,7 +237,39 @@ describe('assistantDomExtractor', () => {
             const payload = (window as any).__pass25DialogPayload;
             const result = classifyAssistantSegments(payload);
 
-            expect(result.activityLines).toEqual(['Planning']);
+            expect(result.activityLines).toEqual([]);
+        });
+
+        it('skips dialogs and elements with role="dialog"', () => {
+            const panel = document.createElement('div');
+            panel.className = 'antigravity-agent-side-panel';
+            
+            const dialog = document.createElement('dialog');
+            dialog.textContent = 'This is a modal dialog';
+            panel.appendChild(dialog);
+
+            const roleDialog = document.createElement('div');
+            roleDialog.setAttribute('role', 'dialog');
+            roleDialog.textContent = 'This is an ARIA dialog';
+            panel.appendChild(roleDialog);
+            
+            const message = document.createElement('div');
+            message.className = 'rendered-markdown';
+            message.textContent = 'This should be extracted';
+            panel.appendChild(message);
+
+            document.body.appendChild(panel);
+
+            const script = extractAssistantSegmentsPayloadScript();
+            const scriptEl = document.createElement('script');
+            scriptEl.textContent = `window.__dialogPayload = ${script};`;
+            document.body.appendChild(scriptEl);
+            const payload = (window as any).__dialogPayload;
+            const result = classifyAssistantSegments(payload);
+
+            expect(result.finalOutputText).toContain('This should be extracted');
+            expect(result.finalOutputText).not.toContain('This is a modal dialog');
+            expect(result.finalOutputText).not.toContain('This is an ARIA dialog');
         });
 
         it('skips container elements with more than 3 children', () => {

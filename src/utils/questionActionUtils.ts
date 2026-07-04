@@ -1,3 +1,7 @@
+import type { CdpService } from '../services/cdpService';
+import { logger } from './logger';
+import { buildClickScript } from '../services/approvalDetector';
+
 export function parseQuestionCustomId(customId: string, expectedPrefix: string): { action: string; projectName?: string; channelId?: string } | null {
     if (customId !== expectedPrefix && !customId.startsWith(expectedPrefix + ':')) return null;
 
@@ -18,4 +22,23 @@ export function parseQuestionCustomId(customId: string, expectedPrefix: string):
     }
     
     return result;
+}
+
+/**
+ * Executes a click on an element matching the target text in the IDE.
+ * Returns true if the click was successfully dispatched, false otherwise.
+ */
+export async function executeBrowserClick(cdp: CdpService, buttonText: string): Promise<boolean> {
+    try {
+        const script = buildClickScript(buttonText);
+        const evalResult = await cdp.call('Runtime.evaluate', {
+            expression: script,
+            returnByValue: true,
+            awaitPromise: true,
+        });
+        return !!evalResult?.result?.value?.ok;
+    } catch (error) {
+        logger.error(`[executeBrowserClick] Error clicking button "${buttonText}":`, error);
+        return false;
+    }
 }
