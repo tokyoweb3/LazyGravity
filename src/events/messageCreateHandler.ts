@@ -485,11 +485,17 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                                     }
 
                                     if (!activationResult.ok) {
-                                        const reason = activationResult.error ? ` (${activationResult.error})` : '';
-                                        await message.reply(
-                                            `⚠️ Could not route this message to the bound session (${session.displayName}). ` +
-                                            `Please open /chat and verify the session${reason}.`,
-                                        ).catch(() => { });
+                                        const isDeleted = activationResult.error?.includes('Conversation not found in Past Conversations');
+                                        let replyText = `⚠️ Could not route this message to the bound session (${session.displayName}).\n*Reason: ${activationResult.error}*`;
+                                        
+                                        if (isDeleted) {
+                                            deps.chatSessionRepo.deleteByChannelId(message.channelId);
+                                            replyText += `\n\n💡 **Tip**: This session appears to have been deleted in the IDE. I have unbound this channel so your next message will start a fresh chat. You can also type \`/new\` anytime.`;
+                                        } else {
+                                            replyText += `\n\n💡 If this session is broken, type \`/new\` to force a new chat.`;
+                                        }
+
+                                        await message.reply(replyText).catch(() => { });
                                         return;
                                     }
                                 }
