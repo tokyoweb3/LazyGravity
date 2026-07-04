@@ -749,9 +749,19 @@ describe('ChatSessionService', () => {
             );
 
             expect(result.ok).toBe(true);
-            // A single label component (aria-label) equals the requested title,
             // so the join-based whole-string comparison trap is avoided.
             expect(result.matchedTitle).toBe('Deploy');
+        }, 15000);
+
+        it('prevents cross-matching short similar session titles (e.g. auth matching authz)', async () => {
+            const result = await runPastConversationsScript(
+                `${TOGGLE}<div role="option">authz</div>`,
+                'auth',
+            );
+
+            // Should not match "authz" because "auth" is short (< 5 chars) and doesn't match exactly
+            expect(result.ok).toBe(false);
+            expect(result.error).toBe('Conversation not found in Past Conversations');
         }, 15000);
     });
 });
