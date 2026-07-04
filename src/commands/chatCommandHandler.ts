@@ -197,10 +197,11 @@ export class ChatCommandHandler {
                     { name: t('Title'), value: info.title, inline: true },
                     { name: t('Status'), value: info.hasActiveChat ? t('🟢 Active') : t('⚪ Inactive'), inline: true },
                 );
-                const categoryId = (interaction.channel as any)?.parentId;
+                const channel = await interaction.client.channels.fetch(interaction.channelId).catch(() => null);
+                const categoryId = (channel as any)?.parentId;
                 const isProjectChannel = categoryId ? !!this.bindingRepo.findByChannelId(categoryId) : false;
                 const desc = isProjectChannel
-                    ? t('※ Unbound project channel.\nSend a message or use `/new` to start a chat session.')
+                    ? t('※ No active session is bound to this channel.\n\n💡 **Tip**: If you recently deleted a session in the IDE, this channel was automatically unbound. Send a prompt or use `/new` to start a fresh chat.')
                     : t('※ Non-session channel.\nUse `/project` to create a project first.');
 
                 embed.setDescription(desc)

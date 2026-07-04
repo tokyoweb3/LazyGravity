@@ -371,9 +371,10 @@ describe('ChatCommandHandler', () => {
     });
 
     describe('handleChat() — status + list integration', () => {
-        it('displays a CDP not connected message for channels outside session management', async () => {
+        it('displays "Non-session channel" error for channels with no bound category', async () => {
             const interaction = {
                 channelId: 'unmanaged-ch',
+                client: { channels: { fetch: jest.fn().mockResolvedValue(null) } },
                 editReply: jest.fn().mockResolvedValue(undefined),
             };
 
@@ -385,7 +386,32 @@ describe('ChatCommandHandler', () => {
                         expect.objectContaining({
                             data: expect.objectContaining({
                                 title: expect.stringContaining('Chat Session Info'),
-                                description: expect.stringMatching(/channel/),
+                                description: expect.stringContaining('Non-session channel'),
+                            }),
+                        }),
+                    ]),
+                })
+            );
+        });
+
+        it('displays "No active session" error for unbound project channels', async () => {
+            bindingRepo.create({ channelId: 'bound-cat-1', workspacePath: 'some-path', guildId: 'guild-1' });
+
+            const interaction = {
+                channelId: 'unbound-project-ch',
+                client: { channels: { fetch: jest.fn().mockResolvedValue({ parentId: 'bound-cat-1' }) } },
+                editReply: jest.fn().mockResolvedValue(undefined),
+            };
+
+            await handler.handleChat(interaction as any);
+
+            expect(interaction.editReply).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    embeds: expect.arrayContaining([
+                        expect.objectContaining({
+                            data: expect.objectContaining({
+                                title: expect.stringContaining('Chat Session Info'),
+                                description: expect.stringContaining('No active session'),
                             }),
                         }),
                     ]),
