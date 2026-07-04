@@ -1,4 +1,5 @@
-import { t } from "../utils/i18n";
+import { t } from '../utils/i18n';
+import { logger } from '../utils/logger';
 import {
     ChatInputCommandInteraction,
     EmbedBuilder,
@@ -104,9 +105,7 @@ export class ChatCommandHandler {
         if (!newChatResult.ok) {
             // Log but don't fail the command, as the channel still needs to be created
             // and the user might just have to click it manually if the IDE state is strange.
-            import('../utils/logger').then(({ logger }) => {
-                logger.warn(`[/new] Could not start new chat in IDE automatically: ${newChatResult.error}`);
-            });
+            logger.warn(`[/new] Could not start new chat in IDE automatically: ${newChatResult.error}`);
         }
 
         const customNameRaw = interaction.options.getString('name');
@@ -156,9 +155,7 @@ export class ChatCommandHandler {
             if (workspaceCdp) {
                 const renameResult = await this.chatSessionService.renameCurrentChatInUI(workspaceCdp, safeCustomName);
                 if (!renameResult.ok) {
-                    import('../utils/logger').then(({ logger }) => {
-                        logger.warn(`[/new] Could not rename chat in IDE automatically: ${renameResult.error}`);
-                    });
+                    logger.warn(`[/new] Could not rename chat in IDE automatically: ${renameResult.error}`);
                 }
             }
         }
