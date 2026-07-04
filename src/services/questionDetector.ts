@@ -85,6 +85,17 @@ export class QuestionDetector extends EventEmitter {
             const callParams: any = {
                 expression: `
                 (() => {
+                    const getInteractiveItems = (elContainer) => {
+                        return Array.from(elContainer.querySelectorAll('li, label, a, [role="radio"], [role="option"], [class*="cursor-pointer"]'))
+                            .filter(el => {
+                                if (el.tagName === 'BUTTON' || el.closest('button')) return false;
+                                const role = el.getAttribute('role');
+                                if (['radio', 'option', 'checkbox', 'button', 'menuitem'].includes(role)) return true;
+                                if (el.tagName === 'A' || el.tagName === 'LABEL') return true;
+                                const style = window.getComputedStyle(el);
+                                return style.cursor === 'pointer';
+                            });
+                    };
                     const containers = Array.from(document.querySelectorAll('div, form, dialog')).reverse();
                     let targetList = null;
                     let submitBtn = null;
@@ -101,8 +112,7 @@ export class QuestionDetector extends EventEmitter {
                         }
                         
                         if (possibleSubmitBtn) {
-                            const items = Array.from(container.querySelectorAll('li, label, a, [role="radio"], [role="option"], [class*="cursor-pointer"]'))
-                                .filter(el => el.tagName !== 'BUTTON' && !el.closest('button'));
+                            const items = getInteractiveItems(container);
                             
                             if (items.length > 1) {
                                 targetList = container;
@@ -114,8 +124,7 @@ export class QuestionDetector extends EventEmitter {
 
                     if (!targetList || !submitBtn) return { found: false };
 
-                    const items = Array.from(targetList.querySelectorAll('li, label, a, [role="radio"], [role="option"], [class*="cursor-pointer"]'))
-                        .filter(el => el.tagName !== 'BUTTON' && !el.closest('button'));
+                    const items = getInteractiveItems(targetList);
                     if (items.length <= ${index}) return { found: false };
                     
                     const targetOption = items[${index}];
@@ -176,12 +185,23 @@ export class QuestionDetector extends EventEmitter {
             const callParams: any = {
                 expression: `
                 (() => {
+                    const getInteractiveItems = (elContainer) => {
+                        return Array.from(elContainer.querySelectorAll('li, label, a, [role="radio"], [role="option"], [class*="cursor-pointer"]'))
+                            .filter(el => {
+                                if (el.tagName === 'BUTTON' || el.closest('button')) return false;
+                                const role = el.getAttribute('role');
+                                if (['radio', 'option', 'checkbox', 'button', 'menuitem'].includes(role)) return true;
+                                if (el.tagName === 'A' || el.tagName === 'LABEL') return true;
+                                const style = window.getComputedStyle(el);
+                                return style.cursor === 'pointer';
+                            });
+                    };
+
                     const containers = Array.from(document.querySelectorAll('div, form, dialog')).reverse();
                     let skipBtn = null;
                     
                     for (const container of containers) {
-                        const items = Array.from(container.querySelectorAll('li, [role="radio"], [role="option"], .cursor-pointer'))
-                            .filter(el => el.tagName !== 'BUTTON' && !el.closest('button'));
+                        const items = getInteractiveItems(container);
                         const hasList = items.length > 1;
                         
                         const buttons = Array.from(container.querySelectorAll('button'));
@@ -245,6 +265,18 @@ export class QuestionDetector extends EventEmitter {
             const callParams: any = {
                 expression: `
                 (() => {
+                    const getInteractiveItems = (elContainer) => {
+                        return Array.from(elContainer.querySelectorAll('li, label, a, [role="radio"], [role="option"], [class*="cursor-pointer"]'))
+                            .filter(el => {
+                                if (el.tagName === 'BUTTON' || el.closest('button')) return false;
+                                const role = el.getAttribute('role');
+                                if (['radio', 'option', 'checkbox', 'button', 'menuitem'].includes(role)) return true;
+                                if (el.tagName === 'A' || el.tagName === 'LABEL') return true;
+                                const style = window.getComputedStyle(el);
+                                return style.cursor === 'pointer';
+                            });
+                    };
+
                     const containers = Array.from(document.querySelectorAll('div, form, dialog')).reverse();
                     let targetList = null;
                     let submitBtn = null;
@@ -261,8 +293,7 @@ export class QuestionDetector extends EventEmitter {
                         }
                         
                         if (possibleSubmitBtn) {
-                            const items = Array.from(container.querySelectorAll('li, label, a, [role="radio"], [role="option"], [class*="cursor-pointer"]'))
-                                .filter(el => el.tagName !== 'BUTTON' && !el.closest('button'));
+                            const items = getInteractiveItems(container);
                             
                             if (items.length > 1) {
                                 targetList = container;
@@ -284,8 +315,7 @@ export class QuestionDetector extends EventEmitter {
                     }
                     const title = titleEl ? (titleEl.innerText || titleEl.textContent || '').trim() : 'Question';
                     
-                    const items = Array.from(targetList.querySelectorAll('li, label, a, [role="radio"], [role="option"], [class*="cursor-pointer"]'))
-                        .filter(el => el.tagName !== 'BUTTON' && !el.closest('button'));
+                    const items = getInteractiveItems(targetList);
                     const options = items.map(n => {
                         const rect = n.getBoundingClientRect();
                         const finalLabel = n.innerText || n.textContent || 'Option';
