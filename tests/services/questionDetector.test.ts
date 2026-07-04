@@ -25,6 +25,7 @@ describe('QuestionDetector', () => {
             onResolved: mockOnResolved,
             pollIntervalMs: 100, // fast for tests
         });
+        (detector as any)._isStarted = true;
     });
     
     afterEach(() => {

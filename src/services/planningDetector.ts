@@ -285,7 +285,7 @@ export class PlanningDetector {
      * @returns true if click succeeded
      */
     async clickRejectButton(buttonText?: string): Promise<boolean> {
-        const text = buttonText ?? this.lastDetectedInfo?.rejectText ?? 'Reject All';
+        const text = buttonText || this.lastDetectedInfo?.rejectText || 'Reject All';
         return this.clickButton(text);
     }
 

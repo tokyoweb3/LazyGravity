@@ -269,6 +269,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                 if (genericAction) {
                     const { actionName: formattedName, projectName: parsedProject, channelId } = genericAction;
                     
+
                     if (channelId && channelId !== interaction.channelId) {
                         await interaction.reply({
                             content: t('This action is linked to a different session channel.'),

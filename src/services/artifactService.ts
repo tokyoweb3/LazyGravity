@@ -229,17 +229,15 @@ export class ArtifactService {
                             belongsToWorkspace = true;
                         }
                         
-                        if (belongsToWorkspace) {
-                            if (content.includes(needle)) {
-                                exactMatch = true;
-                            } else {
-                                const contentTokens = new Set(content.replace(/[^\p{L}\p{N}]+/gu, ' ').split(/\s+/));
-                                let currentScore = 0;
-                                for (const word of uniqueNeedleWords) {
-                                    if (contentTokens.has(word)) currentScore++;
-                                }
-                                if (currentScore > score) score = currentScore;
+                        if (content.includes(needle)) {
+                            exactMatch = true;
+                        } else {
+                            const contentTokens = new Set(content.replace(/[^\p{L}\p{N}]+/gu, ' ').split(/\s+/));
+                            let currentScore = 0;
+                            for (const word of uniqueNeedleWords) {
+                                if (contentTokens.has(word)) currentScore++;
                             }
+                            if (currentScore > score) score = currentScore;
                         }
                     } finally {
                         if (fd !== null) fs.closeSync(fd);

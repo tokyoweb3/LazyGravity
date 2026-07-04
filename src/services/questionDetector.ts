@@ -359,6 +359,8 @@ export class QuestionDetector extends EventEmitter {
                     return null;
                 });
                 
+                if (!this._isStarted) return;
+                
                 if (response?.exceptionDetails) {
                     this.logger.debug(`[QuestionDetector] Exception on ctx ${contextId}: ${response.exceptionDetails.exception?.description || response.exceptionDetails.text}`);
                 }
@@ -375,6 +377,8 @@ export class QuestionDetector extends EventEmitter {
                     lastReason = result.reason;
                 }
             }
+
+            if (!this._isStarted) return;
 
             const result = detectedResult;
 

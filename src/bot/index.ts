@@ -934,7 +934,6 @@ async function sendPromptToAntigravity(
                             if (relative.startsWith('..') || path.isAbsolute(relative)) {
                                 continue;
                             }
-
                             if (!fs.existsSync(fsPath)) {
                                 continue;
                             }
@@ -2485,7 +2484,9 @@ export async function handleSlashInteraction(
                         const candidatePath = path.isAbsolute(rawPath) ? rawPath : path.join(wsPath, rawPath);
                         const relative = path.relative(wsPath, candidatePath);
                         if (!relative.startsWith('..') && !path.isAbsolute(relative)) {
-                            resolvedPath = candidatePath;
+                            if (fs.existsSync(candidatePath)) {
+                                resolvedPath = candidatePath;
+                            }
                         }
                     }
                 }

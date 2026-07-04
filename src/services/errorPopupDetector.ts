@@ -126,9 +126,9 @@ export class ErrorPopupDetector {
     private pollTimer: NodeJS.Timeout | null = null;
     private isRunning: boolean = false;
     /** Key of the last detected error popup (for duplicate notification prevention) */
-    private lastDetectedKey: string | null = null;
+    public lastDetectedKey: string | null = null;
     /** Full ErrorPopupInfo from the last detection */
-    private lastDetectedInfo: ErrorPopupInfo | null = null;
+    public lastDetectedInfo: ErrorPopupInfo | null = null;
     /** Timestamp of last notification (for cooldown-based dedup) */
     private lastNotifiedAt: number = 0;
     /** Cooldown period in ms to suppress duplicate notifications */

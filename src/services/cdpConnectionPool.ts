@@ -20,6 +20,7 @@ function buildConnectionKey(projectName: string, accountName: string): string {
  * Pool that manages independent CdpService instances per workspace/account pair.
  */
 export class CdpConnectionPool {
+    public lastActiveWorkspace: string | null = null;
     private readonly connections = new Map<string, CdpService>();
     private readonly workspaceToAccount = new Map<string, string>();
     private readonly approvalDetectors = new Map<string, ApprovalDetector>();
@@ -52,6 +53,7 @@ export class CdpConnectionPool {
 
         const existing = this.connections.get(key);
         if (existing && existing.isConnected()) {
+            this.lastActiveWorkspace = projectName;
             await existing.discoverAndConnectForWorkspace(workspacePath);
             return existing;
         }
@@ -65,7 +67,9 @@ export class CdpConnectionPool {
         this.connectingPromises.set(key, connectPromise);
 
         try {
-            return await connectPromise;
+            const result = await connectPromise;
+            this.lastActiveWorkspace = projectName;
+            return result;
         } finally {
             this.connectingPromises.delete(key);
             this.workspaceToAccount.set(projectName, effectiveAccount);
@@ -74,8 +78,9 @@ export class CdpConnectionPool {
 
     getConnected(projectName: string, accountName: string = 'default'): CdpService | null {
         const effectiveAccount = this.resolveAccountName(projectName, accountName);
-        const cdp = this.connections.get(buildConnectionKey(projectName, effectiveAccount));
+        const cdp = this.connections.get(buildConnectionKey(projectName, effectiveAccount)) || null;
         if (cdp && cdp.isConnected()) {
+            this.lastActiveWorkspace = projectName;
             return cdp;
         }
         return null;

@@ -571,7 +571,7 @@ export function ensureErrorPopupDetector(
 
     // Track the most recent error notification for auto-disable on resolve.
     // See ensureApprovalDetector comment for tracking limitation rationale.
-    let lastNotification: { sent: PlatformSentMessage; payload: MessagePayload } | null = null;
+    let lastNotification: { sent: PlatformSentMessage; payload: MessagePayload; key: string | null } | null = null;
 
     const detector = new ErrorPopupDetector({
         cdpService: cdp,
@@ -611,12 +611,24 @@ export function ensureErrorPopupDetector(
                 ],
             });
 
+            if (lastNotification && detector.lastDetectedKey && lastNotification.key === detector.lastDetectedKey) {
+                // Cooldown triggered for the same popup; edit existing message instead of sending new
+                const edited = await lastNotification.sent.edit(payload).catch((err: any) => {
+                    logger.error(err);
+                    return null;
+                });
+                if (edited) {
+                    lastNotification.payload = payload;
+                }
+                return;
+            }
+
             const sent = await targetChannel.send(payload).catch((err: any) => {
                 logger.error(err);
                 return null;
             });
             if (sent) {
-                lastNotification = { sent, payload };
+                lastNotification = { sent, payload, key: detector.lastDetectedKey };
             }
         },
     });
