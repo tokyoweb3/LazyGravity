@@ -58,6 +58,7 @@ function makeButtonInteraction(
             edit: jest.fn(),
             delete: jest.fn(),
         } as PlatformSentMessage),
+        showModal: jest.fn().mockResolvedValue(undefined),
         ...overrides,
     };
 }

@@ -22,19 +22,19 @@ export function createQuestionSelectAction(deps: QuestionSelectActionDeps): Sele
         async execute(
             interaction: PlatformSelectInteraction,
             values: readonly string[],
-        ): Promise<void> {
+        ): Promise<boolean> {
             const parsed = parseQuestionCustomId(interaction.customId, QUESTION_SELECT_ACTION_PREFIX);
-            if (!parsed) return;
+            if (!parsed) return false;
 
             const selectedOption = parseInt(values[0], 10);
-            if (isNaN(selectedOption)) return;
+            if (isNaN(selectedOption)) return false;
 
             const channelId = parsed.channelId;
             if (channelId && channelId !== interaction.channel.id) {
                 await interaction
                     .reply({ text: 'This question is linked to a different session channel.', ephemeral: true })
                     .catch(() => {});
-                return;
+                return false;
             }
 
             const projectName = resolveProjectName(deps, interaction.channel.id, parsed.projectName);
@@ -49,7 +49,7 @@ export function createQuestionSelectAction(deps: QuestionSelectActionDeps): Sele
                 await interaction
                     .reply({ text: 'Question detector not found.', ephemeral: true })
                     .catch(() => {});
-                return;
+                return false;
             }
 
             await interaction.deferUpdate().catch(() => {});
@@ -63,22 +63,24 @@ export function createQuestionSelectAction(deps: QuestionSelectActionDeps): Sele
                 await interaction
                     .followUp({ text: `Failed to answer question: ${msg}`, ephemeral: true })
                     .catch(() => {});
-                return;
+                return false;
             }
 
             if (success) {
-                const updatePayload = { text: `✅ Submitted option ${selectedOption + 1}`, components: [] as any[] };
+                const updatePayload = { text: `✅ Submitted option ${selectedOption + 1}.\n\n⏳ IDE is working on the response...`, components: [] as any[] };
                 try {
                     await interaction.editReply(updatePayload);
                 } catch (editErr) {
                     logger.warn('[QuestionSelectAction] editReply failed, sending followUp:', editErr);
-                    await interaction.followUp({ text: `✅ Submitted option ${selectedOption + 1}` }).catch(() => {});
+                    await interaction.followUp({ text: `✅ Submitted option ${selectedOption + 1}.\n\n⏳ IDE is working on the response...` }).catch(() => {});
                 }
             } else {
                 await interaction
                     .followUp({ text: 'Failed to answer question (it may have been resolved already).', ephemeral: true })
                     .catch(() => {});
             }
+
+            return success;
         },
     };
 }

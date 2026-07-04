@@ -140,5 +140,35 @@ describe('ArtifactService', () => {
             const found = artifactService.findConversationByTitle('修复部署');
             expect(found).toBe(conversationId);
         });
+
+        it('should reject workspace matches containing .gemini, brain, or antigravity', () => {
+            fs.writeFileSync(path.join(logDir, 'transcript.jsonl'), '{"content":"c:\\\\Users\\\\dgomez\\\\.gemini\\\\antigravity\\\\brain\\\\test"}');
+            const found = artifactService.findConversationByTitle('Fix Deployment Bug', 'test');
+            expect(found).toBeNull();
+        });
+    });
+
+    describe('getLatestConversationWithArtifacts', () => {
+        it('should reject conversations matching workspace filters containing .gemini, brain, or antigravity', () => {
+            const conversationId = '00000000-0000-0000-0000-000000000002';
+            const convDir = path.join(tmpBrainPath, conversationId);
+            fs.mkdirSync(path.join(convDir, '.system_generated', 'logs'), { recursive: true });
+            
+            // Create plan to make it eligible
+            fs.writeFileSync(path.join(convDir, 'implementation_plan.md'), 'Workspace: test');
+            fs.writeFileSync(path.join(convDir, 'implementation_plan.md.metadata.json'), JSON.stringify({
+                artifactType: 'ARTIFACT_TYPE_IMPLEMENTATION_PLAN',
+                updatedAt: '2023-01-01T10:00:00Z'
+            }));
+
+            // Path matches workspace but it is inside a brain folder
+            fs.writeFileSync(
+                path.join(convDir, '.system_generated', 'logs', 'transcript.jsonl'),
+                '{"content":"c:\\\\Users\\\\dgomez\\\\.gemini\\\\antigravity\\\\brain\\\\test\\\\file.txt"}'
+            );
+
+            const found = artifactService.getLatestConversationWithArtifacts('test');
+            expect(found).toBeNull();
+        });
     });
 });

@@ -42,6 +42,7 @@ function makeInteraction(overrides: Partial<PlatformButtonInteraction> = {}): Pl
             id: 'sent-1', platform: 'telegram', channelId: 'ch-1',
             edit: jest.fn(), delete: jest.fn(),
         } as PlatformSentMessage),
+        showModal: jest.fn().mockResolvedValue(undefined),
         ...overrides,
     };
 }

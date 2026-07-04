@@ -42,6 +42,7 @@ function makeInteraction(overrides: Partial<PlatformButtonInteraction> = {}): Pl
             id: 'sent-1', platform: 'telegram', channelId: 'ch-1',
             edit: jest.fn(), delete: jest.fn(),
         } as PlatformSentMessage),
+        showModal: jest.fn().mockResolvedValue(undefined),
         ...overrides,
     };
 }
@@ -121,7 +122,7 @@ describe('createPlanningButtonAction', () => {
 
             expect(interaction.deferUpdate).toHaveBeenCalled();
             expect(mockDetector.clickOpenButton).toHaveBeenCalled();
-            expect(interaction.update).toHaveBeenCalledWith({
+            expect(interaction.editReply).toHaveBeenCalledWith({
                 text: '📋 Plan opened',
                 components: [],
             });
@@ -172,8 +173,8 @@ describe('createPlanningButtonAction', () => {
                 channelId: '',
             });
 
-            expect(interaction.reply).toHaveBeenCalledWith({
-                text: 'Plan content could not be extracted from the IDE.',
+            expect(interaction.followUp).toHaveBeenCalledWith({
+                text: 'Plan content could not be extracted from the IDE or workspace.',
             });
         });
 
@@ -196,7 +197,7 @@ describe('createPlanningButtonAction', () => {
             });
 
             expect(interaction.followUp).toHaveBeenCalledWith({
-                text: 'Could not extract plan content from the editor.',
+                text: 'Plan opened in IDE, but content could not be extracted.',
             });
         });
     });
@@ -219,8 +220,8 @@ describe('createPlanningButtonAction', () => {
             });
 
             expect(mockDetector.clickProceedButton).toHaveBeenCalled();
-            expect(interaction.update).toHaveBeenCalledWith({
-                text: '▶️ Proceed started',
+            expect(interaction.editReply).toHaveBeenCalledWith({
+                text: '▶️ Proceed started.\n\n⏳ IDE is working on the response...',
                 components: [],
             });
         });
@@ -241,8 +242,9 @@ describe('createPlanningButtonAction', () => {
                 channelId: '',
             });
 
-            expect(interaction.reply).toHaveBeenCalledWith({
+            expect(interaction.followUp).toHaveBeenCalledWith({
                 text: 'Proceed button not found.',
+                ephemeral: true,
             });
         });
     });
@@ -265,8 +267,9 @@ describe('createPlanningButtonAction', () => {
             });
 
             expect(mockDetector.clickRejectButton).not.toHaveBeenCalled();
-            expect(interaction.reply).toHaveBeenCalledWith({
+            expect(interaction.followUp).toHaveBeenCalledWith({
                 text: 'Rejection of the plan is not allowed.',
+                ephemeral: true,
             });
         });
     });
@@ -285,8 +288,9 @@ describe('createPlanningButtonAction', () => {
                 channelId: '',
             });
 
-            expect(interaction.reply).toHaveBeenCalledWith({
+            expect(interaction.followUp).toHaveBeenCalledWith({
                 text: 'Planning detector not found.',
+                ephemeral: true,
             });
         });
 
@@ -303,8 +307,9 @@ describe('createPlanningButtonAction', () => {
                 channelId: 'ch-1',
             });
 
-            expect(interaction.reply).toHaveBeenCalledWith({
+            expect(interaction.followUp).toHaveBeenCalledWith({
                 text: 'This planning action is linked to a different session channel.',
+                ephemeral: true,
             });
         });
 

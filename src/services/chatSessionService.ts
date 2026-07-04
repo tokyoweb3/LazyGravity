@@ -67,7 +67,7 @@ const GET_NEW_CHAT_BUTTON_SCRIPT = `(() => {
  * The title element is a div with the text-ellipsis class inside the header.
  */
 const GET_CHAT_TITLE_SCRIPT = `(() => {
-    const panel = document.querySelector('.antigravity-agent-side-panel');
+    const panel = document.querySelector('.antigravity-agent-side-panel') || document.body;
     if (!panel) return { title: '', hasActiveChat: false };
     const header = panel.querySelector('div[class*="border-b"]');
     if (!header) return { title: '', hasActiveChat: false };
@@ -86,7 +86,7 @@ const GET_CHAT_TITLE_SCRIPT = `(() => {
 })()`;
 
 const GET_SESSION_VIEW_STATE_SCRIPT = `(() => {
-    const panel = document.querySelector('.antigravity-agent-side-panel');
+    const panel = document.querySelector('.antigravity-agent-side-panel') || document.body;
     if (!panel) {
         return {
             panelFound: false,
@@ -199,7 +199,8 @@ const SCRAPE_PAST_CONVERSATIONS_SCRIPT = `(() => {
     // Try the visible QuickInput dialog first, then fall back to the side panel.
     const quickInputPanels = Array.from(document.querySelectorAll('div[class*="bg-quickinput-background"]'));
     const panel = quickInputPanels.find((el) => isVisible(el))
-        || document.querySelector('.antigravity-agent-side-panel');
+        || document.querySelector('.antigravity-agent-side-panel')
+        || document.body;
     if (!panel) return null;
 
     const items = [];
@@ -654,7 +655,8 @@ export class ChatSessionService {
                 const isVisible = (el) => !!el && el instanceof HTMLElement && el.offsetParent !== null;
                 const quickInputPanels = Array.from(document.querySelectorAll('div[class*="bg-quickinput-background"]'));
                 const panel = quickInputPanels.find((el) => isVisible(el))
-                    || document.querySelector('.antigravity-agent-side-panel');
+                    || document.querySelector('.antigravity-agent-side-panel')
+                    || document.body;
                 if (!panel) return false;
                 const containers = Array.from(
                     panel.querySelectorAll('div[class*="overflow-auto"], div[class*="overflow-y-scroll"]')
@@ -1242,7 +1244,7 @@ export class ChatSessionService {
             const contextId = cdpService.getPrimaryContextId();
             
             const RENAME_SCRIPT = `(() => {
-                const panel = document.querySelector('.antigravity-agent-side-panel');
+                const panel = document.querySelector('.antigravity-agent-side-panel') || document.body;
                 if (!panel) return { ok: false, error: 'Panel not found' };
                 const header = panel.querySelector('div[class*="border-b"]');
                 const titleEl = header?.querySelector('div[class*="text-ellipsis"]');

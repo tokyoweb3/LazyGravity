@@ -23,11 +23,7 @@ class BoundedCache<K, V> {
     }
 
     get(key: K): V | undefined {
-        const value = this.map.get(key);
-        if (value !== undefined) {
-            this.map.delete(key); // Remove upon consumption
-        }
-        return value;
+        return this.map.get(key);
     }
 }
 

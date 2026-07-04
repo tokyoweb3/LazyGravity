@@ -19,7 +19,7 @@ export interface ButtonAction {
     execute: (
         interaction: PlatformButtonInteraction,
         params: Record<string, string>,
-    ) => Promise<void>;
+    ) => Promise<void | boolean>;
 }
 
 // ---------------------------------------------------------------------------

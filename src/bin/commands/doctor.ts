@@ -6,6 +6,7 @@ import { ConfigLoader } from '../../utils/configLoader';
 import { getAntigravityCdpHint } from '../../utils/pathUtils';
 import { COLORS } from '../../utils/logger';
 import type { PlatformType } from '../../platform/types';
+import { ArtifactService } from '../../services/artifactService';
 
 const ok = (msg: string) => console.log(`  ${COLORS.green}[OK]${COLORS.reset} ${msg}`);
 const warn = (msg: string) => console.log(`  ${COLORS.yellow}[--]${COLORS.reset} ${msg}`);
@@ -131,7 +132,52 @@ export async function doctorAction(): Promise<void> {
         allOk = false;
     }
 
-    // 6. Node.js version check
+    // 6. Path alignment check
+    console.log(`\n  ${COLORS.dim}Checking brain path alignment...${COLORS.reset}`);
+    const artifactService = new ArtifactService();
+    const resolvedPath = (artifactService as any).brainBasePath as string;
+    ok(`Resolved brainBasePath: ${resolvedPath}`);
+
+    for (const port of CDP_PORTS) {
+        try {
+            const listUrl = `http://127.0.0.1:${port}/json/list`;
+            const listData = await new Promise<string>((resolve, reject) => {
+                const req = http.get(listUrl, (res) => {
+                    let data = '';
+                    res.on('data', chunk => data += chunk);
+                    res.on('end', () => resolve(data));
+                });
+                req.on('error', reject);
+                req.setTimeout(1000, () => {
+                    req.destroy();
+                    reject(new Error('timeout'));
+                });
+            });
+            const targets = JSON.parse(listData);
+            if (Array.isArray(targets)) {
+                for (const t of targets) {
+                    if (t.url?.includes('workbench')) {
+                        const pathLower = t.url.toLowerCase();
+                        const isIDE = pathLower.includes('antigravity%20ide') || pathLower.includes('antigravity-ide');
+                        const resolvedLower = resolvedPath.toLowerCase();
+                        if (isIDE && !resolvedLower.includes('antigravity-ide')) {
+                            fail(`Path mismatch: Active IDE target is "Antigravity IDE" but brain basePath is resolved to: ${resolvedPath}`);
+                            hint('Make sure to use .gemini/antigravity-ide/brain path.');
+                            allOk = false;
+                        } else if (!isIDE && resolvedLower.includes('antigravity-ide')) {
+                            warn(`Active IDE target does not appear to be "Antigravity IDE" but brain basePath is: ${resolvedPath}`);
+                        } else {
+                            ok(`Target "${t.title}" aligns correctly with brain basePath`);
+                        }
+                    }
+                }
+            }
+        } catch {
+            // Port not active, skip
+        }
+    }
+
+    // 7. Node.js version check
     const nodeVersion = process.versions.node;
     const major = parseInt(nodeVersion.split('.')[0], 10);
     if (major >= 18) {

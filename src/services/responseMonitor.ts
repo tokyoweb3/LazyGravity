@@ -149,6 +149,13 @@ export const RESPONSE_SELECTORS = {
             }
         }
 
+        if (panel) {
+            const panelText = (panel.textContent || '').trim();
+            if (/Working\.\s*$/i.test(panelText)) {
+                return { isGenerating: true };
+            }
+        }
+
         return { isGenerating: false };
     })()`,
     /** Click stop button via tooltip-id + text fallback */
@@ -721,6 +728,7 @@ export class ResponseMonitor {
 
     // Activity-based timeout (#49)
     private lastActivityTime: number = 0;
+    private startTime: number = 0;
 
     constructor(options: ResponseMonitorOptions) {
         this.cdpService = options.cdpService;
@@ -839,6 +847,7 @@ export class ResponseMonitor {
 
         // Activity-based timeout: track last activity time instead of fixed timer (#49)
         this.lastActivityTime = Date.now();
+        this.startTime = Date.now();
 
         // Register CDP connection event listeners (#48)
         this.registerCdpConnectionListeners();
@@ -1290,7 +1299,15 @@ export class ResponseMonitor {
             // Guard: never timeout while the stop button is visible — it means
             // Antigravity is still actively generating (extended thinking, long
             // shell commands, large file operations, etc.).
-            if (this.maxDurationMs > 0 && !isGenerating && Date.now() - this.lastActivityTime >= this.maxDurationMs) {
+            // Hard timeout limit (20 minutes absolute hard timeout)
+            const hardTimeoutLimit = 1200000;
+            const totalElapsed = Date.now() - this.startTime;
+            const isHardTimeout = totalElapsed >= hardTimeoutLimit;
+
+            if (isHardTimeout || (this.maxDurationMs > 0 && !isGenerating && Date.now() - this.lastActivityTime >= this.maxDurationMs)) {
+                if (isHardTimeout) {
+                    logger.warn(`[ResponseMonitor] Hard timeout of 20 minutes reached.`);
+                }
                 const lastText = this.lastText ?? '';
                 this.setPhase('timeout', lastText);
                 await this.stop();

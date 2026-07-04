@@ -1,6 +1,8 @@
 import {
     ActionRowBuilder,
     ButtonInteraction,
+    ButtonBuilder,
+    ButtonStyle,
     ChatInputCommandInteraction,
     EmbedBuilder,
     Interaction,
@@ -12,6 +14,7 @@ import { execFile } from 'child_process';
 import path from 'path';
 import fs from 'fs';
 import { parseGenericActionCustomId } from '../handlers/genericActionButtonAction';
+import { execute as executePlanningModalSubmit } from '../handlers/planningModalSubmitAction';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 import { disableAllButtons } from '../utils/discordButtonUtils';
@@ -31,7 +34,9 @@ import {
 import { QUESTION_SELECT_ACTION_PREFIX, QUESTION_SKIP_ACTION_PREFIX } from '../services/notificationSender';
 import { createQuestionSelectAction } from '../handlers/questionSelectAction';
 import { createQuestionSkipAction } from '../handlers/questionSkipAction';
-import { wrapDiscordButton, wrapDiscordSelect } from '../platform/discord/wrappers';
+import { wrapDiscordButton, wrapDiscordSelect, wrapDiscordCommand, wrapDiscordModalSubmit } from '../platform/discord/wrappers';
+import { parseQuestionCustomId } from '../utils/questionActionUtils';
+import { resolveProjectName } from '../utils/projectResolver';
 import { AccountPreferenceRepository } from '../database/accountPreferenceRepository';
 import { ChannelPreferenceRepository } from '../database/channelPreferenceRepository';
 import { UserPreferenceRepository, OutputFormat } from '../database/userPreferenceRepository';
@@ -65,7 +70,7 @@ import { inferParentScopeChannelId, listAccountNames, resolveScopedAccountName }
 import { ACCOUNT_SELECT_ID, sendAccountUI } from '../ui/accountUi';
 
 export interface InteractionCreateHandlerDeps {
-    config: { allowedUserIds: string[] };
+    config: { allowedUserIds: string[]; workspaceBaseDir?: string };
     bridge: CdpBridge;
     cleanupHandler: CleanupCommandHandler;
     modeService: ModeService;
@@ -361,6 +366,27 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                                 embeds: [updatedEmbed],
                                 components: disableAllButtons(interaction.message.components),
                             });
+
+                            if (success && (approvalAction.action === 'approve' || approvalAction.action === 'always_allow') && deps.promptDispatcher && interaction.channelId && interaction.message) {
+                                const cdp = projectName
+                                    ? deps.bridge.pool.getConnected(
+                                        projectName,
+                                        resolveSelectedAccount(
+                                            interaction.channelId,
+                                            interaction.user.id,
+                                            getParentChannelId(interaction),
+                                        ),
+                                    )
+                                    : null;
+                                if (cdp) {
+                                    deps.promptDispatcher.resume({
+                                        message: interaction.message as any,
+                                        prompt: '',
+                                        cdp,
+                                        options: buildResumeOptions()
+                                    }).catch(e => logger.error('[Approval] Failed to resume monitoring:', e));
+                                }
+                            }
                         } else {
                             await interaction.reply({ content: 'Approval button not found.', flags: MessageFlags.Ephemeral });
                         }
@@ -1075,8 +1101,41 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
 
                 if (interaction.customId.startsWith('file_open:')) {
                     await interaction.deferUpdate().catch(() => {});
-                    const hashId = interaction.customId.replace('file_open:', '');
-                    const fileUrl = fileOpenCache.get(hashId);
+                    
+                    let fileUrl: string | undefined = undefined;
+                    const suffix = interaction.customId.substring('file_open:'.length);
+                    
+                    if (suffix.startsWith('rel:')) {
+                        const relativePath = suffix.substring('rel:'.length);
+                        const workspacePath = interaction.channelId ? (deps.wsHandler.getWorkspaceForChannel(interaction.channelId) || 
+                            deps.chatSessionRepo?.findByChannelId(interaction.channelId)?.workspacePath) : undefined;
+                        if (workspacePath) {
+                            fileUrl = `file:///${path.join(workspacePath, relativePath).replace(/\\/g, '/')}`;
+                        }
+                    } else if (suffix.startsWith('art:')) {
+                        const parts = suffix.substring('art:'.length).split(':');
+                        if (parts.length >= 2) {
+                            const convId = parts[0];
+                            const filename = parts.slice(1).join(':');
+                            
+                            if (deps.artifactService) {
+                                const artifacts = deps.artifactService.listArtifacts(convId);
+                                const matched = artifacts.find(art => art.filename.toLowerCase() === filename.toLowerCase());
+                                if (matched) {
+                                    fileUrl = `file:///${matched.absolutePath.replace(/\\/g, '/')}`;
+                                }
+                            }
+                            if (!fileUrl) {
+                                const brainDir = path.join(require('os').homedir(), '.gemini', 'antigravity', 'brain');
+                                fileUrl = `file:///${path.join(brainDir, convId, filename).replace(/\\/g, '/')}`;
+                            }
+                        }
+                    } else {
+                        // Fallback to cache (for legacy file_open:<hashId> or explicit cache usage)
+                        const hashId = suffix.startsWith('cache:') ? suffix.substring('cache:'.length) : suffix;
+                        fileUrl = fileOpenCache.get(hashId);
+                    }
+
                     if (!fileUrl) {
                         await interaction.followUp({
                             content: t('File URL not found in cache or expired.'),
@@ -1096,41 +1155,66 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                         resolvedPath = path.resolve(rawPath);
                     }
 
-                    let workspacePath: string | undefined = undefined;
-                    if (interaction.channelId) {
-                        workspacePath = deps.wsHandler.getWorkspaceForChannel(interaction.channelId) || 
-                            deps.chatSessionRepo?.findByChannelId(interaction.channelId)?.workspacePath;
-                    }
+                    const isArtifact = resolvedPath.includes('.gemini') && resolvedPath.includes('antigravity') && resolvedPath.includes('brain');
 
-                    if (!workspacePath) {
-                        await interaction.followUp({
-                            content: `❌ Error: Cannot open files without an active workspace.`,
-                            flags: MessageFlags.Ephemeral
-                        }).catch(logger.error);
-                        return;
-                    }
+                    if (!isArtifact) {
+                        let workspacePath: string | undefined = undefined;
+                        if (interaction.channelId) {
+                            workspacePath = deps.wsHandler.getWorkspaceForChannel(interaction.channelId) || 
+                                deps.chatSessionRepo?.findByChannelId(interaction.channelId)?.workspacePath;
+                        }
 
-                    const relative = path.relative(workspacePath, resolvedPath);
-                    if (relative.startsWith('..') || path.isAbsolute(relative)) {
-                        await interaction.followUp({
-                            content: `❌ Error: Cannot open files outside the workspace root.`,
-                            flags: MessageFlags.Ephemeral
-                        }).catch(logger.error);
-                        return;
+                        if (!workspacePath) {
+                            await interaction.followUp({
+                                content: `❌ Error: Cannot open files without an active workspace.`,
+                                flags: MessageFlags.Ephemeral
+                            }).catch(logger.error);
+                            return;
+                        }
+
+                        const resolvedWorkspacePath = path.resolve(workspacePath);
+                        const relative = path.relative(resolvedWorkspacePath, resolvedPath);
+                        if (relative.startsWith('..') || path.isAbsolute(relative)) {
+                            await interaction.followUp({
+                                content: `❌ Error: Cannot open files outside the workspace root.`,
+                                flags: MessageFlags.Ephemeral
+                            }).catch(logger.error);
+                            return;
+                        }
                     }
 
                     try {
+                        const comp = interaction.component as any;
+                        const buttonLabel = comp?.type === 2 ? comp.label : null;
+                        const isReviewBtn = suffix.startsWith('art:') || 
+                            buttonLabel?.toLowerCase().includes('review') ||
+                            resolvedPath.endsWith('walkthrough.md') ||
+                            resolvedPath.endsWith('task.md') ||
+                            resolvedPath.endsWith('implementation_plan.md');
+
                         const fileContent = fs.readFileSync(resolvedPath, 'utf8');
                         const MAX_DESC_LEN = 4096;
-                        const truncated = fileContent.length > MAX_DESC_LEN
+                        let truncated = fileContent.length > MAX_DESC_LEN
                             ? fileContent.substring(0, MAX_DESC_LEN - 15) + '\n\n(truncated)'
                             : fileContent;
                         
+                        if (isReviewBtn) {
+                            truncated += '\n\n💡 *To request changes to this artifact, simply reply in this channel.*';
+                        }
+                        
                         const embed = new EmbedBuilder()
-                            .setTitle(`Opened: ${path.basename(resolvedPath)}`)
+                            .setTitle(isReviewBtn ? `Reviewing: ${path.basename(resolvedPath)}` : `Opened: ${path.basename(resolvedPath)}`)
                             .setDescription(truncated)
-                            .setColor(0x3498DB)
+                            .setColor(isReviewBtn ? 0x2ECC71 : 0x3498DB)
                             .setTimestamp();
+
+                        if (isReviewBtn) {
+                            await interaction.followUp({
+                                embeds: [embed],
+                                components: []
+                            }).catch(logger.error);
+                            return;
+                        }
 
                         execFile(getAntigravityCliPath(), [resolvedPath], async (error) => {
                             if (error) {
@@ -1139,10 +1223,17 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                                     content: `❌ Error opening file via CLI: ${error.message}`,
                                     flags: MessageFlags.Ephemeral
                                 }).catch(() => {});
-                            } else {
+                                const closeRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
+                                    new ButtonBuilder()
+                                        .setCustomId('file_close_active')
+                                        .setLabel('Close Active Tab in IDE')
+                                        .setStyle(ButtonStyle.Secondary)
+                                );
+
                                 await interaction.followUp({
                                     content: `✅ Opened file in IDE: **${path.basename(resolvedPath)}**`,
                                     embeds: [embed],
+                                    components: [closeRow],
                                     flags: MessageFlags.Ephemeral
                                 }).catch(() => {});
                             }
@@ -1156,8 +1247,37 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                     return;
                 }
 
+                if (interaction.customId === 'file_close_active') {
+                    await interaction.deferUpdate().catch(() => {});
+                    try {
+                        const cdp = deps.getCurrentCdp(deps.bridge);
+                        if (!cdp) {
+                            await interaction.followUp({
+                                content: `❌ No active CDP connection found.`,
+                                flags: MessageFlags.Ephemeral
+                            }).catch(() => {});
+                            return;
+                        }
+                        if (!cdp.isConnected()) {
+                            await cdp.connect();
+                        }
+                        await cdp.closeActiveEditor();
+                        await interaction.followUp({
+                            content: `✅ Sent close command to IDE.`,
+                            flags: MessageFlags.Ephemeral
+                        }).catch(() => {});
+                    } catch (e: any) {
+                        logger.error(`Failed to close active editor: ${e.message}`);
+                        await interaction.followUp({
+                            content: `❌ Error closing editor: ${e.message}`,
+                            flags: MessageFlags.Ephemeral
+                        }).catch(() => {});
+                    }
+                    return;
+                }
+
             } catch (error) {
-                logger.error('Error during button interaction handling:', error);
+                logger.error(`[InteractionCreate] Error handling interaction: ${error instanceof Error ? error.message : String(error)}`);
 
                 try {
                     if (!(interaction as any).replied && !(interaction as any).deferred) {
@@ -1478,7 +1598,22 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
             try {
                 const action = createQuestionSelectAction({ bridge: deps.bridge, wsHandler: deps.wsHandler });
                 const wrapped = wrapDiscordSelect(interaction as any);
-                await action.execute(wrapped, interaction.values);
+                const success = await action.execute(wrapped, interaction.values);
+                if (success && deps.promptDispatcher && interaction.channelId && interaction.message) {
+                    const parsed = parseQuestionCustomId(interaction.customId, QUESTION_SELECT_ACTION_PREFIX);
+                    if (parsed) {
+                        const projectName = resolveProjectName({ bridge: deps.bridge, wsHandler: deps.wsHandler }, interaction.channelId, parsed.projectName);
+                        const cdp = projectName ? deps.bridge.pool.getConnected(projectName, resolveSelectedAccount(interaction.channelId, interaction.user.id, getParentChannelId(interaction))) : null;
+                        if (cdp) {
+                            deps.promptDispatcher.resume({
+                                message: interaction.message as any,
+                                prompt: '',
+                                cdp,
+                                options: buildResumeOptions()
+                            }).catch(e => logger.error('[QuestionSelectAction] Failed to resume monitoring:', e));
+                        }
+                    }
+                }
             } catch (err: unknown) {
                 logger.error('[QuestionSelectAction] Error executing action:', err);
                 if (!interaction.replied && !interaction.deferred) {
@@ -1494,7 +1629,22 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
             try {
                 const action = createQuestionSkipAction({ bridge: deps.bridge, wsHandler: deps.wsHandler });
                 const wrapped = wrapDiscordButton(interaction as any);
-                await action.execute(wrapped, {});
+                const success = await action.execute(wrapped, {});
+                if (success && deps.promptDispatcher && interaction.channelId && interaction.message) {
+                    const parsed = parseQuestionCustomId(interaction.customId, QUESTION_SKIP_ACTION_PREFIX);
+                    if (parsed) {
+                        const projectName = resolveProjectName({ bridge: deps.bridge, wsHandler: deps.wsHandler }, interaction.channelId, parsed.projectName);
+                        const cdp = projectName ? deps.bridge.pool.getConnected(projectName, resolveSelectedAccount(interaction.channelId, interaction.user.id, getParentChannelId(interaction))) : null;
+                        if (cdp) {
+                            deps.promptDispatcher.resume({
+                                message: interaction.message as any,
+                                prompt: '',
+                                cdp,
+                                options: buildResumeOptions()
+                            }).catch(e => logger.error('[QuestionSkipAction] Failed to resume monitoring:', e));
+                        }
+                    }
+                }
             } catch (err: unknown) {
                 logger.error('[QuestionSkipAction] Error executing action:', err);
                 if (!interaction.replied && !interaction.deferred) {

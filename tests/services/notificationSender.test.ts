@@ -119,6 +119,21 @@ describe('buildApprovalNotification', () => {
         expect(ids[1]).toBe('always_allow_action:my-project');
         expect(ids[2]).toBe('deny_action:my-project');
     });
+
+    it('adds walkthrough and task review buttons in a second row when custom IDs are provided', () => {
+        const payload = buildApprovalNotification({
+            ...baseOpts,
+            walkthroughCustomId: 'file_open:art:123:walkthrough.md',
+            taskCustomId: 'file_open:art:123:task.md',
+        });
+        expect(payload.components).toHaveLength(2);
+        
+        // Check second row buttons
+        const secondRow = (payload.components as any)[1];
+        expect(secondRow.components).toHaveLength(2);
+        expect(secondRow.components[0]).toMatchObject({ label: 'Review walkthrough.md', style: 'success', customId: 'file_open:art:123:walkthrough.md' });
+        expect(secondRow.components[1]).toMatchObject({ label: 'Review task.md', style: 'primary', customId: 'file_open:art:123:task.md' });
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -162,18 +177,19 @@ describe('buildPlanningNotification', () => {
         expect(buttons).toHaveLength(2);
     });
 
-    it('contains exactly 1 button when hasOpenButton is false', () => {
+    it('always contains exactly 2 buttons even when hasOpenButton is false', () => {
         const payload = buildPlanningNotification({ ...baseOpts, hasOpenButton: false });
         expect(payload.components).toHaveLength(1);
         const buttons = extractButtons(payload);
-        expect(buttons).toHaveLength(1);
-        expect(buttons[0].label).toBe('Proceed');
+        expect(buttons).toHaveLength(2);
+        expect(buttons[0].label).toBe('Open Plan');
+        expect(buttons[1].label).toBe('Proceed');
     });
 
-    it('has Open and Proceed buttons with correct styles', () => {
+    it('has Open Plan and Proceed buttons with correct styles', () => {
         const payload = buildPlanningNotification(baseOpts);
         const buttons = extractButtons(payload);
-        expect(buttons[0]).toMatchObject({ label: 'Open', style: 'primary' });
+        expect(buttons[0]).toMatchObject({ label: 'Open Plan', style: 'primary' });
         expect(buttons[1]).toMatchObject({ label: 'Proceed', style: 'success' });
     });
 

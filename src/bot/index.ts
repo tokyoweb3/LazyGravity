@@ -223,6 +223,7 @@ async function sendPromptToAntigravity(
         userPrefRepo?: UserPreferenceRepository;
         artifactService?: ArtifactService;
         onFullCompletion?: () => void;
+        onMonitorCreated?: (monitor: { stop: () => Promise<void> }) => void;
         extractionMode?: ExtractionMode;
         responseTimeoutMs?: number;
         resumeOnly?: boolean;
@@ -231,10 +232,14 @@ async function sendPromptToAntigravity(
 ): Promise<void> {
     // Completion signal — called exactly once when the entire prompt lifecycle ends
     let completionSignaled = false;
+    let onApprovalRef: ((info: any) => void) | null = null;
     const signalCompletion = (exitPath: string) => {
         if (completionSignaled) return;
         completionSignaled = true;
         logger.debug(`[sendPrompt:${message.channelId}] signalCompletion via ${exitPath}`);
+        if (onApprovalRef) {
+            cdp.off('approval_required', onApprovalRef);
+        }
         options?.onFullCompletion?.();
     };
 
@@ -698,6 +703,7 @@ async function sendPromptToAntigravity(
         }
 
         const startTime = Date.now();
+        let earlyConvIdResolved = false;
         await upsertLiveActivityEmbeds(
             `${PHASE_ICONS.thinking} Process Log`,
             '',
@@ -738,6 +744,26 @@ async function sendPromptToAntigravity(
                         skipWhenFinalized: true,
                     },
                 ).catch(() => { });
+                // Try to resolve conversation_id early if not already bound
+                const { artifactService, chatSessionRepo, chatSessionService } = options || {};
+                if (!earlyConvIdResolved && artifactService && chatSessionRepo && chatSessionService) {
+                    chatSessionService.getCurrentSessionInfo(cdp)
+                        .then((sessionInfo) => {
+                            if (sessionInfo && sessionInfo.title && sessionInfo.title !== t('(Untitled)')) {
+                                const session = chatSessionRepo.findByChannelId(message.channelId);
+                                const workspaceDirName = (session
+                                    ? bridge.pool.extractProjectName(session.workspacePath)
+                                    : cdp.getCurrentWorkspaceName()) ?? undefined;
+                                const convId = artifactService.findConversationByTitle(sessionInfo.title, workspaceDirName);
+                                if (convId) {
+                                    chatSessionRepo.setConversationId(message.channelId, convId);
+                                    earlyConvIdResolved = true;
+                                    logger.debug(`[EarlyBinding] Saved conversation_id: "${convId}" for channel: ${message.channelId}`);
+                                }
+                            }
+                        })
+                        .catch(() => {});
+                }
             },
 
             onProgress: (text) => {
@@ -860,6 +886,10 @@ async function sendPromptToAntigravity(
                     const components: any[] = [];
                     if (!citedFiles) citedFiles = [];
 
+                    // Wait 1000ms to ensure newly created conversation folders and files are fully flushed to disk by the IDE agent
+                    await new Promise((resolve) => setTimeout(resolve, 1000));
+                    let activeConversationId: string | undefined = undefined;
+
                     if (options && message.guild) {
                         try {
                             const sessionInfo = await options.chatSessionService.getCurrentSessionInfo(cdp);
@@ -889,11 +919,67 @@ async function sendPromptToAntigravity(
                                     const convId = options.artifactService.findConversationByTitle(sessionInfo.title, workspaceDirName);
                                     if (convId) {
                                         options.chatSessionRepo.setConversationId(message.channelId, convId);
+                                        activeConversationId = convId;
                                     }
                                 }
                             }
                         } catch (e) {
                             logger.error('[Rename] Failed to get title from Antigravity and rename:', e);
+                        }
+                    }
+
+                    const classifiedForFiles = monitor.getLastClassified();
+                    if (classifiedForFiles?.fileChanges && classifiedForFiles.fileChanges.length > 0) {
+                        for (const fc of classifiedForFiles.fileChanges) {
+                            if (!citedFiles.includes(fc.path)) {
+                                citedFiles.push(fc.path);
+                            }
+                        }
+                    }
+
+                    if (!activeConversationId && options?.chatSessionRepo) {
+                        activeConversationId = options.chatSessionRepo.findByChannelId(message.channelId)?.conversationId ?? undefined;
+                    }
+
+
+
+                    if (activeConversationId && options?.artifactService) {
+                        const artifacts = options.artifactService.listArtifacts(activeConversationId);
+                        const planArt = artifacts.find(art => 
+                            art.artifactType === 'ARTIFACT_TYPE_IMPLEMENTATION_PLAN' || 
+                            art.filename.toLowerCase() === 'implementation_plan.md'
+                        );
+                        let planTime = 0;
+                        if (planArt) {
+                            try {
+                                planTime = fs.statSync(planArt.absolutePath).mtimeMs;
+                            } catch { /* ignore */ }
+                        }
+
+                        for (const art of artifacts) {
+                            const nameWithExt = art.filename;
+                            const nameWithoutExt = art.filename.replace(/\.[^/.]+$/, "");
+                            const regex = new RegExp(`\\b${nameWithoutExt.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i');
+                            
+                            const mentionsArtifact = finalOutputText.includes(nameWithExt) || finalOutputText.includes(`\`${nameWithoutExt}\``) || regex.test(finalOutputText);
+                            
+                            const isTask = art.artifactType === 'ARTIFACT_TYPE_TASK' || nameWithExt.toLowerCase() === 'task.md';
+                            const isWalkthrough = art.artifactType === 'ARTIFACT_TYPE_WALKTHROUGH' || nameWithExt.toLowerCase() === 'walkthrough.md';
+                            
+                            let isSpecialArtifact = false;
+                            if (isTask || isWalkthrough) {
+                                let artTime = 0;
+                                try {
+                                    artTime = fs.statSync(art.absolutePath).mtimeMs;
+                                } catch { /* ignore */ }
+                                if (artTime > planTime) {
+                                    isSpecialArtifact = true;
+                                }
+                            }
+
+                            if ((mentionsArtifact || isSpecialArtifact) && !citedFiles.includes(nameWithExt)) {
+                                citedFiles.push(nameWithExt);
+                            }
                         }
                     }
 
@@ -914,43 +1000,89 @@ async function sendPromptToAntigravity(
                         for (let i = 0; i < Math.min(uniqueFiles.length, 5); i++) {
                             let fileUrl = uniqueFiles[i];
                             
+                            let isArtifactMatch = false;
+                            let artifactDisplayName = fileUrl;
+                            if (activeConversationId && options?.artifactService) {
+                                const artifacts = options.artifactService.listArtifacts(activeConversationId);
+                                const rawName = fileUrl.replace(/^file:\/\/\//, '');
+                                const matched = artifacts.find(a => 
+                                    a.filename.toLowerCase() === fileUrl.toLowerCase() || 
+                                    a.filename.toLowerCase() === rawName.toLowerCase()
+                                );
+                                if (matched) {
+                                    isArtifactMatch = true;
+                                    fileUrl = `file:///${matched.absolutePath.replace(/\\/g, '/')}`;
+                                    artifactDisplayName = matched.filename;
+                                }
+                            }
+
                             const wsPath = cdp.getCurrentWorkspacePath();
                             if (!wsPath) {
                                 continue;
                             }
 
-                            if (!fileUrl.startsWith('file:///') && !path.isAbsolute(fileUrl)) {
-                                fileUrl = `file:///${path.resolve(wsPath, fileUrl).replace(/\\/g, '/')}`;
-                            }
-                            
-                            let fsPath = fileUrl.replace(/^file:\/\/\//, '');
-                            if (path.sep === '/' && !fsPath.startsWith('/')) {
-                                fsPath = '/' + fsPath;
-                            } else if (process.platform === 'win32' && fsPath.startsWith('/')) {
-                                fsPath = fsPath.substring(1);
-                            }
+                            if (!isArtifactMatch) {
+                                if (!fileUrl.startsWith('file:///') && !path.isAbsolute(fileUrl)) {
+                                    fileUrl = `file:///${path.resolve(wsPath, fileUrl).replace(/\\/g, '/')}`;
+                                }
+                                
+                                let fsPath = fileUrl.replace(/^file:\/\/\//, '');
+                                if (path.sep === '/' && !fsPath.startsWith('/')) {
+                                    fsPath = '/' + fsPath;
+                                } else if (process.platform === 'win32' && fsPath.startsWith('/')) {
+                                    fsPath = fsPath.substring(1);
+                                }
 
-                            const relative = path.relative(wsPath, fsPath);
-                            if (relative.startsWith('..') || path.isAbsolute(relative)) {
-                                continue;
-                            }
-                            if (!fs.existsSync(fsPath)) {
-                                continue;
+                                const relative = path.relative(wsPath, fsPath);
+                                const isArtifact = fsPath.includes('.gemini') && fsPath.includes('antigravity') && fsPath.includes('brain');
+                                if (!isArtifact && (relative.startsWith('..') || path.isAbsolute(relative))) {
+                                    continue;
+                                }
+                                if (!fs.existsSync(fsPath)) {
+                                    continue;
+                                }
                             }
 
                             let displayName = fileUrl;
-                            if (displayName.startsWith('file:///')) {
+                            if (isArtifactMatch) {
+                                displayName = artifactDisplayName;
+                            } else if (displayName.startsWith('file:///')) {
                                 const parts = displayName.split('/');
                                 displayName = parts[parts.length - 1];
                             }
+                            
                             const hashId = Math.random().toString(36).substring(2, 10);
                             fileOpenCache.set(hashId, fileUrl);
+
+                            let customId = `file_open:cache:${hashId}`;
+                            if (isArtifactMatch && activeConversationId && displayName) {
+                                const artId = `file_open:art:${activeConversationId}:${displayName}`;
+                                if (artId.length < 100) {
+                                    customId = artId;
+                                }
+                            } else if (wsPath) {
+                                let fsPath = fileUrl.replace(/^file:\/\/\//, '');
+                                if (path.sep === '/' && !fsPath.startsWith('/')) {
+                                    fsPath = '/' + fsPath;
+                                } else if (process.platform === 'win32' && fsPath.startsWith('/')) {
+                                    fsPath = fsPath.substring(1);
+                                }
+                                const resolvedFsPath = path.resolve(fsPath);
+                                const relative = path.relative(wsPath, resolvedFsPath);
+                                if (!relative.startsWith('..') && !path.isAbsolute(relative)) {
+                                    const relSlash = relative.replace(/\\/g, '/');
+                                    const relId = `file_open:rel:${relSlash}`;
+                                    if (relId.length < 100) {
+                                        customId = relId;
+                                    }
+                                }
+                            }
                             
                             row.addComponents(
                                 new ButtonBuilder()
-                                    .setCustomId(`file_open:${hashId}`)
-                                    .setLabel(`Open ${displayName.substring(0, 20)}`)
-                                    .setStyle(ButtonStyle.Primary)
+                                    .setCustomId(customId)
+                                    .setLabel(isArtifactMatch ? `Review ${displayName.substring(0, 15)}` : `Open ${displayName.substring(0, 20)}`)
+                                    .setStyle(isArtifactMatch ? ButtonStyle.Success : ButtonStyle.Primary)
                             );
                         }
                         if (row.components.length > 0) {
@@ -1089,6 +1221,39 @@ async function sendPromptToAntigravity(
             },
         });
 
+        onApprovalRef = async () => {
+            if (isFinalized) return;
+            const textToUse = lastProgressText || monitor.getLastText() || '';
+            const separated = splitOutputAndLogs(textToUse);
+            const outputText = separated.output || textToUse;
+            if (outputText && outputText.trim().length > 0) {
+                liveResponseUpdateVersion += 1;
+                const responseVersion = liveResponseUpdateVersion;
+                const elapsed = Math.round((Date.now() - startTime) / 1000);
+                await upsertLiveResponseEmbeds(
+                    t('Response'),
+                    outputText,
+                    PHASE_COLORS.thinking,
+                    t(`⏱️ Time: ${elapsed}s | Awaiting Approval`),
+                    {
+                        source: 'approval-pause',
+                        expectedVersion: responseVersion,
+                        skipWhenFinalized: true,
+                    }
+                ).catch(() => {});
+            }
+        };
+        cdp.on('approval_required', onApprovalRef);
+
+        if (options?.onMonitorCreated) {
+            options.onMonitorCreated({
+                stop: async () => {
+                    isFinalized = true;
+                    await monitor.stop();
+                }
+            });
+        }
+
         await monitor.start();
 
         // 1-second elapsed timer — updates footer independently of process log events
@@ -1173,6 +1338,8 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             .map((account) => [account.name, account.userDataDir!.trim()]),
     );
     const bridge = initCdpBridge(config.autoApproveFileEdits, accountPorts, accountUserDataDirs);
+    bridge.chatSessionRepo = chatSessionRepo;
+    bridge.artifactService = artifactService;
 
     // Initialize CDP-dependent services (constructor CDP dependency removed)
     const chatSessionService = new ChatSessionService();
@@ -1234,7 +1401,18 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                 accountPrefRepo,
                 accounts: config.antigravityAccounts,
             });
-            await startAntigravity(accountPorts[accountName] ?? 9222);
+            const status = await startAntigravity(accountPorts[accountName] ?? 9222);
+            if (status === 'started') {
+                const cdp = new CdpService({ portsToScan: [accountPorts[accountName] ?? 9222] });
+                try {
+                    await cdp.connect();
+                    await cdp.openChatPanel();
+                } catch (e) {
+                    // ignore
+                } finally {
+                    await cdp.disconnect().catch(() => {});
+                }
+            }
         },
     );
     const chatHandler = new ChatCommandHandler(

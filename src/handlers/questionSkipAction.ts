@@ -23,16 +23,16 @@ export function createQuestionSkipAction(deps: QuestionSkipActionDeps): ButtonAc
         async execute(
             interaction: PlatformButtonInteraction,
             params: Record<string, string>,
-        ): Promise<void> {
+        ): Promise<boolean> {
             const parsed = parseQuestionCustomId(interaction.customId, QUESTION_SKIP_ACTION_PREFIX);
-            if (!parsed) return;
+            if (!parsed) return false;
 
             const channelId = parsed.channelId;
             if (channelId && channelId !== interaction.channel.id) {
                 await interaction
                     .reply({ text: 'This question is linked to a different session channel.', ephemeral: true })
                     .catch(() => {});
-                return;
+                return false;
             }
 
             const projectName = resolveProjectName(deps, interaction.channel.id, parsed.projectName);
@@ -47,7 +47,7 @@ export function createQuestionSkipAction(deps: QuestionSkipActionDeps): ButtonAc
                 await interaction
                     .reply({ text: 'Question detector not found.', ephemeral: true })
                     .catch(() => {});
-                return;
+                return false;
             }
 
             await interaction.deferUpdate().catch(() => {});
@@ -61,22 +61,24 @@ export function createQuestionSkipAction(deps: QuestionSkipActionDeps): ButtonAc
                 await interaction
                     .followUp({ text: `Failed to skip question: ${msg}`, ephemeral: true })
                     .catch(() => {});
-                return;
+                return false;
             }
 
             if (success) {
-                const updatePayload = { text: `✅ Skipped question`, components: [] as any[] };
+                const updatePayload = { text: '✅ Skipped question.\n\n⏳ IDE is working on the response...', components: [] as any[] };
                 try {
                     await interaction.editReply(updatePayload);
                 } catch (editErr) {
                     logger.warn('[QuestionSkipAction] editReply failed, sending followUp:', editErr);
-                    await interaction.followUp({ text: `✅ Skipped question` }).catch(() => {});
+                    await interaction.followUp({ text: '✅ Skipped question.\n\n⏳ IDE is working on the response...' }).catch(() => {});
                 }
             } else {
                 await interaction
                     .followUp({ text: 'Failed to skip question (it may have been resolved already).', ephemeral: true })
                     .catch(() => {});
             }
+
+            return success;
         },
     };
 }

@@ -443,6 +443,9 @@ export function wrapTelegramCallbackQuery(
             const { text, ...rest } = opts;
             await api.sendMessage(chatId, text, rest);
         },
+        async showModal(modal: any): Promise<void> {
+            throw new Error('Modals are not supported on Telegram.');
+        },
         async update(payload: MessagePayload): Promise<void> {
             if (!query.message) return;
             assertValidChatId(chatId);

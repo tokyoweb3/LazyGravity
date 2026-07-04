@@ -12,6 +12,7 @@ import { InboundImageAttachment } from '../utils/imageHandler';
 import { UserPreferenceRepository } from '../database/userPreferenceRepository';
 
 import { ArtifactService } from './artifactService';
+import { logger } from '../utils/logger';
 
 export interface PromptDispatchOptions {
     chatSessionService: ChatSessionService;
@@ -22,10 +23,10 @@ export interface PromptDispatchOptions {
     extractionMode?: import('../utils/config').ExtractionMode;
     artifactService?: ArtifactService;
     onFullCompletion?: () => void;
+    onMonitorCreated?: (monitor: { stop: () => Promise<void> }) => void;
     responseTimeoutMs?: number;
     resumeOnly?: boolean;
 }
-
 
 export interface PromptDispatchRequest {
     message: Message;
@@ -56,6 +57,8 @@ export interface PromptDispatcherDeps {
  * Unifies dependency injection on the caller side and simplifies event handlers.
  */
 export class PromptDispatcher {
+    private readonly activeMonitors = new Map<string, { stop: () => Promise<void> }>();
+
     constructor(private readonly deps: PromptDispatcherDeps) { }
 
     async send(req: PromptDispatchRequest): Promise<void> {
@@ -67,6 +70,26 @@ export class PromptDispatcher {
     }
 
     private async _dispatch(req: PromptDispatchRequest, options?: PromptDispatchOptions): Promise<void> {
+        const channelId = req.message.channelId;
+        const existing = this.activeMonitors.get(channelId);
+        if (existing) {
+            logger.info(`[PromptDispatcher] Aborting previous active monitor for channel ${channelId}`);
+            await existing.stop().catch((err: any) => logger.error('[PromptDispatcher] Error stopping monitor:', err));
+            this.activeMonitors.delete(channelId);
+        }
+
+        const wrappedOptions: PromptDispatchOptions = {
+            ...(options || {} as any),
+            onMonitorCreated: (monitor: any) => {
+                this.activeMonitors.set(channelId, monitor);
+                options?.onMonitorCreated?.(monitor);
+            },
+            onFullCompletion: () => {
+                this.activeMonitors.delete(channelId);
+                options?.onFullCompletion?.();
+            }
+        };
+
         await this.deps.sendPromptImpl(
             this.deps.bridge,
             req.message,
@@ -75,7 +98,7 @@ export class PromptDispatcher {
             this.deps.modeService,
             this.deps.modelService,
             req.inboundImages ?? [],
-            options,
+            wrappedOptions,
         );
     }
 }

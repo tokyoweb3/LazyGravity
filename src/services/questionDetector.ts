@@ -101,7 +101,9 @@ export class QuestionDetector extends EventEmitter {
                     let submitBtn = null;
                     
                     for (const container of containers) {
-                        if (container.querySelector('textarea, input:not([type="hidden"]):not([type="radio"]):not([type="checkbox"]), [contenteditable="true"], [contenteditable=""], [role="textbox"]')) continue;
+                        const hasTextInput = container.querySelector('textarea, input:not([type="hidden"]):not([type="radio"]):not([type="checkbox"]), [contenteditable], [role="textbox"], .monaco-editor, .editor-container, .inputarea, vscode-text-field, vscode-text-area');
+                        const hasExplicitQuestionItems = container.querySelector('[role="radio"], input[type="radio"], input[type="checkbox"], [role="option"], [role="checkbox"]');
+                        if (hasTextInput && !hasExplicitQuestionItems) continue;
                         const buttons = Array.from(container.querySelectorAll('button'));
                         let possibleSubmitBtn = null;
                         for (const btn of buttons) {
@@ -202,7 +204,9 @@ export class QuestionDetector extends EventEmitter {
                     let skipBtn = null;
                     
                     for (const container of containers) {
-                        if (container.querySelector('textarea, input:not([type="hidden"]):not([type="radio"]):not([type="checkbox"]), [contenteditable="true"], [contenteditable=""], [role="textbox"]')) continue;
+                        const hasTextInput = container.querySelector('textarea, input:not([type="hidden"]):not([type="radio"]):not([type="checkbox"]), [contenteditable="true"], [contenteditable=""], [role="textbox"]');
+                        const hasExplicitQuestionItems = container.querySelector('[role="radio"], input[type="radio"], input[type="checkbox"], [role="option"], [role="checkbox"]');
+                        if (hasTextInput && !hasExplicitQuestionItems) continue;
                         const items = getInteractiveItems(container);
                         const hasList = items.length > 1;
                         
@@ -267,10 +271,45 @@ export class QuestionDetector extends EventEmitter {
             const callParams: any = {
                 expression: `
                 (() => {
+                    const STOP_PATTERNS = [
+                        /^stop$/,
+                        /^stop generating$/,
+                        /^stop response$/,
+                        /^停止$/,
+                        /^生成を停止$/,
+                        /^応答を停止$/,
+                    ];
+                    const normalize = (value) => (value || '').toLowerCase().replace(/\\s+/g, ' ').trim();
+                    const isStopLabel = (value) => {
+                        const normalized = normalize(value);
+                        if (!normalized) return false;
+                        return STOP_PATTERNS.some((re) => re.test(normalized));
+                    };
+                    const isGenerating = Array.from(document.querySelectorAll('button, [role="button"]')).some(btn => {
+                        const labels = [
+                            btn.textContent || '',
+                            btn.getAttribute('aria-label') || '',
+                            btn.getAttribute('title') || '',
+                        ];
+                        return labels.some(isStopLabel);
+                    }) || (() => {
+                        const panel = document.querySelector('.antigravity-agent-side-panel');
+                        if (panel) {
+                            const panelText = (panel.textContent || '').trim();
+                            return /Working\.\s*$/i.test(panelText);
+                        }
+                        return false;
+                    })();
+                    if (isGenerating) {
+                        return { detected: false, reason: "IDE is generating" };
+                    }
+
                     const getInteractiveItems = (elContainer) => {
                         return Array.from(elContainer.querySelectorAll('li, label, a, [role="radio"], [role="option"], [class*="cursor-pointer"]'))
                             .filter(el => {
                                 if (el.tagName === 'BUTTON' || el.closest('button')) return false;
+                                const text = (el.innerText || el.textContent || '').trim();
+                                if (!text) return false;
                                 const role = el.getAttribute('role');
                                 if (['radio', 'option', 'checkbox', 'button', 'menuitem'].includes(role)) return true;
                                 if (el.tagName === 'A' || el.tagName === 'LABEL') return true;
@@ -284,7 +323,9 @@ export class QuestionDetector extends EventEmitter {
                     let submitBtn = null;
                     
                     for (const container of containers) {
-                        if (container.querySelector('textarea, input:not([type="hidden"]):not([type="radio"]):not([type="checkbox"]), [contenteditable="true"], [contenteditable=""], [role="textbox"]')) continue;
+                        const hasTextInput = container.querySelector('textarea, input:not([type="hidden"]):not([type="radio"]):not([type="checkbox"]), [contenteditable], [role="textbox"], .monaco-editor, .editor-container, .inputarea, vscode-text-field, vscode-text-area');
+                        const hasExplicitQuestionItems = container.querySelector('[role="radio"], input[type="radio"], input[type="checkbox"], [role="option"], [role="checkbox"]');
+                        if (hasTextInput && !hasExplicitQuestionItems) continue;
                         const buttons = Array.from(container.querySelectorAll('button'));
                         let possibleSubmitBtn = null;
                         for (const btn of buttons) {

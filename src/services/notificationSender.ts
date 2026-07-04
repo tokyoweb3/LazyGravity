@@ -111,8 +111,10 @@ export function buildApprovalNotification(opts: {
     /** Whether an 'Always Allow' / 'Allow Chat' button exists. */
     readonly hasAlwaysAllow?: boolean;
     readonly alwaysAllowText?: string;
+    readonly walkthroughCustomId?: string;
+    readonly taskCustomId?: string;
 }): MessagePayload {
-    const { title, description, projectName, channelId, toolNames, extraFields, hasAlwaysAllow, alwaysAllowText } = opts;
+    const { title, description, projectName, channelId, toolNames, extraFields, hasAlwaysAllow, alwaysAllowText, walkthroughCustomId, taskCustomId } = opts;
 
     const richContent = pipe(
         createRichContent(),
@@ -142,9 +144,21 @@ export function buildApprovalNotification(opts: {
     
     buttons.push(button(customId(DENY_ACTION_PREFIX, projectName, channelId), 'Deny', 'danger'));
 
-    const components: readonly ComponentRow[] = [
+    const components: ComponentRow[] = [
         buttonRow(...buttons),
     ];
+
+    const artifactButtons = [];
+    if (walkthroughCustomId) {
+        artifactButtons.push(button(walkthroughCustomId, 'Review walkthrough.md', 'success'));
+    }
+    if (taskCustomId) {
+        artifactButtons.push(button(taskCustomId, 'Review task.md', 'primary'));
+    }
+
+    if (artifactButtons.length > 0) {
+        components.push(buttonRow(...artifactButtons));
+    }
 
     return { richContent, components };
 }
@@ -177,10 +191,8 @@ export function buildPlanningNotification(opts: {
     );
 
     const buttons = [];
-    const openLabel = opts.openText || 'Open';
-    if (opts.hasOpenButton !== false) {
-        buttons.push(button(customId(PLANNING_OPEN_ACTION_PREFIX, projectName, channelId), openLabel, 'primary'));
-    }
+    const openLabel = opts.openText || 'Open Plan';
+    buttons.push(button(customId(PLANNING_OPEN_ACTION_PREFIX, projectName, channelId), openLabel, 'primary'));
     const buttonLabel = opts.proceedText || 'Proceed';
     buttons.push(button(customId(PLANNING_PROCEED_ACTION_PREFIX, projectName, channelId), buttonLabel, 'success'));
 

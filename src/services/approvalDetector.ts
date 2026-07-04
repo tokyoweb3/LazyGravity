@@ -140,7 +140,7 @@ export const DETECT_APPROVAL_SCRIPT = `(() => {
             const walk = (node) => {
                 if (node.nodeType === 1) {
                     // Skip buttons entirely
-                    if (node.tagName === 'BUTTON' || node.getAttribute('role') === 'button' || node.classList.contains('cursor-pointer')) return;
+                    if (node.tagName === 'BUTTON' || node.getAttribute('role') === 'button') return;
                     
                     // Skip menu bars and sidebars
                     if (node.tagName === 'NAV' || node.getAttribute('role') === 'menubar' || node.closest('nav') || node.closest('.monaco-menu') || node.closest('.sidebar') || node.classList.contains('sidebar')) return;

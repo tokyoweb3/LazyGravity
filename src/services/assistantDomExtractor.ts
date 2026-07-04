@@ -593,6 +593,25 @@ export function extractAssistantSegmentsPayloadScript(): string {
             });
         }
     }
+    // 4f. Artifact Cards
+    var artifactCards = artifactScope.querySelectorAll('[data-testid="artifact-card"], [class*="artifact-card"]');
+    for (var aci = 0; aci < artifactCards.length; aci++) {
+        var card = artifactCards[aci];
+        var titleEl = card.querySelector('.title, [class*="title"], h3, h4, span');
+        if (titleEl) {
+            var titleText = (titleEl.textContent || '').trim();
+            if (titleText) {
+                segments.push({
+                    kind: 'citation',
+                    text: titleText + '.md',
+                    role: 'assistant',
+                    messageIndex: 0,
+                    domPath: 'artifact-card:nth(' + aci + ')'
+                });
+            }
+        }
+    }
+
 
     if (!bodyFound && segments.length === 0) return null;
 
