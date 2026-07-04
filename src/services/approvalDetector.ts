@@ -48,6 +48,19 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
     const allButtons = Array.from(document.querySelectorAll('button, [role="button"], span.cursor-pointer, div.cursor-pointer'))
         .filter(btn => btn.offsetParent !== null);
 
+    const STOP_PATTERNS_GEN = [/^stop$/, /^stop generating$/, /^stop response$/, /^停止$/, /^生成を停止$/, /^応答を停止$/];
+    const isGenerating = allButtons.some(btn => {
+        const tooltipId = btn.getAttribute('data-tooltip-id');
+        if (tooltipId === 'input-send-button-cancel-tooltip') return true;
+        const labels = [btn.textContent || '', btn.getAttribute('aria-label') || '', btn.getAttribute('title') || ''];
+        return labels.some(val => {
+            const normalized = (val || '').toLowerCase().replace(/\s+/g, ' ').trim();
+            return normalized && STOP_PATTERNS_GEN.some(re => re.test(normalized));
+        });
+    });
+
+    if (isGenerating) return null; // Wait for generation to finish!
+
     let approveBtn = allButtons.find(btn => {
         const t = normalize(btn.textContent || '');
         return ALLOW_ONCE_PATTERNS.some(p => t.includes(p));
@@ -116,6 +129,7 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
             }
             if (!modal) {
                 modal = approveBtn.parentElement?.parentElement?.parentElement || approveBtn.parentElement?.parentElement;
+                if (modal === document.body || modal?.id === 'root') modal = null;
             }
         }
 
@@ -126,6 +140,9 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
                     // Skip buttons entirely
                     if (node.tagName === 'BUTTON' || node.getAttribute('role') === 'button' || node.classList.contains('cursor-pointer')) return;
                     
+                    // Skip menu bars and sidebars
+                    if (node.tagName === 'NAV' || node.getAttribute('role') === 'menubar' || node.closest('nav') || node.closest('.monaco-menu') || node.closest('.sidebar') || node.classList.contains('sidebar')) return;
+
                     const display = window.getComputedStyle(node).display;
                     if (display === 'none') return;
                     
@@ -142,7 +159,11 @@ const DETECT_APPROVAL_SCRIPT = `(() => {
             
             const parentText = parts.join(' ').replace(/\\n\\s*/g, '\\n').replace(/\\n{3,}/g, '\\n\\n').trim();
             if (parentText.length > 5) {
-                description = parentText.length > 2000 ? parentText.substring(0, 2000) + '...\\n(truncated)' : parentText;
+                if (parentText.length > 800 || parentText.includes('F ile\\nE dit\\nS election')) {
+                    description = 'Code changes require your approval.';
+                } else {
+                    description = parentText;
+                }
             }
         }
     }
