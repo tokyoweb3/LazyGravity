@@ -194,7 +194,7 @@ const EXPAND_ALWAYS_ALLOW_MENU_SCRIPT = `(() => {
     ];
 
     const normalize = (text) => (text || '').toLowerCase().replace(/\\s+/g, ' ').trim();
-    const visibleButtons = Array.from(document.querySelectorAll('button'))
+    const visibleButtons = Array.from(document.querySelectorAll('button, [role="button"], span.cursor-pointer, div.cursor-pointer'))
         .filter(btn => btn.offsetParent !== null);
 
     const directAlways = visibleButtons.find(btn => {
@@ -214,7 +214,7 @@ const EXPAND_ALWAYS_ALLOW_MENU_SCRIPT = `(() => {
         || allowOnceBtn.parentElement
         || document.body;
 
-    const containerButtons = Array.from(container.querySelectorAll('button'))
+    const containerButtons = Array.from(container.querySelectorAll('button, [role="button"], span.cursor-pointer, div.cursor-pointer'))
         .filter(btn => btn.offsetParent !== null);
 
     const toggleBtn = containerButtons.find(btn => {
@@ -264,7 +264,7 @@ export function buildClickScript(buttonText: string): string {
         const normalize = (text) => (text || '').toLowerCase().replace(/\\s+/g, ' ').trim();
         const text = ${safeText};
         const wanted = normalize(text);
-        const allButtons = Array.from(document.querySelectorAll('button, [role="button"], a.action-btn, a[class*="btn"]')).reverse();
+        const allButtons = Array.from(document.querySelectorAll('button, [role="button"], a.action-btn, a[class*="btn"], span.cursor-pointer, div.cursor-pointer')).reverse();
         const target = allButtons.find(btn => {
             const style = window.getComputedStyle(btn);
             if (style.display === 'none' || style.visibility === 'hidden' || btn.disabled) return false;
