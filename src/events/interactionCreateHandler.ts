@@ -1223,6 +1223,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                                     content: `❌ Error opening file via CLI: ${error.message}`,
                                     flags: MessageFlags.Ephemeral
                                 }).catch(() => {});
+                            } else {
                                 const closeRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
                                     new ButtonBuilder()
                                         .setCustomId('file_close_active')

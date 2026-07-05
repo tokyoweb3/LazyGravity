@@ -85,6 +85,10 @@ export class ArtifactService {
         }
     }
 
+    public getBrainBasePath(): string {
+        return this.brainBasePath;
+    }
+
     /**
      * List all conversations in the brain directory (UUIDs).
      */
@@ -230,7 +234,8 @@ export class ArtifactService {
                         const content = buf.slice(0, bytesRead).toString('utf-8').toLowerCase();
                         
                         if (filterStr) {
-                            const regex = new RegExp(`(?:file:\\/\\/\\/[^"\\)]*?\\/|[a-zA-Z]:[\\\\/](?!.*(?:\\.gemini|brain|antigravity))[^"\\)]*?[\\\\/])${filterStr}\\b`, 'i');
+                            const escapedFilter = filterStr.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+                            const regex = new RegExp(`(?:file:\\/\\/\\/[^"\\)]*?\\/|[a-zA-Z]:[\\\\/](?!.*(?:\\.gemini|brain|antigravity))[^"\\)]*?[\\\\/])${escapedFilter}\\b`, 'i');
                             if (regex.test(content)) {
                                 belongsToWorkspace = true;
                             }
@@ -299,9 +304,10 @@ export class ArtifactService {
             .sort((a, b) => b.mtime - a.mtime);
 
         if (filterStr) {
+            const escapedFilter = filterStr.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
             const workspaceIds = sorted.filter(({ id }) => {
                 let belongs = false;
-                const regex = new RegExp(`(?:file:\\/\\/\\/[^"\\)]*?\\/|[a-zA-Z]:[\\\\/](?!.*(?:\\.gemini|brain|antigravity))[^"\\)]*?[\\\\/])${filterStr}\\b`, 'i');
+                const regex = new RegExp(`(?:file:\\/\\/\\/[^"\\)]*?\\/|[a-zA-Z]:[\\\\/](?!.*(?:\\.gemini|brain|antigravity))[^"\\)]*?[\\\\/])${escapedFilter}\\b`, 'i');
                 const checkFile = (filePath: string) => {
                     try {
                         if (fs.existsSync(filePath)) {

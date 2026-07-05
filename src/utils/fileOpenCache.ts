@@ -1,6 +1,6 @@
 /** 
  * In-memory cache to map button customIds to file URLs.
- * Bounded to a maximum size to prevent memory leaks, and entries are removed once consumed.
+ * Bounded to a maximum size to prevent memory leaks, using a FIFO eviction policy when the cache size limit is reached.
  */
 class BoundedCache<K, V> {
     private max_size: number;

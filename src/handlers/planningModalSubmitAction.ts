@@ -33,7 +33,7 @@ export async function execute(
         const result = await cdp.injectMessage(comment);
 
         if (!result.ok) {
-            await interaction.followUp({ text: `Failed to submit comment: ${result.error}`, ephemeral: true });
+            await interaction.followUp({ text: t('Failed to submit comment: {{error}}', { error: result.error }), ephemeral: true });
             return;
         }
 

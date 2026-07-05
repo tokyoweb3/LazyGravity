@@ -473,7 +473,11 @@ export function wrapDiscordModalSubmit(interaction: ModalSubmitInteraction): Pla
         messageId: interaction.message?.id ?? null,
         fields,
         async deferUpdate(): Promise<void> {
-            await interaction.deferUpdate();
+            if (interaction.isFromMessage()) {
+                await interaction.deferUpdate();
+            } else {
+                await interaction.deferReply({ ephemeral: true });
+            }
         },
         async reply(payload: MessagePayload): Promise<void> {
             await interaction.reply(toDiscordPayload(payload, EPHEMERAL_ALLOWED) as Parameters<ModalSubmitInteraction['reply']>[0]);

@@ -60,14 +60,19 @@ export function createGenericActionButtonAction(deps: GenericActionButtonActionD
             const actionName = params.actionName;
             const channelId = params.channelId || interaction.channel?.id;
             if (!channelId) {
+                await interaction.reply({
+                    text: 'Error: Cannot resolve channel ID.',
+                    ephemeral: true,
+                }).catch(() => {});
                 return;
             }
             const projectName = resolveProjectName(deps, channelId, params.projectName);
 
             await interaction.deferUpdate().catch(() => {});
 
+            const accountName = deps.bridge.selectedAccountByChannel?.get(channelId) || 'default';
             const cdp = projectName 
-                ? deps.bridge.pool.getConnected(projectName)
+                ? deps.bridge.pool.getConnected(projectName, accountName)
                 : null;
                 
             if (!cdp) {

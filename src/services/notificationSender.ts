@@ -191,8 +191,10 @@ export function buildPlanningNotification(opts: {
     );
 
     const buttons = [];
-    const openLabel = opts.openText || 'Open Plan';
-    buttons.push(button(customId(PLANNING_OPEN_ACTION_PREFIX, projectName, channelId), openLabel, 'primary'));
+    if (opts.hasOpenButton !== false) {
+        const openLabel = opts.openText || 'Open Plan';
+        buttons.push(button(customId(PLANNING_OPEN_ACTION_PREFIX, projectName, channelId), openLabel, 'primary'));
+    }
     const buttonLabel = opts.proceedText || 'Proceed';
     buttons.push(button(customId(PLANNING_PROCEED_ACTION_PREFIX, projectName, channelId), buttonLabel, 'success'));
 

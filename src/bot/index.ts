@@ -704,6 +704,7 @@ async function sendPromptToAntigravity(
 
         const startTime = Date.now();
         let earlyConvIdResolved = false;
+        let earlyConvIdInFlight = false;
         await upsertLiveActivityEmbeds(
             `${PHASE_ICONS.thinking} Process Log`,
             '',
@@ -746,7 +747,8 @@ async function sendPromptToAntigravity(
                 ).catch(() => { });
                 // Try to resolve conversation_id early if not already bound
                 const { artifactService, chatSessionRepo, chatSessionService } = options || {};
-                if (!earlyConvIdResolved && artifactService && chatSessionRepo && chatSessionService) {
+                if (!earlyConvIdResolved && !earlyConvIdInFlight && artifactService && chatSessionRepo && chatSessionService) {
+                    earlyConvIdInFlight = true;
                     chatSessionService.getCurrentSessionInfo(cdp)
                         .then((sessionInfo) => {
                             if (sessionInfo && sessionInfo.title && sessionInfo.title !== t('(Untitled)')) {
@@ -762,7 +764,10 @@ async function sendPromptToAntigravity(
                                 }
                             }
                         })
-                        .catch(() => {});
+                        .catch(() => {})
+                        .finally(() => {
+                            earlyConvIdInFlight = false;
+                        });
                 }
             },
 
@@ -886,8 +891,11 @@ async function sendPromptToAntigravity(
                     const components: any[] = [];
                     if (!citedFiles) citedFiles = [];
 
-                    // Wait 1000ms to ensure newly created conversation folders and files are fully flushed to disk by the IDE agent
-                    await new Promise((resolve) => setTimeout(resolve, 1000));
+                    // Only pause when newly created conversation folders and files need to flush to disk
+                    const existingConvId = options?.chatSessionRepo?.findByChannelId(message.channelId)?.conversationId;
+                    if (!existingConvId) {
+                        await new Promise((resolve) => setTimeout(resolve, 1000));
+                    }
                     let activeConversationId: string | undefined = undefined;
 
                     if (options && message.guild) {

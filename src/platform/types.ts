@@ -215,7 +215,7 @@ export interface PlatformButtonInteraction {
     /** Send a follow-up message. */
     followUp(payload: MessagePayload): Promise<PlatformSentMessage>;
     /** Show a modal dialog box. Must be the first response. */
-    showModal(modal: ModalDef): Promise<void>;
+    showModal?(modal: ModalDef): Promise<void>;
 }
 
 export interface PlatformSelectInteraction {

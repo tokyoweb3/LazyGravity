@@ -37,12 +37,17 @@ describe('PromptDispatcher', () => {
     });
 
     it('cancels the previous monitor on the same channel when a new prompt is dispatched', async () => {
-        const mockMonitor = {
+        const mockMonitor1 = {
             stop: jest.fn().mockResolvedValue(undefined),
         };
+        const mockMonitor2 = {
+            stop: jest.fn().mockResolvedValue(undefined),
+        };
+        let callCount = 0;
         const sendPromptImpl = jest.fn().mockImplementation((_b, _m, _p, _c, _ms, _md, _img, opts) => {
+            callCount++;
             // Simulate monitor creation
-            opts.onMonitorCreated?.(mockMonitor);
+            opts.onMonitorCreated?.(callCount === 1 ? mockMonitor1 : mockMonitor2);
             return Promise.resolve();
         });
 
@@ -71,10 +76,12 @@ describe('PromptDispatcher', () => {
 
         // Dispatch first prompt
         await dispatcher.send(req1);
-        expect(mockMonitor.stop).not.toHaveBeenCalled();
+        expect(mockMonitor1.stop).not.toHaveBeenCalled();
+        expect(mockMonitor2.stop).not.toHaveBeenCalled();
 
         // Dispatch second prompt on same channel
         await dispatcher.send(req2);
-        expect(mockMonitor.stop).toHaveBeenCalledTimes(1);
+        expect(mockMonitor1.stop).toHaveBeenCalledTimes(1);
+        expect(mockMonitor2.stop).not.toHaveBeenCalled();
     });
 });

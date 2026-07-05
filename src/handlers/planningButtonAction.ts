@@ -69,7 +69,8 @@ export function createPlanningButtonAction(
                 const info = detector.getLastDetectedInfo();
                 const isReview = info?.openText?.toLowerCase().includes('review');
 
-                if (isReview && 'showModal' in interaction) {
+                let modalFailed = false;
+                if (isReview && interaction.showModal) {
                     try {
                         await interaction.showModal({
                             title: 'Submit Comment',
@@ -84,17 +85,18 @@ export function createPlanningButtonAction(
                                 }]
                             }]
                         });
+                        return;
                     } catch (err) {
                         logger.error('[PlanningAction] showModal failed:', err);
+                        modalFailed = true;
                     }
-                    return;
                 }
 
                 // Acknowledge if we didn't show a modal
                 await interaction.deferUpdate().catch(() => {});
 
                 let clicked = false;
-                if (info?.hasOpenButton && !isReview) {
+                if (info?.hasOpenButton && (!isReview || modalFailed)) {
                     try {
                         clicked = await detector.clickOpenButton();
                         if (clicked) {

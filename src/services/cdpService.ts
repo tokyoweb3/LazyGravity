@@ -117,6 +117,7 @@ const WORKSPACE_STATE_SCRIPT = `(() => {
             }
             if (isGenerating) break;
         }
+    }
     if (!isGenerating && panel) {
         const panelText = (panel.textContent || '').trim();
         if (/Working\.\s*$/i.test(panelText)) {

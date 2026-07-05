@@ -200,6 +200,54 @@ describe('createPlanningButtonAction', () => {
                 text: 'Plan opened in IDE, but content could not be extracted.',
             });
         });
+
+        it('shows comment modal if isReview is true and showModal is supported', async () => {
+            const mockDetector = {
+                clickOpenButton: jest.fn().mockResolvedValue(true),
+                getLastDetectedInfo: jest.fn().mockReturnValue({ hasOpenButton: true, openText: 'Review plan' }),
+            };
+            const bridge = makeBridge();
+            (bridge.pool.getPlanningDetector as jest.Mock).mockReturnValue(mockDetector);
+
+            const action = createPlanningButtonAction({ bridge, wsHandler: { getWorkspaceForChannel: jest.fn() } as any });
+            const interaction = makeInteraction();
+
+            await action.execute(interaction, {
+                action: 'open',
+                projectName: 'proj',
+                channelId: '',
+            });
+
+            expect(interaction.showModal).toHaveBeenCalled();
+            expect(mockDetector.clickOpenButton).not.toHaveBeenCalled();
+        });
+
+        it('falls back to normal open flow if showModal throws/fails', async () => {
+            const mockDetector = {
+                clickOpenButton: jest.fn().mockResolvedValue(true),
+                extractPlanContent: jest.fn().mockResolvedValue('Plan details here'),
+                getLastDetectedInfo: jest.fn().mockReturnValue({ hasOpenButton: true, openText: 'Review plan' }),
+            };
+            const bridge = makeBridge();
+            (bridge.pool.getPlanningDetector as jest.Mock).mockReturnValue(mockDetector);
+
+            const action = createPlanningButtonAction({ bridge, wsHandler: { getWorkspaceForChannel: jest.fn() } as any });
+            const interaction = makeInteraction({
+                showModal: jest.fn().mockRejectedValue(new Error('Modal display rejected')),
+            });
+
+            await action.execute(interaction, {
+                action: 'open',
+                projectName: 'proj',
+                channelId: '',
+            });
+
+            expect(interaction.showModal).toHaveBeenCalled();
+            expect(mockDetector.clickOpenButton).toHaveBeenCalled();
+            expect(interaction.followUp).toHaveBeenCalledWith({
+                text: 'Plan details here',
+            });
+        });
     });
 
     describe('execute - proceed', () => {

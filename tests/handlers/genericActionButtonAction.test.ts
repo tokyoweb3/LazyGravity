@@ -78,7 +78,7 @@ describe('genericActionButtonAction', () => {
             deferUpdate,
         } as any, { actionName: 'Review plan' });
 
-        expect(mockBridge.pool.getConnected).toHaveBeenCalledWith('mock-project');
+        expect(mockBridge.pool.getConnected).toHaveBeenCalledWith('mock-project', 'default');
         expect(deferUpdate).toHaveBeenCalled();
         expect(mockCdp.call).toHaveBeenCalledWith('Runtime.evaluate', expect.objectContaining({
             expression: expect.stringContaining('Review plan')
@@ -132,6 +132,27 @@ describe('genericActionButtonAction', () => {
         }));
         expect(followUp).toHaveBeenCalledWith(expect.objectContaining({
             text: expect.stringContaining('not found or obscured')
+        }));
+    });
+
+    it('returns error reply if channelId is missing', async () => {
+        const mockWsHandler = { getWorkspaceForChannel: jest.fn() } as any;
+        const handler = createGenericActionButtonAction({ bridge: mockBridge, wsHandler: mockWsHandler });
+        const reply = jest.fn().mockResolvedValue(undefined);
+        
+        await handler.execute({
+            customId: 'action_btn_proceed',
+            channelId: undefined,
+            channel: undefined,
+            userId: 'u-1',
+            message: {} as any,
+            reply,
+        } as any, { actionName: 'Proceed' });
+
+        expect(mockBridge.pool.getConnected).not.toHaveBeenCalled();
+        expect(reply).toHaveBeenCalledWith(expect.objectContaining({
+            text: expect.stringContaining('Cannot resolve channel ID'),
+            ephemeral: true
         }));
     });
 });

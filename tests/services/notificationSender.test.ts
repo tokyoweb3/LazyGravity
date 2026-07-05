@@ -177,13 +177,12 @@ describe('buildPlanningNotification', () => {
         expect(buttons).toHaveLength(2);
     });
 
-    it('always contains exactly 2 buttons even when hasOpenButton is false', () => {
+    it('contains exactly 1 button when hasOpenButton is false', () => {
         const payload = buildPlanningNotification({ ...baseOpts, hasOpenButton: false });
         expect(payload.components).toHaveLength(1);
         const buttons = extractButtons(payload);
-        expect(buttons).toHaveLength(2);
-        expect(buttons[0].label).toBe('Open Plan');
-        expect(buttons[1].label).toBe('Proceed');
+        expect(buttons).toHaveLength(1);
+        expect(buttons[0].label).toBe('Proceed');
     });
 
     it('has Open Plan and Proceed buttons with correct styles', () => {
