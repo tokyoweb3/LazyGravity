@@ -234,7 +234,7 @@ export class ArtifactService {
                         const content = buf.slice(0, bytesRead).toString('utf-8').toLowerCase();
                         
                         if (filterStr) {
-                            const escapedFilter = filterStr.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+                            const escapedFilter = filterStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
                             const regex = new RegExp(`(?:file:\\/\\/\\/[^"\\)]*?\\/|[a-zA-Z]:[\\\\/](?!.*(?:\\.gemini|brain|antigravity))[^"\\)]*?[\\\\/])${escapedFilter}\\b`, 'i');
                             if (regex.test(content)) {
                                 belongsToWorkspace = true;
@@ -304,7 +304,7 @@ export class ArtifactService {
             .sort((a, b) => b.mtime - a.mtime);
 
         if (filterStr) {
-            const escapedFilter = filterStr.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+            const escapedFilter = filterStr.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
             const workspaceIds = sorted.filter(({ id }) => {
                 let belongs = false;
                 const regex = new RegExp(`(?:file:\\/\\/\\/[^"\\)]*?\\/|[a-zA-Z]:[\\\\/](?!.*(?:\\.gemini|brain|antigravity))[^"\\)]*?[\\\\/])${escapedFilter}\\b`, 'i');
