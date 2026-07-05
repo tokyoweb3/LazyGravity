@@ -31,6 +31,19 @@ describe('ApprovalDetector DOM Script', () => {
         expect(result).toBeNull();
     });
 
+    it('should ignore approvals if a text-only Stop Generating button exists', () => {
+        document.body.innerHTML = `
+            <div>
+                <button>Accept all</button>
+                <button>Reject all</button>
+                <button>Stop Generating</button>
+            </div>
+        `;
+        
+        const result = runScript();
+        expect(result).toBeNull();
+    });
+
     it('should fall back to safe description if text is too long or contains weird IDE menus', () => {
         document.body.innerHTML = `
             <div role="dialog">

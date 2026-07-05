@@ -55,7 +55,7 @@ export const DETECT_APPROVAL_SCRIPT = `(() => {
         if (tooltipId === 'input-send-button-cancel-tooltip') return true;
         const labels = [btn.textContent || '', btn.getAttribute('aria-label') || '', btn.getAttribute('title') || ''];
         return labels.some(val => {
-            const normalized = (val || '').toLowerCase().replace(/\s+/g, ' ').trim();
+            const normalized = (val || '').toLowerCase().replace(/\\s+/g, ' ').trim();
             return normalized && STOP_PATTERNS_GEN.some(re => re.test(normalized));
         });
     });
