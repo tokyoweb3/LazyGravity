@@ -118,6 +118,7 @@ import { createPlatformButtonHandler } from '../handlers/buttonHandler';
 import { createPlatformSelectHandler } from '../handlers/selectHandler';
 import { createApprovalButtonAction } from '../handlers/approvalButtonAction';
 import { createPlanningButtonAction } from '../handlers/planningButtonAction';
+import { HeartbeatService, parseInterval, formatDuration, formatRelativeTime } from '../services/heartbeatService';
 import { createErrorPopupButtonAction } from '../handlers/errorPopupButtonAction';
 import { createRunCommandButtonAction } from '../handlers/runCommandButtonAction';
 import { createModelButtonAction } from '../handlers/modelButtonAction';
@@ -1332,6 +1333,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
     const artifactService = new ArtifactService();
     const workspaceService = new WorkspaceService(config.workspaceBaseDir);
     const channelManager = new ChannelManager();
+    const heartbeatService = new HeartbeatService();
 
     // Auto-launch Antigravity with CDP port if not already running
     await ensureAntigravityRunning();
@@ -1488,6 +1490,9 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
     client.once(Events.ClientReady, async (readyClient) => {
         logger.info(`Ready! Logged in as ${readyClient.user.tag} | extractionMode=${config.extractionMode}`);
 
+        heartbeatService.init(readyClient, bridge);
+        heartbeatService.start();
+
         try {
             await registerSlashCommands(discordToken, discordClientId, config.guildId);
         } catch (error) {
@@ -1577,6 +1582,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         channelManager,
         titleGenerator,
         antigravityAccounts: config.antigravityAccounts,
+        heartbeatService,
         handleSlashInteraction: async (
             interaction,
             handler,
@@ -1615,6 +1621,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             chatSessionRepoArg,
             artifactService,
             scheduleServiceArg,
+            heartbeatService,
         ),
         handleTemplateUse: async (interaction, templateId) => {
             const template = templateRepo.findById(templateId);
@@ -1757,6 +1764,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         accountPrefRepo,
         channelPrefRepo,
         antigravityAccounts: config.antigravityAccounts,
+        heartbeatService,
     }));
 
     await client.login(discordToken);
@@ -2077,6 +2085,7 @@ export async function handleSlashInteraction(
     chatSessionRepo?: ChatSessionRepository,
     artifactService?: ArtifactService,
     scheduleService?: ScheduleService,
+    heartbeatService?: HeartbeatService,
 ): Promise<void> {
     const commandName = interaction.commandName;
     const getAccountPort = (accountName: string): number | null => {
@@ -2707,6 +2716,62 @@ export async function handleSlashInteraction(
                 chatSessionRepo, 
                 artifactService 
             });
+            break;
+        }
+
+        case 'heartbeat': {
+            const subcommand = interaction.options.getSubcommand();
+            if (!heartbeatService) {
+                await interaction.editReply({ content: 'Heartbeat service not available.' });
+                break;
+            }
+
+            if (subcommand === 'on') {
+                const intervalStr = interaction.options.getString('interval') || '1h';
+                const targetChannel = interaction.options.getChannel('channel') || interaction.channel;
+                
+                if (!targetChannel || typeof (targetChannel as any).isTextBased !== 'function' || !(targetChannel as any).isTextBased()) {
+                    await interaction.editReply({ content: '⚠️ Please select a valid text channel.' });
+                    break;
+                }
+
+                const intervalMs = parseInterval(intervalStr);
+                if (intervalMs === null || intervalMs <= 0) {
+                    await interaction.editReply({ content: '⚠️ Invalid interval format. Use e.g. "1h", "6h", "30m".' });
+                    break;
+                }
+
+                if (intervalMs < 10000) {
+                    await interaction.editReply({ content: '⚠️ Interval must be at least 10 seconds.' });
+                    break;
+                }
+
+                await heartbeatService.updateConfig(true, intervalMs, targetChannel.id);
+                await interaction.editReply({ 
+                    content: `💓 Heartbeat enabled! Sending updates every **${intervalStr}** to channel <#${targetChannel.id}>.` 
+                });
+            } else if (subcommand === 'off') {
+                await heartbeatService.disable();
+                await interaction.editReply({ content: '💓 Heartbeat disabled.' });
+            } else if (subcommand === 'status') {
+                const config = loadConfig();
+                const uptimeMs = Date.now() - heartbeatService.botStartTime;
+                const uptimeStr = formatDuration(uptimeMs);
+                const lastActivityStr = formatRelativeTime(heartbeatService.lastActivityTimestamp);
+
+                const statusEmbed = new EmbedBuilder()
+                    .setTitle('💓 Heartbeat Status')
+                    .setColor(config.heartbeatEnabled ? 0x00CC88 : 0x888888)
+                    .addFields(
+                        { name: 'Enabled', value: config.heartbeatEnabled ? '🟢 Yes' : '⚪ No', inline: true },
+                        { name: 'Interval', value: config.heartbeatEnabled ? `${config.heartbeatIntervalMs}ms` : 'N/A', inline: true },
+                        { name: 'Target Channel', value: config.heartbeatChannelId ? `<#${config.heartbeatChannelId}>` : 'N/A', inline: true },
+                        { name: 'Uptime', value: uptimeStr, inline: true },
+                        { name: 'Last Activity', value: lastActivityStr, inline: true },
+                    )
+                    .setTimestamp();
+                await interaction.editReply({ embeds: [statusEmbed] });
+            }
             break;
         }
 

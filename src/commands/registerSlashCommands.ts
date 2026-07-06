@@ -235,6 +235,38 @@ const openCommand = new SlashCommandBuilder()
             .setRequired(true)
     );
 
+/** /heartbeat command definition */
+const heartbeatCommand = new SlashCommandBuilder()
+    .setName('heartbeat')
+    .setDescription(t('Configure periodic bot heartbeat notifications'))
+    .addSubcommand((sub) =>
+        sub
+            .setName('on')
+            .setDescription(t('Enable periodic heartbeats'))
+            .addStringOption((option) =>
+                option
+                    .setName('interval')
+                    .setDescription(t('Interval (e.g., 1h, 6h, 30m)'))
+                    .setRequired(false)
+            )
+            .addChannelOption((option) =>
+                option
+                    .setName('channel')
+                    .setDescription(t('Target channel for heartbeat (defaults to current)'))
+                    .setRequired(false)
+            )
+    )
+    .addSubcommand((sub) =>
+        sub
+            .setName('off')
+            .setDescription(t('Disable periodic heartbeats'))
+    )
+    .addSubcommand((sub) =>
+        sub
+            .setName('status')
+            .setDescription(t('Display current heartbeat config and status'))
+    );
+
 /** Array of commands to register */
 export const slashCommands = [
     helpCommand,
@@ -258,6 +290,7 @@ export const slashCommands = [
     logsCommand,
     artifactsCommand,
     openCommand,
+    heartbeatCommand,
 ];
 
 /**

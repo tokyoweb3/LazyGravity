@@ -51,6 +51,14 @@ jest.mock('discord.js', () => {
                     optFn(opt);
                     return sub;
                 });
+                sub.addChannelOption = jest.fn().mockImplementation((optFn: any) => {
+                    const opt: any = {};
+                    opt.setName = jest.fn().mockReturnValue(opt);
+                    opt.setDescription = jest.fn().mockReturnValue(opt);
+                    opt.setRequired = jest.fn().mockReturnValue(opt);
+                    optFn(opt);
+                    return sub;
+                });
                 fn(sub);
                 return builder;
             });

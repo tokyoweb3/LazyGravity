@@ -63,6 +63,7 @@ import { JoinCommandHandler } from '../commands/joinCommandHandler';
 import { isSessionSelectId } from '../ui/sessionPickerUi';
 import { ARTIFACT_SELECT_ID, ARTIFACT_THREAD_BTN, ARTIFACT_INLINE_BTN, buildArtifactPickerUI, sendArtifactPickerUI } from '../ui/artifactsUi';
 import { ArtifactService } from '../services/artifactService';
+import { HeartbeatService } from '../services/heartbeatService';
 import { ArtifactThreadRepository } from '../database/artifactThreadRepository';
 import { ScheduleService } from '../services/scheduleService';
 import type { AntigravityAccountConfig } from '../utils/configLoader';
@@ -111,6 +112,7 @@ export interface InteractionCreateHandlerDeps {
         antigravityAccounts?: AntigravityAccountConfig[],
         chatSessionRepo?: ChatSessionRepository,
         scheduleService?: ScheduleService,
+        heartbeatService?: HeartbeatService,
     ) => Promise<void>;
     handleTemplateUse?: (interaction: ButtonInteraction, templateId: number) => Promise<void>;
     joinHandler?: JoinCommandHandler;
@@ -126,6 +128,7 @@ export interface InteractionCreateHandlerDeps {
     promptDispatcher?: import('../services/promptDispatcher').PromptDispatcher;
     channelManager?: import('../services/channelManager').ChannelManager;
     titleGenerator?: import('../services/titleGeneratorService').TitleGeneratorService;
+    heartbeatService?: HeartbeatService;
 }
 
 export function createInteractionCreateHandler(deps: InteractionCreateHandlerDeps) {
@@ -224,6 +227,10 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
     };
 
     return async (interaction: Interaction): Promise<void> => {
+        if (deps.heartbeatService && deps.config.allowedUserIds.includes(interaction.user.id)) {
+            deps.heartbeatService.recordActivity();
+        }
+
         if (interaction.isAutocomplete()) {
             if (!deps.config.allowedUserIds.includes(interaction.user.id)) {
                 await interaction.respond([]).catch(logger.error);
@@ -1720,6 +1727,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                 deps.antigravityAccounts,
                 deps.chatSessionRepo,
                 deps.scheduleService,
+                deps.heartbeatService,
             );
         } catch (error) {
             logger.error(

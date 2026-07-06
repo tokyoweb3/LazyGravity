@@ -36,6 +36,7 @@ import {
 } from '../utils/imageHandler';
 import { listAccountNames, resolveScopedAccountName } from '../utils/accountUtils';
 import { logger } from '../utils/logger';
+import { HeartbeatService } from '../services/heartbeatService';
 
 export interface MessageCreateHandlerDeps {
     config: { allowedUserIds: string[]; extractionMode?: import('../utils/config').ExtractionMode; responseTimeoutMs?: number };
@@ -83,6 +84,7 @@ export interface MessageCreateHandlerDeps {
     accountPrefRepo?: AccountPreferenceRepository;
     channelPrefRepo?: ChannelPreferenceRepository;
     antigravityAccounts?: { name: string; cdpPort: number }[];
+    heartbeatService?: HeartbeatService;
 }
 
 export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
@@ -135,6 +137,10 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
 
         if (!deps.config.allowedUserIds.includes(message.author.id)) {
             return;
+        }
+
+        if (deps.heartbeatService) {
+            deps.heartbeatService.recordActivity();
         }
 
         const parsed = parseMessageContent(message.content);
@@ -259,7 +265,7 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                 return;
             }
 
-            const slashOnlyCommands = ['help', 'stop', 'model', 'mode', 'project', 'chat', 'new', 'cleanup', 'join', 'mirror', 'output'];
+            const slashOnlyCommands = ['help', 'stop', 'model', 'mode', 'project', 'chat', 'new', 'cleanup', 'join', 'mirror', 'output', 'heartbeat'];
             if (slashOnlyCommands.includes(parsed.commandName)) {
                 await message.reply({
                     content: `💡 Please use \`/${parsed.commandName}\` as a slash command.\nType \`/${parsed.commandName}\` in the Discord input field to see suggestions.`,

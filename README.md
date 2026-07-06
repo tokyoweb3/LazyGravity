@@ -96,6 +96,7 @@ Just type in any bound channel:
 - `🛑 /shutdown` — Shut down the IDE while keeping the active CDP project connections and session bindings
 - `📸 /screenshot` — Capture and send Antigravity's current screen
 - `🔧 /status` — Show bot connection status, current mode, and active project
+- `💓 /heartbeat [on|off|status]` — Configure periodic bot heartbeat notifications
 - `✅ /autoaccept [on|off|status]` — Toggle auto-approval of file edit dialogs
 - `📝 /output [embed|plain]` — Toggle output format between Embed and Plain Text (plain text is easier to copy on mobile)
 - `📋 /logs [lines] [level]` — View recent bot logs (ephemeral)
