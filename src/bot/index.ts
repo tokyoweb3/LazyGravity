@@ -2735,6 +2735,14 @@ export async function handleSlashInteraction(
                     break;
                 }
 
+                // Check permissions
+                const botUser = interaction.client.user;
+                const permissions = (targetChannel as any).permissionsFor?.(botUser);
+                if (!permissions || !permissions.has('SendMessages')) {
+                    await interaction.editReply({ content: '⚠️ Bot does not have permission to send messages in that channel.' });
+                    break;
+                }
+
                 const intervalMs = parseInterval(intervalStr);
                 if (intervalMs === null || intervalMs <= 0) {
                     await interaction.editReply({ content: '⚠️ Invalid interval format. Use e.g. "1h", "6h", "30m".' });
@@ -2759,13 +2767,20 @@ export async function handleSlashInteraction(
                 const uptimeStr = formatDuration(uptimeMs);
                 const lastActivityStr = formatRelativeTime(heartbeatService.lastActivityTimestamp);
 
+                const activeWorkspaces = bridge.pool.getActiveWorkspaceNames();
+                const activeCount = activeWorkspaces.length;
+                const activeList = activeCount > 0 ? activeWorkspaces.join(', ') : 'None';
+
+                const intervalVal = config.heartbeatIntervalMs != null ? formatDuration(config.heartbeatIntervalMs) : 'N/A';
+
                 const statusEmbed = new EmbedBuilder()
                     .setTitle('💓 Heartbeat Status')
                     .setColor(config.heartbeatEnabled ? 0x00CC88 : 0x888888)
                     .addFields(
                         { name: 'Enabled', value: config.heartbeatEnabled ? '🟢 Yes' : '⚪ No', inline: true },
-                        { name: 'Interval', value: config.heartbeatEnabled ? `${config.heartbeatIntervalMs}ms` : 'N/A', inline: true },
+                        { name: 'Interval', value: config.heartbeatEnabled ? intervalVal : 'N/A', inline: true },
                         { name: 'Target Channel', value: config.heartbeatChannelId ? `<#${config.heartbeatChannelId}>` : 'N/A', inline: true },
+                        { name: 'Active Sessions', value: `${activeCount} (${activeList})`, inline: true },
                         { name: 'Uptime', value: uptimeStr, inline: true },
                         { name: 'Last Activity', value: lastActivityStr, inline: true },
                     )

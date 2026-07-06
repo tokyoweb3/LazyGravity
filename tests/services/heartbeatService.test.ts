@@ -148,6 +148,22 @@ describe('HeartbeatService', () => {
         expect(sendSpy).toHaveBeenCalledTimes(2);
     });
 
+    it('uses configured interval of 0 if explicitly provided', () => {
+        (ConfigLoader.load as jest.Mock).mockReturnValue({
+            heartbeatEnabled: true,
+            heartbeatChannelId: 'channel-123',
+            heartbeatIntervalMs: 0,
+        });
+
+        service.init(mockClient, mockBridge);
+        jest.spyOn(service, 'sendHeartbeat').mockResolvedValue(undefined);
+
+        const logSpy = jest.spyOn(require('../../src/utils/logger').logger, 'info');
+        service.start();
+
+        expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('every 0ms'));
+    });
+
     it('stops interval on stop()', () => {
         (ConfigLoader.load as jest.Mock).mockReturnValue({
             heartbeatEnabled: true,
@@ -165,9 +181,9 @@ describe('HeartbeatService', () => {
         expect(jest.getTimerCount()).toBe(0);
     });
 
-    it('disables heartbeat on disable()', () => {
+    it('disables heartbeat on disable()', async () => {
         service.init(mockClient, mockBridge);
-        service.disable();
+        await service.disable();
 
         expect(ConfigLoader.save).toHaveBeenCalledWith({
             heartbeatEnabled: false,

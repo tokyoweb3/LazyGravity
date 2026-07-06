@@ -4,6 +4,7 @@ import {
     PermissionFlagsBits,
     REST,
     Routes,
+    ChannelType,
 } from 'discord.js';
 import { t } from "../utils/i18n";
 
@@ -253,6 +254,7 @@ const heartbeatCommand = new SlashCommandBuilder()
                 option
                     .setName('channel')
                     .setDescription(t('Target channel for heartbeat (defaults to current)'))
+                    .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
                     .setRequired(false)
             )
     )

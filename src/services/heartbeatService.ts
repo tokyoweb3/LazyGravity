@@ -39,7 +39,7 @@ export class HeartbeatService {
             return;
         }
 
-        const interval = config.heartbeatIntervalMs || 3600000;
+        const interval = config.heartbeatIntervalMs ?? 3600000;
         logger.info(`[HeartbeatService] Starting periodic heartbeat every ${interval}ms to channel ${channelId}`);
 
         // Run immediately on start

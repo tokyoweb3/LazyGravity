@@ -11,6 +11,7 @@ jest.mock('discord.js', () => {
                 on: jest.fn(),
                 login: jest.fn().mockResolvedValue('test_token'),
                 guilds: { cache: new Map() },
+                user: { id: 'bot-id' },
             };
         }),
         GatewayIntentBits: {
@@ -22,6 +23,13 @@ jest.mock('discord.js', () => {
             ClientReady: 'ready',
             MessageCreate: 'messageCreate',
             InteractionCreate: 'interactionCreate',
+        },
+        MessageFlags: {
+            Ephemeral: 64,
+        },
+        ChannelType: {
+            GuildText: 0,
+            GuildAnnouncement: 5,
         },
         // Mock for slash commands
         SlashCommandBuilder: jest.fn().mockImplementation(() => {
@@ -56,6 +64,7 @@ jest.mock('discord.js', () => {
                     opt.setName = jest.fn().mockReturnValue(opt);
                     opt.setDescription = jest.fn().mockReturnValue(opt);
                     opt.setRequired = jest.fn().mockReturnValue(opt);
+                    opt.addChannelTypes = jest.fn().mockReturnValue(opt);
                     optFn(opt);
                     return sub;
                 });
@@ -154,6 +163,26 @@ jest.mock('../src/services/screenshotService', () => ({
     })),
 }));
 
+jest.mock('../src/services/heartbeatService', () => {
+    return {
+        HeartbeatService: jest.fn().mockImplementation(() => {
+            return {
+                init: jest.fn(),
+                start: jest.fn(),
+                stop: jest.fn(),
+                disable: jest.fn(),
+                recordActivity: jest.fn(),
+                updateConfig: jest.fn().mockResolvedValue(true),
+                botStartTime: Date.now() - 5000,
+                lastActivityTimestamp: Date.now() - 1000,
+            };
+        }),
+        parseInterval: jest.fn().mockReturnValue(1800000),
+        formatDuration: jest.fn().mockReturnValue('30m'),
+        formatRelativeTime: jest.fn().mockReturnValue('1m ago'),
+    };
+});
+
 describe('Bot Startup', () => {
     let clientInstance: any;
 
@@ -192,5 +221,107 @@ describe('Bot Startup', () => {
     it('forces response delivery mode to stream even when final-only is configured', () => {
         process.env.LAZYGRAVITY_RESPONSE_DELIVERY = 'final-only';
         expect(getResponseDeliveryModeForTest()).toBe('stream');
+    });
+
+    describe('heartbeat command interaction', () => {
+        let interactionCallback: (interaction: any) => Promise<void>;
+        let mockTargetChannel: any;
+        let mockPermissions: any;
+
+        beforeEach(() => {
+            interactionCallback = clientInstance.on.mock.calls.find((call: any) => call[0] === Events.InteractionCreate)[1];
+            mockPermissions = {
+                has: jest.fn().mockReturnValue(true),
+            };
+            mockTargetChannel = {
+                id: 'heartbeat-channel-id',
+                isTextBased: () => true,
+                permissionsFor: jest.fn().mockReturnValue(mockPermissions),
+            };
+        });
+
+        it('handles heartbeat on command successfully', async () => {
+            const editReplySpy = jest.fn().mockResolvedValue(true);
+            const mockInteraction = {
+                isAutocomplete: () => false,
+                isButton: () => false,
+                isStringSelectMenu: () => false,
+                isChatInputCommand: () => true,
+                commandName: 'heartbeat',
+                options: {
+                    getSubcommand: () => 'on',
+                    getString: (name: string) => name === 'interval' ? '30m' : null,
+                    getChannel: (name: string) => name === 'channel' ? mockTargetChannel : null,
+                },
+                client: clientInstance,
+                channel: mockTargetChannel,
+                channelId: 'heartbeat-channel-id',
+                user: { id: '123' }, // allowed user in mocked config
+                deferReply: jest.fn().mockResolvedValue(true),
+                editReply: editReplySpy,
+            } as any;
+
+            await interactionCallback(mockInteraction);
+
+            expect(mockTargetChannel.permissionsFor).toHaveBeenCalledWith(clientInstance.user);
+            expect(editReplySpy).toHaveBeenCalledWith(expect.objectContaining({
+                content: expect.stringContaining('Heartbeat enabled'),
+            }));
+        });
+
+        it('fails heartbeat on if bot lacks send permissions', async () => {
+            mockPermissions.has.mockReturnValue(false);
+            const editReplySpy = jest.fn().mockResolvedValue(true);
+            const mockInteraction = {
+                isAutocomplete: () => false,
+                isButton: () => false,
+                isStringSelectMenu: () => false,
+                isChatInputCommand: () => true,
+                commandName: 'heartbeat',
+                options: {
+                    getSubcommand: () => 'on',
+                    getString: (name: string) => name === 'interval' ? '30m' : null,
+                    getChannel: (name: string) => name === 'channel' ? mockTargetChannel : null,
+                },
+                client: clientInstance,
+                channel: mockTargetChannel,
+                channelId: 'heartbeat-channel-id',
+                user: { id: '123' },
+                deferReply: jest.fn().mockResolvedValue(true),
+                editReply: editReplySpy,
+            } as any;
+
+            await interactionCallback(mockInteraction);
+
+            expect(editReplySpy).toHaveBeenCalledWith(expect.objectContaining({
+                content: expect.stringContaining('Bot does not have permission'),
+            }));
+        });
+
+        it('handles heartbeat status command and returns status embed', async () => {
+            const editReplySpy = jest.fn().mockResolvedValue(true);
+            const mockInteraction = {
+                isAutocomplete: () => false,
+                isButton: () => false,
+                isStringSelectMenu: () => false,
+                isChatInputCommand: () => true,
+                commandName: 'heartbeat',
+                options: {
+                    getSubcommand: () => 'status',
+                },
+                client: clientInstance,
+                channel: mockTargetChannel,
+                channelId: 'heartbeat-channel-id',
+                user: { id: '123' },
+                deferReply: jest.fn().mockResolvedValue(true),
+                editReply: editReplySpy,
+            } as any;
+
+            await interactionCallback(mockInteraction);
+
+            expect(editReplySpy).toHaveBeenCalledWith(expect.objectContaining({
+                embeds: expect.any(Array),
+            }));
+        });
     });
 });
