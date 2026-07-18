@@ -410,23 +410,25 @@ describe('Bot Startup', () => {
             const originalEnv = process.env.HEARTBEAT_ENABLED;
             process.env.HEARTBEAT_ENABLED = 'false';
 
-            const editReplySpy = jest.fn().mockResolvedValue(true);
-            const mockInteraction = makeMockInteraction({
-                subcommand: 'on',
-                interval: '30m',
-                editReply: editReplySpy,
-            });
+            try {
+                const editReplySpy = jest.fn().mockResolvedValue(true);
+                const mockInteraction = makeMockInteraction({
+                    subcommand: 'on',
+                    interval: '30m',
+                    editReply: editReplySpy,
+                });
 
-            await interactionCallback(mockInteraction);
+                await interactionCallback(mockInteraction);
 
-            expect(editReplySpy).toHaveBeenCalledWith(expect.objectContaining({
-                content: expect.stringContaining('Environment override(s) active: HEARTBEAT_ENABLED'),
-            }));
-
-            if (originalEnv === undefined) {
-                delete process.env.HEARTBEAT_ENABLED;
-            } else {
-                process.env.HEARTBEAT_ENABLED = originalEnv;
+                expect(editReplySpy).toHaveBeenCalledWith(expect.objectContaining({
+                    content: expect.stringContaining('Environment override(s) active: HEARTBEAT_ENABLED'),
+                }));
+            } finally {
+                if (originalEnv === undefined) {
+                    delete process.env.HEARTBEAT_ENABLED;
+                } else {
+                    process.env.HEARTBEAT_ENABLED = originalEnv;
+                }
             }
         });
 
