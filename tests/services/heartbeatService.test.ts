@@ -337,5 +337,27 @@ describe('HeartbeatService', () => {
                 heartbeatLastMessageId: 'msg-abc',
             });
         });
+        it('aborts sending and discards result if generation token changes (stale generation)', async () => {
+            (ConfigLoader.load as jest.Mock).mockReturnValue({
+                heartbeatEnabled: true,
+                heartbeatChannelId: 'channel-123',
+            });
+
+            // Stub channels.fetch to mock a delay and check generation token
+            mockClient.channels.fetch.mockImplementation(async () => {
+                // Manually trigger a stop/generation increase while fetch is in-flight
+                service.stop();
+                return mockChannel;
+            });
+
+            service.init(mockClient, mockBridge);
+            await service.sendHeartbeat();
+
+            // Expected: should abort and NOT call channel.send or ConfigLoader.save
+            expect(mockChannel.send).not.toHaveBeenCalled();
+            expect(ConfigLoader.save).not.toHaveBeenCalledWith({
+                heartbeatLastMessageId: expect.any(String),
+            });
+        });
     });
 });

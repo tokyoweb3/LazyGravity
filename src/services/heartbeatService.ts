@@ -8,6 +8,9 @@ export class HeartbeatService {
     private bridge: CdpBridge | null = null;
     private intervalId: NodeJS.Timeout | null = null;
     
+    private generationToken: number = 0;
+    private isSending: boolean = false;
+    
     public botStartTime: number = Date.now();
     public lastActivityTimestamp: number = Date.now();
 
@@ -62,6 +65,7 @@ export class HeartbeatService {
     }
 
     public stop() {
+        this.generationToken++;
         if (this.intervalId) {
             clearInterval(this.intervalId);
             this.intervalId = null;
@@ -69,6 +73,7 @@ export class HeartbeatService {
     }
 
     public async updateConfig(enabled: boolean, intervalMs: number, channelId: string) {
+        this.generationToken++;
         const config = ConfigLoader.load();
         
         // If channel changed, clear the last message ID
@@ -103,6 +108,7 @@ export class HeartbeatService {
     }
 
     public async disable() {
+        this.generationToken++;
         const config = ConfigLoader.load();
         if (config.heartbeatChannelId && config.heartbeatLastMessageId) {
             try {
@@ -131,12 +137,28 @@ export class HeartbeatService {
             return;
         }
 
+        if (this.isSending) {
+            logger.debug('[HeartbeatService] Heartbeat send already in flight. Skipping overlapping execution.');
+            return;
+        }
+
+        const gen = this.generationToken;
+        this.isSending = true;
+
         const config = ConfigLoader.load();
         const channelId = config.heartbeatChannelId;
-        if (!channelId) return;
+        if (!channelId) {
+            this.isSending = false;
+            return;
+        }
 
         try {
             const channel = await this.client.channels.fetch(channelId);
+            if (gen !== this.generationToken) {
+                logger.debug(`[HeartbeatService] Aborting heartbeat send: stale generation (expected ${gen}, current ${this.generationToken})`);
+                return;
+            }
+
             if (!channel || !channel.isTextBased()) {
                 logger.warn(`[HeartbeatService] Channel ${channelId} not found or is not a text channel.`);
                 return;
@@ -148,6 +170,10 @@ export class HeartbeatService {
             if (lastMessageId) {
                 try {
                     const message = await (channel as TextChannel).messages.fetch(lastMessageId);
+                    if (gen !== this.generationToken) {
+                        logger.debug('[HeartbeatService] Aborting message edit: stale generation');
+                        return;
+                    }
                     if (message && message.author.id === this.client.user?.id) {
                         await message.edit({ embeds: [embed] });
                         logger.debug(`[HeartbeatService] Updated heartbeat message in-place: ${lastMessageId}`);
@@ -158,12 +184,26 @@ export class HeartbeatService {
                 }
             }
 
+            if (gen !== this.generationToken) {
+                logger.debug('[HeartbeatService] Aborting message send: stale generation');
+                return;
+            }
+
             // Send new message
             const newMsg = await (channel as TextChannel).send({ embeds: [embed] });
+
+            if (gen !== this.generationToken) {
+                logger.debug(`[HeartbeatService] Stale generation after send. Deleting new message ${newMsg.id} to avoid leakage.`);
+                await newMsg.delete().catch(() => {});
+                return;
+            }
+
             ConfigLoader.save({ heartbeatLastMessageId: newMsg.id });
             logger.info(`[HeartbeatService] Sent new heartbeat message: ${newMsg.id}`);
         } catch (error) {
             logger.error('[HeartbeatService] Error in sendHeartbeat:', error);
+        } finally {
+            this.isSending = false;
         }
     }
 

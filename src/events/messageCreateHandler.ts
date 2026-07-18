@@ -37,6 +37,7 @@ import {
 import { listAccountNames, resolveScopedAccountName } from '../utils/accountUtils';
 import { logger } from '../utils/logger';
 import { HeartbeatService } from '../services/heartbeatService';
+import { WorkspaceQueue } from '../bot/workspaceQueue';
 
 export interface MessageCreateHandlerDeps {
     config: { allowedUserIds: string[]; extractionMode?: import('../utils/config').ExtractionMode; responseTimeoutMs?: number };
@@ -85,9 +86,11 @@ export interface MessageCreateHandlerDeps {
     channelPrefRepo?: ChannelPreferenceRepository;
     antigravityAccounts?: { name: string; cdpPort: number }[];
     heartbeatService?: HeartbeatService;
+    workspaceQueue?: WorkspaceQueue;
 }
 
 export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
+    const workspaceQueue = deps.workspaceQueue ?? new WorkspaceQueue();
     const getCurrentCdp = deps.getCurrentCdp ?? getCurrentCdpFn;
     const ensureApprovalDetector = deps.ensureApprovalDetector ?? ensureApprovalDetectorFn;
     const ensureErrorPopupDetector = deps.ensureErrorPopupDetector ?? ensureErrorPopupDetectorFn;
@@ -110,27 +113,6 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
     };
     const getSessionAccountName = (channelId: string): string | null =>
         deps.chatSessionRepo.findByChannelId(channelId)?.activeAccountName ?? null;
-
-    // Per-workspace prompt queue: serializes send→response cycles
-    const workspaceQueues = new Map<string, Promise<void>>();
-    const workspaceQueueDepths = new Map<string, number>();
-
-    function enqueueForWorkspace(
-        workspacePath: string,
-        task: () => Promise<void>,
-    ): Promise<void> {
-        // .catch: ensure a prior rejection never stalls the chain
-        const current = (workspaceQueues.get(workspacePath) ?? Promise.resolve()).catch(() => { });
-        const next = current.then(async () => {
-            try {
-                await task();
-            } catch (err: any) {
-                logger.error('[WorkspaceQueue] task error:', err?.message || err);
-            }
-        });
-        workspaceQueues.set(workspacePath, next);
-        return next;
-    }
 
     return async (message: Message): Promise<void> => {
         if (message.author.bot) return;
@@ -369,9 +351,8 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                     const projectLabel = deps.bridge.pool.extractProjectName(workspacePath);
 
                     // Track queue depth for hourglass reactions
-                    const currentDepth = workspaceQueueDepths.get(workspacePath) ?? 0;
-                    workspaceQueueDepths.set(workspacePath, currentDepth + 1);
-                    const newDepth = currentDepth + 1;
+                    const currentDepth = workspaceQueue.getDepth(workspacePath);
+                    const newDepth = workspaceQueue.incrementDepth(workspacePath);
 
                     if (currentDepth > 0) {
                         logger.info(
@@ -385,7 +366,7 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                     }
 
                     const queueStartTime = Date.now();
-                    await enqueueForWorkspace(workspacePath, async () => {
+                    await workspaceQueue.enqueue(workspacePath, async () => {
                         const waitMs = Date.now() - queueStartTime;
                         if (waitMs > 100) {
                             logger.info(
@@ -590,8 +571,7 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                             );
                             await message.reply(`Failed to connect to workspace: ${e.message}`);
                         } finally {
-                            const remainingDepth = (workspaceQueueDepths.get(workspacePath) ?? 1) - 1;
-                            workspaceQueueDepths.set(workspacePath, remainingDepth);
+                            const remainingDepth = workspaceQueue.decrementDepth(workspacePath);
                             if (remainingDepth > 0) {
                                 logger.info(
                                     `[Queue:${projectLabel}] Task done, ${remainingDepth} remaining`,

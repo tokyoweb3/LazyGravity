@@ -269,6 +269,65 @@ const heartbeatCommand = new SlashCommandBuilder()
             .setDescription(t('Display current heartbeat config and status'))
     );
 
+/** /schedule command definition */
+const scheduleCommand = new SlashCommandBuilder()
+    .setName('schedule')
+    .setDescription(t('Manage scheduled tasks'))
+    .addSubcommand((sub) =>
+        sub
+            .setName('list')
+            .setDescription(t('Show all scheduled tasks with next-run times'))
+    )
+    .addSubcommand((sub) =>
+        sub
+            .setName('add')
+            .setDescription(t('Register a recurring task'))
+            .addStringOption((option) =>
+                option
+                    .setName('cron')
+                    .setDescription(t('Cron expression (e.g. "0 * * * *")'))
+                    .setRequired(true)
+            )
+            .addStringOption((option) =>
+                option
+                    .setName('prompt')
+                    .setDescription(t('Prompt content to execute'))
+                    .setRequired(true)
+            )
+    )
+    .addSubcommand((sub) =>
+        sub
+            .setName('remove')
+            .setDescription(t('Delete a scheduled task'))
+            .addIntegerOption((option) =>
+                option
+                    .setName('id')
+                    .setDescription(t('ID of the task to delete'))
+                    .setRequired(true)
+            )
+    )
+    .addSubcommand((sub) =>
+        sub
+            .setName('clear')
+            .setDescription(t('Remove all scheduled tasks and reset task IDs'))
+    )
+    .addSubcommand((sub) =>
+        sub
+            .setName('backup')
+            .setDescription(t('Export all scheduled tasks as a JSON file attachment'))
+    )
+    .addSubcommand((sub) =>
+        sub
+            .setName('restore')
+            .setDescription(t('Restore scheduled tasks from a JSON file attachment'))
+            .addAttachmentOption((option) =>
+                option
+                    .setName('file')
+                    .setDescription(t('The schedules_backup.json file to import'))
+                    .setRequired(true)
+            )
+    );
+
 /** Array of commands to register */
 export const slashCommands = [
     helpCommand,
@@ -293,6 +352,7 @@ export const slashCommands = [
     artifactsCommand,
     openCommand,
     heartbeatCommand,
+    scheduleCommand,
 ];
 
 /**

@@ -1,5 +1,6 @@
 import * as cron from 'node-cron';
-import { ScheduleRepository, ScheduleRecord } from '../database/scheduleRepository';
+import { ScheduleRepository, ScheduleRecord, CreateScheduleInput } from '../database/scheduleRepository';
+import { logger } from '../utils/logger';
 
 /**
  * Callback type for job execution.
@@ -18,9 +19,17 @@ export class ScheduleService {
     private repo: ScheduleRepository;
     /** Map managing active cron tasks (schedule ID -> ScheduledTask) */
     private activeTasks: Map<number, cron.ScheduledTask> = new Map();
+    private jobCallback?: JobCallback;
 
     constructor(repo: ScheduleRepository) {
         this.repo = repo;
+    }
+
+    /**
+     * Get the stored job callback.
+     */
+    public getJobCallback(): JobCallback | undefined {
+        return this.jobCallback;
     }
 
     /**
@@ -30,6 +39,7 @@ export class ScheduleService {
      * @returns Number of restored schedules
      */
     public restoreAll(jobCallback: JobCallback): number {
+        this.jobCallback = jobCallback;
         const enabledSchedules = this.repo.findEnabled();
 
         for (const schedule of enabledSchedules) {
@@ -54,23 +64,42 @@ export class ScheduleService {
         cronExpression: string,
         prompt: string,
         workspacePath: string,
-        jobCallback: JobCallback
+        channelIdOrCallback: string | JobCallback,
+        jobCallback?: JobCallback
     ): ScheduleRecord {
+        let finalChannelId = '';
+        let finalJobCallback: JobCallback | undefined;
+
+        if (typeof channelIdOrCallback === 'function') {
+            finalJobCallback = channelIdOrCallback;
+        } else {
+            finalChannelId = channelIdOrCallback;
+            finalJobCallback = jobCallback;
+        }
+
+        if (!finalJobCallback) {
+            throw new Error('Job callback is not initialized.');
+        }
+
         // Validate cron expression
         if (!cron.validate(cronExpression)) {
             throw new Error(`Invalid cron expression: ${cronExpression}`);
         }
 
         // Save to DB
-        const record = this.repo.create({
+        const recordInput: CreateScheduleInput = {
             cronExpression,
             prompt,
             workspacePath,
             enabled: true,
-        });
+        };
+        if (finalChannelId) {
+            recordInput.channelId = finalChannelId;
+        }
+        const record = this.repo.create(recordInput);
 
         // Register with node-cron
-        this.registerCronTask(record, jobCallback);
+        this.registerCronTask(record, finalJobCallback);
 
         return record;
     }
@@ -105,6 +134,85 @@ export class ScheduleService {
     }
 
     /**
+     * Remove all scheduled tasks.
+     * Stops all active cron tasks in memory, empties the database table,
+     * and resets the autoincrement ID back to 0.
+     */
+    public resetSchedules(): void {
+        this.repo.reset();
+        this.stopAll();
+    }
+
+    /**
+     * Export all schedules as a JSON string
+     */
+    public backupSchedules(): string {
+        const list = this.listSchedules();
+        // Export only portable fields (exclude autoincrement ID and timestamps)
+        const portable = list.map(s => ({
+            cronExpression: s.cronExpression,
+            prompt: s.prompt,
+            workspacePath: s.workspacePath,
+            channelId: s.channelId,
+            enabled: s.enabled
+        }));
+        return JSON.stringify(portable, null, 2);
+    }
+
+    public restoreSchedules(jsonContent: string, jobCallback: JobCallback): number {
+        if (!jobCallback) {
+            throw new Error('Job callback is not initialized.');
+        }
+
+        let parsed: any;
+        try {
+            parsed = JSON.parse(jsonContent);
+        } catch (err) {
+            throw new Error('Invalid backup format: root must be an array of schedule objects.');
+        }
+
+        if (!Array.isArray(parsed)) {
+            throw new Error('Invalid backup format: root must be an array of schedule objects.');
+        }
+
+        // Validate items
+        const validated: Array<{ cronExpression: string; prompt: string; workspacePath: string; channelId?: string; enabled: boolean }> = [];
+        for (const item of parsed) {
+            if (!item || typeof item !== 'object') {
+                throw new Error('Invalid backup format: each schedule must contain cronExpression, prompt, and workspacePath.');
+            }
+            if (typeof item.cronExpression !== 'string' || typeof item.prompt !== 'string' || typeof item.workspacePath !== 'string') {
+                throw new Error('Invalid backup format: each schedule must contain cronExpression, prompt, and workspacePath.');
+            }
+            if (!cron.validate(item.cronExpression)) {
+                throw new Error(`Invalid cron expression in backup: "${item.cronExpression}"`);
+            }
+            validated.push({
+                cronExpression: item.cronExpression,
+                prompt: item.prompt,
+                workspacePath: item.workspacePath,
+                channelId: typeof item.channelId === 'string' ? item.channelId : undefined,
+                enabled: typeof item.enabled === 'boolean' ? item.enabled : true
+            });
+        }
+
+        // Write to DB first (atomic transaction)
+        const restoredRecords = this.repo.bulkRestore(validated);
+
+        // Stop memory crons now that DB write succeeded
+        this.stopAll();
+
+        // Resume crons in memory
+        for (const record of restoredRecords) {
+            if (record.enabled) {
+                this.registerCronTask(record, jobCallback);
+            }
+        }
+
+        return restoredRecords.length;
+    }
+
+    /**
      * Get a list of all schedules
      */
     public listSchedules(): ScheduleRecord[] {
@@ -115,9 +223,11 @@ export class ScheduleService {
      * Internal method to register a task with node-cron
      */
     private registerCronTask(schedule: ScheduleRecord, jobCallback: JobCallback): void {
+        logger.info(`[Schedule] Registering cron task ID ${schedule.id} with expression "${schedule.cronExpression}"`);
         const task = cron.schedule(
             schedule.cronExpression,
             () => {
+                logger.info(`[Schedule] Cron trigger fired for task ID ${schedule.id}`);
                 jobCallback(schedule);
             }
         );

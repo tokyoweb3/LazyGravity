@@ -34,6 +34,10 @@ import { WorkspaceBindingRepository } from '../database/workspaceBindingReposito
 import { ChannelPreferenceRepository } from '../database/channelPreferenceRepository';
 import { ChatSessionRepository } from '../database/chatSessionRepository';
 import { ArtifactThreadRepository } from '../database/artifactThreadRepository';
+import { ScheduleRepository, ScheduleRecord } from '../database/scheduleRepository';
+import { ScheduleService } from '../services/scheduleService';
+import cronParser from 'cron-parser';
+import { WorkspaceQueue } from './workspaceQueue';
 import { WorkspaceService } from '../services/workspaceService';
 import {
     WorkspaceCommandHandler,
@@ -48,7 +52,6 @@ import {
     CLEANUP_CANCEL_BTN,
 } from '../commands/cleanupCommandHandler';
 import { ChannelManager } from '../services/channelManager';
-import type { ScheduleService } from '../services/scheduleService';
 import { TitleGeneratorService } from '../services/titleGeneratorService';
 import { JoinCommandHandler } from '../commands/joinCommandHandler';
 import { isSessionSelectId } from '../ui/sessionPickerUi';
@@ -1330,6 +1333,9 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
     const workspaceBindingRepo = new WorkspaceBindingRepository(db);
     const chatSessionRepo = new ChatSessionRepository(db);
     const artifactThreadRepo = new ArtifactThreadRepository(db);
+    const scheduleRepo = new ScheduleRepository(db);
+    const scheduleService = new ScheduleService(scheduleRepo);
+    const workspaceQueue = new WorkspaceQueue();
     const artifactService = new ArtifactService();
     const workspaceService = new WorkspaceService(config.workspaceBaseDir);
     const channelManager = new ChannelManager();
@@ -1548,6 +1554,82 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             logger.warn('Failed to send startup dashboard embed:', error);
         }
 
+        // Restore scheduled tasks
+        const scheduleJobCallback = async (schedule: ScheduleRecord) => {
+            logger.info(`[Schedule] Trigger callback running for task ${schedule.id}. Workspace: ${schedule.workspacePath}, promptLength: ${schedule.prompt.length}`);
+            try {
+                let channelId = schedule.channelId;
+
+                const isWindows = process.platform === 'win32';
+                const bindings = workspaceBindingRepo.findAll().filter(b => {
+                    const absPath = workspaceService.getWorkspacePath(b.workspacePath);
+                    return isWindows
+                        ? absPath.toLowerCase() === schedule.workspacePath.toLowerCase()
+                        : absPath === schedule.workspacePath;
+                });
+
+                if (!channelId || !bindings.some(b => b.channelId === channelId)) {
+                    channelId = bindings[0]?.channelId;
+                }
+
+                if (!channelId) {
+                    logger.warn(`[Schedule] No channel bound to workspace ${schedule.workspacePath}. Skipping task ${schedule.id}.`);
+                    return;
+                }
+
+                const channel = await readyClient.channels.fetch(channelId).catch(() => null);
+                if (channel && channel.isTextBased() && 'send' in channel) {
+                    logger.info(`[Schedule] Sending trigger notification to channel ${channelId} for task ${schedule.id}`);
+                    const message = await channel.send({
+                        content: '⏰ **Scheduled Task Triggered**',
+                        allowedMentions: { parse: [] }
+                    });
+                    
+                    const projectLabel = bridge.pool.extractProjectName(schedule.workspacePath);
+                    workspaceQueue.incrementDepth(schedule.workspacePath);
+
+                    await workspaceQueue.enqueue(schedule.workspacePath, async () => {
+                        try {
+                            logger.info(`[Schedule] Dispatching prompt to promptDispatcher for task ${schedule.id}`);
+                            const preferredAccount = bridge.pool.getPreferredAccountForWorkspace(schedule.workspacePath) 
+                                || (config.antigravityAccounts?.[0]?.name ?? 'default');
+                            
+                            const cdp = await bridge.pool.getOrConnect(schedule.workspacePath, { name: preferredAccount });
+                            
+                            await promptDispatcher.send({
+                                message: message as any,
+                                prompt: schedule.prompt,
+                                cdp,
+                                inboundImages: [],
+                                options: {
+                                    chatSessionService,
+                                    chatSessionRepo,
+                                    channelManager,
+                                    titleGenerator,
+                                    userPrefRepo,
+                                    artifactService,
+                                    extractionMode: config.extractionMode,
+                                },
+                            });
+                        } finally {
+                            const remainingDepth = workspaceQueue.decrementDepth(schedule.workspacePath);
+                            if (remainingDepth > 0) {
+                                logger.info(
+                                    `[Queue:${projectLabel}] Task done, ${remainingDepth} remaining`,
+                                );
+                            }
+                        }
+                    });
+                } else {
+                    logger.warn(`[Schedule] Channel ${channelId} not found or not text-based for task ${schedule.id}.`);
+                }
+            } catch (error) {
+                logger.error(`[Schedule] Failed to execute task ${schedule.id}:`, error);
+            }
+        };
+
+        const restoredCount = scheduleService.restoreAll(scheduleJobCallback);
+        logger.info(`[Schedule] Restored ${restoredCount} scheduled tasks.`);
     });
 
     // [Discord Interactions API] Slash command interaction handler
@@ -1583,6 +1665,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         titleGenerator,
         antigravityAccounts: config.antigravityAccounts,
         heartbeatService,
+        scheduleService,
         handleSlashInteraction: async (
             interaction,
             handler,
@@ -1765,6 +1848,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         channelPrefRepo,
         antigravityAccounts: config.antigravityAccounts,
         heartbeatService,
+        workspaceQueue,
     }));
 
     await client.login(discordToken);
@@ -2057,6 +2141,18 @@ async function autoRenameChannel(
         chatSessionRepo.updateDisplayName(message.channelId, title);
     } catch (err) {
         logger.error('[AutoRename] Rename failed:', err);
+    }
+}
+
+/**
+ * Utility to parse a cron expression and format the next run time.
+ */
+function formatNextRunTime(cronExpression: string): string {
+    try {
+        const interval = cronParser.parse(cronExpression);
+        return interval.next().toDate().toLocaleString();
+    } catch (err) {
+        return 'Invalid Cron';
     }
 }
 
@@ -2748,8 +2844,8 @@ export async function handleSlashInteraction(
                 // Check permissions
                 const botUser = interaction.client.user;
                 const permissions = (targetChannel as any).permissionsFor?.(botUser);
-                if (!permissions || !permissions.has('SendMessages')) {
-                    await interaction.editReply({ content: '⚠️ Bot does not have permission to send messages in that channel.' });
+                if (!permissions || !permissions.has('SendMessages') || !permissions.has('EmbedLinks')) {
+                    await interaction.editReply({ content: '⚠️ Bot does not have permission to send messages and embed links in that channel.' });
                     break;
                 }
 
@@ -2801,6 +2897,195 @@ export async function handleSlashInteraction(
                     )
                     .setTimestamp();
                 await interaction.editReply({ embeds: [statusEmbed] });
+            }
+            break;
+        }
+
+        case 'schedule': {
+            if (!scheduleService) {
+                await interaction.editReply({ content: 'Schedule service not available.' });
+                break;
+            }
+
+            const subcommand = interaction.options.getSubcommand();
+            if (subcommand === 'list') {
+                const schedules = scheduleService.listSchedules();
+                if (schedules.length === 0) {
+                    await interaction.editReply({ content: 'No scheduled tasks found.' });
+                    break;
+                }
+                
+                let formatted = '';
+                let truncatedCount = 0;
+                for (const s of schedules) {
+                    const nextRunStr = formatNextRunTime(s.cronExpression);
+                    const line = `**ID:** ${s.id} | **Cron:** \`${s.cronExpression}\` | **Next:** ${nextRunStr} | **Prompt:** ${s.prompt}\n`;
+                    if (formatted.length + line.length > 3900) {
+                        truncatedCount = schedules.length - schedules.indexOf(s);
+                        break;
+                    }
+                    formatted += line;
+                }
+                if (truncatedCount > 0) {
+                    formatted += `\n*...and ${truncatedCount} more task(s) (truncated due to Discord size limit).*`;
+                }
+
+                const embed = new EmbedBuilder()
+                    .setTitle('🕒 Scheduled Tasks')
+                    .setDescription(formatted)
+                    .setColor(0x00CC88);
+                await interaction.editReply({ embeds: [embed] });
+                break;
+            }
+
+            if (subcommand === 'add') {
+                const cronExpr = interaction.options.getString('cron', true);
+                const promptText = interaction.options.getString('prompt', true);
+                const workspacePath = wsHandler.getWorkspaceForChannel(interaction.channelId);
+
+                if (!workspacePath) {
+                    await interaction.editReply({ content: '⚠️ This channel is not bound to a workspace. Please bind it first.' });
+                    break;
+                }
+
+                try {
+                    const jobCb = scheduleService.getJobCallback();
+                    if (!jobCb) {
+                        await interaction.editReply({ content: '⚠️ Schedule service is still initializing. Please try again in a few seconds.' });
+                        break;
+                    }
+                    const record = scheduleService.addSchedule(cronExpr, promptText, workspacePath, interaction.channelId, jobCb);
+                    
+                    const nextRun = formatNextRunTime(cronExpr);
+                    const nextRunStr = nextRun !== 'Invalid Cron' ? ` (Next run: ${nextRun})` : '';
+
+                    await interaction.editReply({ content: `✅ Scheduled task added! (ID: ${record.id})${nextRunStr}` });
+                } catch (error: any) {
+                    await interaction.editReply({ content: `❌ Failed to add schedule: ${error.message}` });
+                }
+                break;
+            }
+
+            if (subcommand === 'remove') {
+                const id = interaction.options.getInteger('id', true);
+                const success = scheduleService.removeSchedule(id);
+                if (success) {
+                    await interaction.editReply({ content: `✅ Removed scheduled task ID: ${id}` });
+                } else {
+                    await interaction.editReply({ content: `⚠️ Scheduled task ID ${id} not found.` });
+                }
+                break;
+            }
+
+            if (subcommand === 'clear') {
+                const initialSchedules = scheduleService.listSchedules();
+                const count = initialSchedules.length;
+                if (count === 0) {
+                    await interaction.editReply({ content: '📅 No scheduled tasks found to clear.' });
+                    break;
+                }
+
+                const initialIdsJson = JSON.stringify(initialSchedules.map(s => s.id).sort((a, b) => a - b));
+
+                const confirmBtnId = `schedule_clear_confirm_${interaction.id}`;
+                const cancelBtnId = `schedule_clear_cancel_${interaction.id}`;
+
+                const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(confirmBtnId)
+                        .setLabel(`${t('Confirm Clear')} (${count})`)
+                        .setStyle(ButtonStyle.Danger),
+                    new ButtonBuilder()
+                        .setCustomId(cancelBtnId)
+                        .setLabel(t('Cancel'))
+                        .setStyle(ButtonStyle.Secondary)
+                );
+
+                const message = await interaction.editReply({
+                    content: `⚠️ **Warning**: This will delete all **${count}** scheduled task(s) and reset the ID counter to 0. Are you sure you want to proceed?`,
+                    components: [row]
+                });
+
+                const collector = message.createMessageComponentCollector({
+                    filter: (i: any) => i.user.id === interaction.user.id && (i.customId === confirmBtnId || i.customId === cancelBtnId),
+                    time: 30000,
+                    max: 1
+                });
+
+                collector.on('collect', async (i: any) => {
+                    if (i.customId === confirmBtnId) {
+                        const currentSchedules = scheduleService.listSchedules();
+                        const currentIdsJson = JSON.stringify(currentSchedules.map(s => s.id).sort((a, b) => a - b));
+                        if (initialIdsJson !== currentIdsJson) {
+                            await i.update({
+                                content: '⚠️ **Action aborted**: The scheduled tasks list changed while waiting for confirmation. No schedules were cleared.',
+                                components: []
+                            });
+                            return;
+                        }
+                        scheduleService.resetSchedules();
+                        await i.update({
+                            content: `✅ Successfully removed all **${count}** scheduled task(s) and reset the task ID counter to 0.`,
+                            components: []
+                        });
+                    } else {
+                        await i.update({
+                            content: '❌ Action cancelled. Scheduled tasks were not cleared.',
+                            components: []
+                        });
+                    }
+                });
+
+                collector.on('end', async (collected: any) => {
+                    if (collected.size === 0) {
+                        await interaction.editReply({
+                            content: '⚠️ Action timed out. Scheduled tasks were not cleared.',
+                            components: []
+                        }).catch(() => {});
+                    }
+                });
+
+                break;
+            }
+
+            if (subcommand === 'backup') {
+                const json = scheduleService.backupSchedules();
+                const buffer = Buffer.from(json, 'utf-8');
+                await interaction.editReply({
+                    content: '📋 **LazyGravity Schedules Backup**',
+                    files: [{
+                        attachment: buffer,
+                        name: 'schedules_backup.json'
+                    }]
+                });
+                break;
+            }
+
+            if (subcommand === 'restore') {
+                const attachment = interaction.options.getAttachment('file', true);
+                if (!attachment.name.endsWith('.json')) {
+                    await interaction.editReply({ content: '❌ Attachment must be a `.json` file.' });
+                    break;
+                }
+
+                try {
+                    // Download file content using global fetch (available in Node 18+)
+                    const response = await fetch(attachment.url);
+                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                    const jsonText = await response.text();
+
+                    const jobCb = scheduleService.getJobCallback();
+                    if (!jobCb) {
+                        await interaction.editReply({ content: '⚠️ Schedule service is still initializing. Please try again in a few seconds.' });
+                        break;
+                    }
+                    const restoredCount = scheduleService.restoreSchedules(jsonText, jobCb);
+
+                    await interaction.editReply({ content: `✅ Successfully restored ${restoredCount} scheduled tasks from backup!` });
+                } catch (error: any) {
+                    await interaction.editReply({ content: `❌ Failed to restore schedules: ${error.message}` });
+                }
+                break;
             }
             break;
         }

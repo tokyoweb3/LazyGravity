@@ -33,6 +33,8 @@ describe('ScheduleService', () => {
             findEnabled: jest.fn(),
             delete: jest.fn(),
             update: jest.fn(),
+            reset: jest.fn(),
+            bulkRestore: jest.fn(),
         } as unknown as jest.Mocked<ScheduleRepository>;
 
         mockCronSchedule = cron.schedule as jest.Mock;
@@ -132,6 +134,12 @@ describe('ScheduleService', () => {
             // Registered with node-cron
             expect(mockCronSchedule).toHaveBeenCalledTimes(1);
             expect(result).toEqual(created);
+
+            // Verify that the registered callback triggers the jobCallback
+            const registeredCallback = mockCronSchedule.mock.calls[0][1];
+            expect(typeof registeredCallback).toBe('function');
+            registeredCallback();
+            expect(jobCallback).toHaveBeenCalledWith(created);
         });
 
         it('throws an error for an invalid cron expression', () => {
@@ -220,6 +228,240 @@ describe('ScheduleService', () => {
         });
     });
 
+    describe('resetSchedules - remove all schedules and reset DB counter', () => {
+        it('stops all cron tasks and calls repo.reset', () => {
+            mockCronValidate.mockReturnValue(true);
+            const mockTask1 = { stop: jest.fn(), start: jest.fn() };
+            mockCronSchedule.mockReturnValue(mockTask1);
+            mockRepo.create.mockReturnValue({
+                id: 1, cronExpression: '0 9 * * *', prompt: 'テスト1',
+                workspacePath: '/p1', enabled: true,
+            });
+
+            const jobCallback = jest.fn();
+            scheduleService.addSchedule('0 9 * * *', 'テスト1', '/p1', jobCallback);
+
+            scheduleService.resetSchedules();
+
+            expect(mockTask1.stop).toHaveBeenCalled();
+            expect(mockRepo.reset).toHaveBeenCalledTimes(1);
+        });
+
+        it('preserves the active task running state if database reset throws an error', () => {
+            mockCronValidate.mockReturnValue(true);
+            const mockTask1 = { stop: jest.fn(), start: jest.fn() };
+            mockCronSchedule.mockReturnValue(mockTask1);
+            mockRepo.create.mockReturnValue({
+                id: 1, cronExpression: '0 9 * * *', prompt: 'テスト1',
+                workspacePath: '/p1', enabled: true,
+            });
+
+            const jobCallback = jest.fn();
+            scheduleService.addSchedule('0 9 * * *', 'テスト1', '/p1', jobCallback);
+
+            mockRepo.reset.mockImplementation(() => {
+                throw new Error('Database reset failed');
+            });
+
+            expect(() => {
+                scheduleService.resetSchedules();
+            }).toThrow('Database reset failed');
+
+            expect(mockTask1.stop).not.toHaveBeenCalled();
+        });
+    });
+
+    describe('backupSchedules - export schedules', () => {
+        it('serializes all current schedules to JSON', () => {
+            const schedules: ScheduleRecord[] = [
+                { id: 1, cronExpression: '0 9 * * *', prompt: 'ジョブ1', workspacePath: '/p1', enabled: true },
+            ];
+            mockRepo.findAll.mockReturnValue(schedules);
+
+            const json = scheduleService.backupSchedules();
+            const parsed = JSON.parse(json);
+
+            expect(parsed).toEqual([{
+                cronExpression: '0 9 * * *',
+                prompt: 'ジョブ1',
+                workspacePath: '/p1',
+                enabled: true
+            }]);
+            expect(mockRepo.findAll).toHaveBeenCalledTimes(1);
+        });
+    });
+
+    describe('restoreSchedules - import schedules', () => {
+        it('parses valid JSON, stops active tasks, calls bulkRestore, and registers enabled crons', () => {
+            mockCronValidate.mockReturnValue(true);
+            const mockTask = { stop: jest.fn(), start: jest.fn() };
+            mockCronSchedule.mockReturnValue(mockTask);
+
+            const json = JSON.stringify([{
+                cronExpression: '0 9 * * *',
+                prompt: 'ジョブ1',
+                workspacePath: '/p1',
+                enabled: true
+            }]);
+
+            const restored: ScheduleRecord[] = [
+                { id: 1, cronExpression: '0 9 * * *', prompt: 'ジョブ1', workspacePath: '/p1', enabled: true }
+            ];
+            mockRepo.bulkRestore.mockReturnValue(restored);
+
+            const jobCallback = jest.fn();
+            const count = scheduleService.restoreSchedules(json, jobCallback);
+
+            expect(count).toBe(1);
+            expect(mockRepo.bulkRestore).toHaveBeenCalledWith([{
+                cronExpression: '0 9 * * *',
+                prompt: 'ジョブ1',
+                workspacePath: '/p1',
+                enabled: true
+            }]);
+            expect(mockCronSchedule).toHaveBeenCalledTimes(1);
+        });
+
+        it('throws an error for invalid JSON format', () => {
+            const jobCallback = jest.fn();
+            expect(() => {
+                scheduleService.restoreSchedules('{"invalid": "format"}', jobCallback);
+            }).toThrow('Invalid backup format: root must be an array of schedule objects.');
+        });
+
+        it('throws an error if an item in the backup JSON is missing required fields', () => {
+            const jobCallback = jest.fn();
+            const json = JSON.stringify([{
+                cronExpression: '0 9 * * *',
+                prompt: 'ジョブ1'
+                // missing workspacePath
+            }]);
+            expect(() => {
+                scheduleService.restoreSchedules(json, jobCallback);
+            }).toThrow('Invalid backup format: each schedule must contain cronExpression, prompt, and workspacePath.');
+        });
+
+        it('throws an error if an item in the backup JSON contains an invalid cron expression', () => {
+            mockCronValidate.mockReturnValue(false);
+            const jobCallback = jest.fn();
+            const json = JSON.stringify([{
+                cronExpression: 'invalid-cron',
+                prompt: 'ジョブ1',
+                workspacePath: '/p1'
+            }]);
+            expect(() => {
+                scheduleService.restoreSchedules(json, jobCallback);
+            }).toThrow('Invalid cron expression in backup: "invalid-cron"');
+        });
+
+        it('does not register disabled schedules with node-cron', () => {
+            mockCronValidate.mockReturnValue(true);
+            const mockTask = { stop: jest.fn(), start: jest.fn() };
+            mockCronSchedule.mockReturnValue(mockTask);
+
+            const json = JSON.stringify([
+                {
+                    cronExpression: '0 9 * * *',
+                    prompt: 'ジョブ1',
+                    workspacePath: '/p1',
+                    enabled: false
+                }
+            ]);
+
+            const restored: ScheduleRecord[] = [
+                { id: 1, cronExpression: '0 9 * * *', prompt: 'ジョブ1', workspacePath: '/p1', enabled: false }
+            ];
+            mockRepo.bulkRestore.mockReturnValue(restored);
+
+            const jobCallback = jest.fn();
+            const count = scheduleService.restoreSchedules(json, jobCallback);
+
+            expect(count).toBe(1);
+            expect(mockCronSchedule).not.toHaveBeenCalled();
+        });
+
+        it('throws an error if an item in the backup JSON is a primitive string', () => {
+            const jobCallback = jest.fn();
+            const json = JSON.stringify(["invalid-primitive-string"]);
+            expect(() => {
+                scheduleService.restoreSchedules(json, jobCallback);
+            }).toThrow('Invalid backup format: each schedule must contain cronExpression, prompt, and workspacePath.');
+        });
+
+        it('preserves the active task running state if database bulkRestore throws an error', () => {
+            mockCronValidate.mockReturnValue(true);
+            const mockTask1 = { stop: jest.fn(), start: jest.fn() };
+            mockCronSchedule.mockReturnValue(mockTask1);
+            mockRepo.create.mockReturnValue({
+                id: 1, cronExpression: '0 9 * * *', prompt: 'テスト1',
+                workspacePath: '/p1', enabled: true,
+            });
+
+            const jobCallback = jest.fn();
+            scheduleService.addSchedule('0 9 * * *', 'テスト1', '/p1', jobCallback);
+
+            mockRepo.bulkRestore.mockImplementation(() => {
+                throw new Error('Database bulkRestore failed');
+            });
+
+            const json = JSON.stringify([{
+                cronExpression: '0 10 * * *',
+                prompt: 'テスト2',
+                workspacePath: '/p2',
+                enabled: true
+            }]);
+
+            expect(() => {
+                scheduleService.restoreSchedules(json, jobCallback);
+            }).toThrow('Database bulkRestore failed');
+
+            expect(mockTask1.stop).not.toHaveBeenCalled();
+        });
+    });
+        it('supports channelId in addSchedule, backupSchedules, and restoreSchedules', () => {
+            mockCronValidate.mockReturnValue(true);
+            const jobCallback = jest.fn();
+
+            mockRepo.create.mockReturnValue({
+                id: 1, cronExpression: '0 9 * * *', prompt: 'テスト1',
+                workspacePath: '/p1', channelId: '1234567890', enabled: true,
+            });
+
+            // 1. Verify addSchedule with channelId
+            const added = scheduleService.addSchedule('0 9 * * *', 'テスト1', '/p1', '1234567890', jobCallback);
+            expect(added.channelId).toBe('1234567890');
+            expect(mockRepo.create).toHaveBeenCalledWith({
+                cronExpression: '0 9 * * *',
+                prompt: 'テスト1',
+                workspacePath: '/p1',
+                channelId: '1234567890',
+                enabled: true,
+            });
+
+            // 2. Verify backupSchedules includes channelId
+            mockRepo.findAll.mockReturnValue([
+                { id: 1, cronExpression: '0 9 * * *', prompt: 'テスト1', workspacePath: '/p1', channelId: '1234567890', enabled: true }
+            ]);
+            const backup = scheduleService.backupSchedules();
+            const parsed = JSON.parse(backup);
+            expect(parsed[0].channelId).toBe('1234567890');
+
+            // 3. Verify restoreSchedules restores channelId
+            mockRepo.bulkRestore.mockReturnValue([
+                { id: 1, cronExpression: '0 9 * * *', prompt: 'テスト1', workspacePath: '/p1', channelId: '1234567890', enabled: true }
+            ]);
+            const restoredCount = scheduleService.restoreSchedules(backup, jobCallback);
+            expect(restoredCount).toBe(1);
+            expect(mockRepo.bulkRestore).toHaveBeenCalledWith([
+                {
+                    cronExpression: '0 9 * * *',
+                    prompt: 'テスト1',
+                    workspacePath: '/p1',
+                    channelId: '1234567890',
+                    enabled: true,
+                }
+            ]);
+        });
     describe('listSchedules - retrieve schedule list', () => {
         it('retrieves all schedules from DB', () => {
             const schedules: ScheduleRecord[] = [
