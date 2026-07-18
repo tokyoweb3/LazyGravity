@@ -2755,7 +2755,7 @@ export async function handleSlashInteraction(
 
                 const intervalMs = parseInterval(intervalStr);
                 if (intervalMs === null || intervalMs <= 0) {
-                    await interaction.editReply({ content: '⚠️ Invalid interval format. Use a value with a unit, e.g. "1h", "6h", "30m" (bare numbers are not allowed).' });
+                    await interaction.editReply({ content: '⚠️ Invalid interval format. Use a value with a unit, e.g. "1d", "1h", "30m" (bare numbers are not allowed).' });
                     break;
                 }
 

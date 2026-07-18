@@ -11,6 +11,10 @@ jest.mock('../../src/handlers/questionSkipAction', () => ({
     createQuestionSkipAction: jest.fn(),
 }));
 
+jest.mock('child_process', () => ({
+    execFile: jest.fn(),
+}));
+
 describe('interactionCreateHandler - question select and skip', () => {
     function createBaseDeps(overrides: Record<string, any> = {}) {
         return {

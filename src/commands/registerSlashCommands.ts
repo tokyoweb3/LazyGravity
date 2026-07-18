@@ -247,7 +247,7 @@ const heartbeatCommand = new SlashCommandBuilder()
             .addStringOption((option) =>
                 option
                     .setName('interval')
-                    .setDescription(t('Interval (e.g., 1h, 6h, 30m - unit required)'))
+                    .setDescription(t('Interval (e.g., 1d, 1h, 30m - unit required)'))
                     .setRequired(false)
             )
             .addChannelOption((option) =>
