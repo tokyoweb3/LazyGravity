@@ -294,8 +294,19 @@ describe('ScheduleService', () => {
     describe('restoreSchedules - import schedules', () => {
         it('parses valid JSON, stops active tasks, calls bulkRestore, and registers enabled crons', () => {
             mockCronValidate.mockReturnValue(true);
-            const mockTask = { stop: jest.fn(), start: jest.fn() };
-            mockCronSchedule.mockReturnValue(mockTask);
+            const mockExistingTask = { stop: jest.fn(), start: jest.fn() };
+            const mockNewTask = { stop: jest.fn(), start: jest.fn() };
+            mockCronSchedule
+                .mockReturnValueOnce(mockExistingTask)
+                .mockReturnValueOnce(mockNewTask);
+
+            const jobCallback = jest.fn();
+            mockRepo.create.mockReturnValue({
+                id: 1, cronExpression: '0 8 * * *', prompt: 'テスト1', workspacePath: '/p1', enabled: true
+            });
+
+            // Register an active schedule/task first
+            scheduleService.addSchedule('0 8 * * *', 'テスト1', '/p1', jobCallback);
 
             const json = JSON.stringify([{
                 cronExpression: '0 9 * * *',
@@ -305,21 +316,21 @@ describe('ScheduleService', () => {
             }]);
 
             const restored: ScheduleRecord[] = [
-                { id: 1, cronExpression: '0 9 * * *', prompt: 'ジョブ1', workspacePath: '/p1', enabled: true }
+                { id: 2, cronExpression: '0 9 * * *', prompt: 'ジョブ1', workspacePath: '/p1', enabled: true }
             ];
             mockRepo.bulkRestore.mockReturnValue(restored);
 
-            const jobCallback = jest.fn();
             const count = scheduleService.restoreSchedules(json, jobCallback);
 
             expect(count).toBe(1);
+            expect(mockExistingTask.stop).toHaveBeenCalled();
             expect(mockRepo.bulkRestore).toHaveBeenCalledWith([{
                 cronExpression: '0 9 * * *',
                 prompt: 'ジョブ1',
                 workspacePath: '/p1',
                 enabled: true
             }]);
-            expect(mockCronSchedule).toHaveBeenCalledTimes(1);
+            expect(mockCronSchedule).toHaveBeenCalledTimes(2);
         });
 
         it('throws an error for invalid JSON format', () => {
@@ -420,6 +431,9 @@ describe('ScheduleService', () => {
     });
         it('supports channelId in addSchedule, backupSchedules, and restoreSchedules', () => {
             mockCronValidate.mockReturnValue(true);
+            const mockTask = { stop: jest.fn(), start: jest.fn() };
+            mockCronSchedule.mockReturnValue(mockTask);
+
             const jobCallback = jest.fn();
 
             mockRepo.create.mockReturnValue({

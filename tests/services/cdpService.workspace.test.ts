@@ -294,4 +294,34 @@ describe('CdpService - Cross-Platform Workspace Launching', () => {
             expect(service.getCurrentWorkspaceName()).toBe('trailing-slash-proj');
         });
     });
+
+    describe('Connection Reuse / Reconnect Check', () => {
+        it('should reuse the active connection when requested workspace matches the current workspace', async () => {
+            jest.spyOn(service as any, 'verifyCurrentWorkspace').mockResolvedValue(true);
+            (service as any).isConnectedFlag = true;
+            (service as any).currentWorkspaceName = 'MyProject';
+            (service as any).currentWorkspacePath = '/Users/test/Documents/MyProject';
+
+            const workspacePath = '/Users/test/Documents/MyProject';
+            const result = await service.discoverAndConnectForWorkspace(workspacePath);
+
+            expect(result).toBe(true);
+            expect(mockGetJson).not.toHaveBeenCalled();
+            expect(mockRunCommand).not.toHaveBeenCalled();
+        });
+
+        it('should correctly extract workspace name from title with dash separator in discoverTarget', async () => {
+            mockGetJson.mockResolvedValue([{
+                id: 'page-id',
+                type: 'page',
+                title: 'MyProject — Antigravity',
+                webSocketDebuggerUrl: 'ws://debug-url',
+                url: 'file:///workbench'
+            }]);
+
+            const url = await (service as any).discoverTarget();
+            expect(url).toBe('ws://debug-url');
+            expect(service.getCurrentWorkspaceName()).toBe('MyProject');
+        });
+    });
 });

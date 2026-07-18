@@ -74,7 +74,7 @@ export interface ParsedTelegramCommand {
  */
 export function parseTelegramCommand(text: string): ParsedTelegramCommand | null {
     const trimmed = text.trim();
-    const match = trimmed.match(/^\/(\w+)(?:@\S+)?(?:\s+(.*))?$/);
+    const match = trimmed.match(/^\/(\w+)(?:@\S+)?(?:\s+([\s\S]*))?$/);
     if (!match) return null;
 
     const command = match[1].toLowerCase();

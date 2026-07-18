@@ -175,6 +175,10 @@ export class ScheduleService {
             throw new Error('Invalid backup format: root must be an array of schedule objects.');
         }
 
+        if (parsed.length > 100) {
+            throw new Error('Backup exceeds maximum limit of 100 schedules.');
+        }
+
         // Validate items
         const validated: Array<{ cronExpression: string; prompt: string; workspacePath: string; channelId?: string; enabled: boolean }> = [];
         for (const item of parsed) {
@@ -183,6 +187,18 @@ export class ScheduleService {
             }
             if (typeof item.cronExpression !== 'string' || typeof item.prompt !== 'string' || typeof item.workspacePath !== 'string') {
                 throw new Error('Invalid backup format: each schedule must contain cronExpression, prompt, and workspacePath.');
+            }
+            if (item.cronExpression.length > 100) {
+                throw new Error('cronExpression exceeds maximum length of 100 characters.');
+            }
+            if (item.prompt.length > 10000) {
+                throw new Error('prompt exceeds maximum length of 10000 characters.');
+            }
+            if (item.workspacePath.length > 1000) {
+                throw new Error('workspacePath exceeds maximum length of 1000 characters.');
+            }
+            if (item.channelId !== undefined && (typeof item.channelId !== 'string' || item.channelId.length > 100)) {
+                throw new Error('channelId must be a string and not exceed maximum length of 100 characters.');
             }
             if (!cron.validate(item.cronExpression)) {
                 throw new Error(`Invalid cron expression in backup: "${item.cronExpression}"`);

@@ -2317,6 +2317,8 @@ export async function handleSlashInteraction(
                         '`/account` — Show and switch Antigravity account',
                         '`/logs [lines] [level]` — View recent bot logs',
                         '`/cleanup [days]` — Clean up unused channels/categories',
+                        '`/heartbeat [on|off|status]` — Configure periodic bot heartbeat notifications',
+                        '`/schedule [add|list|remove|clear|backup|restore]` — Manage scheduled tasks',
                         '`/help` — Show this help',
                     ].join('\n')
                 },
@@ -3068,10 +3070,26 @@ export async function handleSlashInteraction(
                     break;
                 }
 
+                if (attachment.size > 1024 * 1024) {
+                    await interaction.editReply({ content: '❌ Attachment exceeds maximum size limit of 1MB.' });
+                    break;
+                }
+
                 try {
+                    const controller = new AbortController();
+                    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
                     // Download file content using global fetch (available in Node 18+)
-                    const response = await fetch(attachment.url);
+                    const response = await fetch(attachment.url, { signal: controller.signal });
+                    clearTimeout(timeoutId);
+
                     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+                    const contentLength = response.headers.get('content-length');
+                    if (contentLength && parseInt(contentLength, 10) > 1024 * 1024) {
+                        throw new Error('Response body exceeds maximum size limit of 1MB.');
+                    }
+
                     const jsonText = await response.text();
 
                     const jobCb = scheduleService.getJobCallback();

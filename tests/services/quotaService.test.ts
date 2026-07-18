@@ -117,4 +117,47 @@ describe('QuotaService', () => {
         expect(mockRequest.mock.calls[0][0].port).toBe(4444);
         expect(mockRequest.mock.calls[1][0].port).toBe(4444);
     });
+
+    it('correctly matches IPv4, IPv6, and wildcard addresses from lsof output', async () => {
+        mockExec.mockImplementation((cmd: string, cb: (err: Error | null, stdout: string, stderr: string) => void) => {
+            if (cmd.startsWith('pgrep -fl language_server')) {
+                cb(null, '123 language_server --csrf_token abc-123\n', '');
+                return {} as any;
+            }
+            if (cmd.startsWith('lsof -nP -a -iTCP -sTCP:LISTEN -p 123')) {
+                const sampleOutput = [
+                    'node    123 user   23u  IPv6 0x1234      0t0  TCP [::1]:9222 (LISTEN)',
+                    'node    123 user   24u  IPv4 0x1235      0t0  TCP 127.0.0.1:9223 (LISTEN)',
+                    'node    123 user   25u  IPv4 0x1236      0t0  TCP *:9224 (LISTEN)',
+                ].join('\n');
+                cb(null, sampleOutput, '');
+                return {} as any;
+            }
+            cb(new Error(`unexpected command: ${cmd}`), '', '');
+            return {} as any;
+        });
+
+        mockRequest.mockImplementation((options: any, cb: (res: any) => void) => {
+            const req = new EventEmitter() as any;
+            req.write = jest.fn();
+            req.destroy = jest.fn();
+            req.end = jest.fn(() => {
+                const res = new EventEmitter() as any;
+                res.statusCode = 500; // Fail so it tries all discovered ports
+                cb(res);
+                res.emit('data', 'Server Error');
+                res.emit('end');
+            });
+            return req;
+        });
+
+        const service = new QuotaService();
+        await service.fetchQuota();
+
+        const portCalls = mockRequest.mock.calls.map((call) => call[0].port);
+        expect(portCalls).toContain(9222);
+        expect(portCalls).toContain(9223);
+        expect(portCalls).toContain(9224);
+        expect(portCalls).toHaveLength(3);
+    });
 });

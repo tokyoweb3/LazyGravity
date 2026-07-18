@@ -301,6 +301,9 @@ describe('Bot Startup', () => {
             expect(editReplySpy).toHaveBeenCalledWith(expect.objectContaining({
                 content: expect.stringContaining('Heartbeat enabled'),
             }));
+
+            const mockServiceInstance = (HeartbeatService as jest.Mock).mock.results[0].value;
+            expect(mockServiceInstance.updateConfig).toHaveBeenCalledWith(true, 1800000, 'heartbeat-channel-id');
         });
 
         it('fails heartbeat on if bot lacks send permissions', async () => {

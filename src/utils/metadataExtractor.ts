@@ -11,9 +11,9 @@ export function extractMetadataFromFooter(footerText: string): TaskMetadata {
         result.taskId = taskIdMatch[1];
     }
 
-    const dirMatch = footerText.match(/Dir:\s*([^\s|]+)/i);
+    const dirMatch = footerText.match(/Dir:\s*([^|]+)/i);
     if (dirMatch && dirMatch[1]) {
-        result.directory = dirMatch[1];
+        result.directory = dirMatch[1].trim();
     }
 
     return result;

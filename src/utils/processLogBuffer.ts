@@ -21,7 +21,7 @@ function parseBlocks(raw: string): string[] {
         .map((chunk) => collapseWhitespace(chunk))
         .filter((chunk) => chunk.length > 0);
 
-    if (blocks.length > 0) return blocks;
+    if (blocks.length > 1) return blocks;
 
     return normalized
         .split('\n')

@@ -270,7 +270,7 @@ export class CdpService extends EventEmitter {
             this.targetId = typeof target.id === 'string' ? target.id : null;
             // Extract workspace name from title (e.g., "ProjectName — Antigravity")
             if (target.title && !this.currentWorkspaceName) {
-                const titleParts = target.title.split(/\\s[—–-]\\s/);
+                const titleParts = target.title.split(/\s[—–-]\s/);
                 if (titleParts.length > 0) {
                     this.currentWorkspaceName = titleParts[0].trim();
                 }
