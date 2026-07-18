@@ -63,6 +63,11 @@ export function buildAutoAcceptPayload(enabled: boolean): MessagePayload {
     };
 }
 
+/**
+ * Sends or updates the auto-accept configuration UI.
+ * @param target The target response handler.
+ * @param autoAcceptService AutoAcceptService managing current configuration state.
+ */
 export async function sendAutoAcceptUI(
     target: { editReply: (opts: any) => Promise<any> },
     autoAcceptService: AutoAcceptService,

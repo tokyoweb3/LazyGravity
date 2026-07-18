@@ -1,12 +1,23 @@
 /** Default CDP port list scanned for Antigravity connections. */
 export const DEFAULT_CDP_PORTS = [9222, 9223, 9333, 9444, 9555, 9666] as const;
 
+/**
+ * Representation of account metadata containing connection settings.
+ */
 export interface AntigravityAccountConfigLike {
+    /** Account name. */
     name: string;
+    /** Debugging port. */
     cdpPort: number;
+    /** User data directory path. */
     userDataDir?: string;
 }
 
+/**
+ * Helper to parse a raw string port value into integer.
+ * @param raw Raw port string.
+ * @returns Parsed port integer, or null if invalid.
+ */
 function parsePort(raw: string | undefined): number | null {
     const port = Number(raw);
     if (!Number.isInteger(port)) return null;
@@ -14,6 +25,11 @@ function parsePort(raw: string | undefined): number | null {
     return port;
 }
 
+/**
+ * Normalizes accounts configurations list and fills default parameters if empty.
+ * @param accounts Candidate accounts.
+ * @returns Normalized list of accounts.
+ */
 export function normalizeAntigravityAccounts(
     accounts: readonly AntigravityAccountConfigLike[] | undefined,
 ): AntigravityAccountConfigLike[] {
@@ -44,6 +60,12 @@ export function normalizeAntigravityAccounts(
         : [{ name: 'default', cdpPort: DEFAULT_CDP_PORTS[0] }];
 }
 
+/**
+ * Parses raw configuration environment string into accounts arrays.
+ * Format: name:port[@userDataDir],...
+ * @param rawValue Raw environment string value.
+ * @returns Array of parsed account configurations.
+ */
 export function parseAntigravityAccounts(
     rawValue: string | undefined,
 ): AntigravityAccountConfigLike[] {
@@ -77,6 +99,11 @@ export function parseAntigravityAccounts(
     return normalizeAntigravityAccounts(parsed);
 }
 
+/**
+ * Serializes accounts list back into formatted environment string format.
+ * @param accounts Normalized accounts list.
+ * @returns Serialized format string.
+ */
 export function serializeAntigravityAccounts(
     accounts: readonly AntigravityAccountConfigLike[] | undefined,
 ): string {
@@ -92,6 +119,11 @@ export function serializeAntigravityAccounts(
         .join(',');
 }
 
+/**
+ * Extracts distinct list of ports from raw accounts value string.
+ * @param rawValue Raw value string.
+ * @returns Array of port integers.
+ */
 export function getConfiguredCdpPorts(rawValue?: string): number[] {
     if (!rawValue || rawValue.trim().length === 0) {
         return [...DEFAULT_CDP_PORTS];
@@ -107,6 +139,11 @@ export function getConfiguredCdpPorts(rawValue?: string): number[] {
     return uniquePorts.size > 0 ? [...uniquePorts] : [...DEFAULT_CDP_PORTS];
 }
 
+/**
+ * Constructs a name-to-port dictionary mapping object.
+ * @param rawValue Raw value string.
+ * @returns Name-to-port dictionary mappings.
+ */
 export function getAccountPortMap(rawValue?: string): Record<string, number> {
     return Object.fromEntries(
         parseAntigravityAccounts(rawValue).map((account) => [account.name, account.cdpPort]),

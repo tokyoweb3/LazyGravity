@@ -18,6 +18,8 @@ const C = {
 
 /**
  * Check whether a TCP port is available (not in use) by attempting to listen on it.
+ * @param port Target port number.
+ * @returns Whether the port is available.
  */
 function isPortAvailable(port: number): Promise<boolean> {
     return new Promise((resolve) => {
@@ -30,6 +32,10 @@ function isPortAvailable(port: number): Promise<boolean> {
     });
 }
 
+/**
+ * Iterates over standard candidate ports to find the first unused TCP port.
+ * @returns Available port number, or null if none are available.
+ */
 async function findAvailablePort(): Promise<number | null> {
     for (const port of CDP_PORTS) {
         if (await isPortAvailable(port)) {
@@ -39,6 +45,11 @@ async function findAvailablePort(): Promise<number | null> {
     return null;
 }
 
+/**
+ * Spawns Antigravity with debugging port enabled on macOS.
+ * @param port Debugging target port.
+ * @returns Promise resolving on spawn completion.
+ */
 function openMacOS(port: number): Promise<void> {
     return new Promise((resolve, reject) => {
         execFile('open', ['-a', APP_NAME, '--args', `--remote-debugging-port=${port}`], (err) => {
@@ -51,6 +62,11 @@ function openMacOS(port: number): Promise<void> {
     });
 }
 
+/**
+ * Spawns Antigravity with debugging port enabled on Windows.
+ * @param port Debugging target port.
+ * @returns Promise resolving on spawn completion.
+ */
 function openWindows(port: number): Promise<void> {
     return new Promise((resolve, reject) => {
         execFile(APP_NAME, [`--remote-debugging-port=${port}`], { shell: true }, (err) => {
@@ -63,6 +79,11 @@ function openWindows(port: number): Promise<void> {
     });
 }
 
+/**
+ * Spawns Antigravity with debugging port enabled on Linux.
+ * @param port Debugging target port.
+ * @returns Promise resolving on spawn completion.
+ */
 function openLinux(port: number): Promise<void> {
     return new Promise((resolve, reject) => {
         try {
@@ -85,6 +106,10 @@ function openLinux(port: number): Promise<void> {
 
 /**
  * Poll CDP endpoint until it responds or timeout is reached.
+ * @param port Debugging port to poll.
+ * @param timeoutMs Maximum duration to poll.
+ * @param intervalMs Time between checks.
+ * @returns Whether the port responded before timeout.
  */
 function waitForCdp(port: number, timeoutMs: number = 15000, intervalMs: number = 1000): Promise<boolean> {
     const start = Date.now();
@@ -123,6 +148,9 @@ function waitForCdp(port: number, timeoutMs: number = 15000, intervalMs: number 
     });
 }
 
+/**
+ * Command action to open/launch the Antigravity application with CDP enabled on a free port.
+ */
 export async function openAction(): Promise<void> {
     const platform = os.platform();
 

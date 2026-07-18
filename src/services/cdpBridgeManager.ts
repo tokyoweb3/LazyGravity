@@ -23,8 +23,11 @@ import { QuestionDetector, QuestionInfo } from './questionDetector';
 
 /** CDP connection state management */
 export interface CdpBridge {
+    /** Connected workspaces/accounts pool manager. */
     pool: CdpConnectionPool;
+    /** Quota limit tracking service. */
     quota: QuotaService;
+    /** Auto accept configuration options settings. */
     autoAccept: AutoAcceptService;
     /** Directory name of the workspace that last sent a message */
     lastActiveWorkspace: string | null;
@@ -36,8 +39,11 @@ export interface CdpBridge {
     approvalChannelBySession: Map<string, PlatformChannel>;
     /** Channel-scoped preferred Antigravity account selection. */
     selectedAccountByChannel?: Map<string, string>;
+    /** Current CDP debugging host address. */
     cdpHost: string;
+    /** Chat sessions data repository reference. */
     chatSessionRepo?: any;
+    /** Active artifact generation files manager service. */
     artifactService?: any;
 }
 
@@ -56,10 +62,21 @@ export const QUESTION_SELECT_ACTION_PREFIX = 'question_select_action';
 export const FILE_CHANGE_ACCEPT_ACTION_PREFIX = 'ide_file_accept_all';
 export const FILE_CHANGE_REJECT_ACTION_PREFIX = 'ide_file_reject_all';
 
+/**
+ * Normalizes session title strings for matching.
+ * @param title Chat session title.
+ * @returns Clean normalized title.
+ */
 function normalizeSessionTitle(title: string): string {
     return title.trim().toLowerCase();
 }
 
+/**
+ * Constructs a unique session routing cache key.
+ * @param projectName Workspace project name.
+ * @param sessionTitle Active session title.
+ * @returns Formatted routing key.
+ */
 function buildSessionRouteKey(projectName: string, sessionTitle: string): string {
     return `${projectName}::${normalizeSessionTitle(sessionTitle)}`;
 }
@@ -75,6 +92,11 @@ const GET_CURRENT_CHAT_TITLE_SCRIPT = `(() => {
     return title;
 })()`;
 
+/**
+ * Queries the browser document evaluating the active conversation title name.
+ * @param cdp Active CdpService client.
+ * @returns Resolved chat title, or null.
+ */
 export async function getCurrentChatTitle(cdp: CdpService): Promise<string | null> {
     const contexts = cdp.getContexts();
     for (const ctx of contexts) {
@@ -95,6 +117,12 @@ export async function getCurrentChatTitle(cdp: CdpService): Promise<string | nul
     return null;
 }
 
+/**
+ * Registers target channel ID for a project workspace.
+ * @param bridge Target CdpBridge.
+ * @param projectName Workspace project name.
+ * @param channel Destination channel.
+ */
 export function registerApprovalWorkspaceChannel(
     bridge: CdpBridge,
     projectName: string,
@@ -103,6 +131,13 @@ export function registerApprovalWorkspaceChannel(
     bridge.approvalChannelByWorkspace.set(projectName, channel);
 }
 
+/**
+ * Registers target channel ID for a specific session title.
+ * @param bridge Target CdpBridge.
+ * @param projectName Workspace project name.
+ * @param sessionTitle Target session title.
+ * @param channel Destination channel.
+ */
 export function registerApprovalSessionChannel(
     bridge: CdpBridge,
     projectName: string,
@@ -114,6 +149,14 @@ export function registerApprovalSessionChannel(
     bridge.approvalChannelByWorkspace.set(projectName, channel);
 }
 
+/**
+ * Resolves the destination channel for routing approvals.
+ * Priority: session-level mapping -> workspace-level default.
+ * @param bridge Active CdpBridge.
+ * @param projectName Workspace project name.
+ * @param currentChatTitle Evaluated session title.
+ * @returns Resolved destination channel, or null.
+ */
 export function resolveApprovalChannelForCurrentChat(
     bridge: CdpBridge,
     projectName: string,
@@ -129,6 +172,14 @@ export function resolveApprovalChannelForCurrentChat(
     return bridge.approvalChannelByWorkspace.get(projectName) ?? null;
 }
 
+/**
+ * Builds customId string for approval buttons.
+ * Format: prefix:projectName[:channelId]
+ * @param action Approval action type.
+ * @param projectName Workspace project name.
+ * @param channelId Target channel ID.
+ * @returns Formatted customId.
+ */
 export function buildApprovalCustomId(
     action: 'approve' | 'always_allow' | 'deny',
     projectName: string,
@@ -145,6 +196,11 @@ export function buildApprovalCustomId(
     return `${prefix}:${projectName}`;
 }
 
+/**
+ * Parses customId string back to approval action details.
+ * @param customId Raw customId.
+ * @returns Parsed action details, or null.
+ */
 export function parseApprovalCustomId(customId: string): { action: 'approve' | 'always_allow' | 'deny'; projectName: string | null; channelId: string | null } | null {
     if (customId === APPROVE_ACTION_PREFIX) {
         return { action: 'approve', projectName: null, channelId: null };
@@ -173,6 +229,13 @@ export function parseApprovalCustomId(customId: string): { action: 'approve' | '
     return null;
 }
 
+/**
+ * Builds customId string for planning actions.
+ * @param action Planning action type.
+ * @param projectName Workspace project name.
+ * @param channelId Target channel ID.
+ * @returns Formatted customId.
+ */
 export function buildPlanningCustomId(
     action: 'open' | 'proceed' | 'reject',
     projectName: string,
@@ -189,6 +252,11 @@ export function buildPlanningCustomId(
     return `${prefix}:${projectName}`;
 }
 
+/**
+ * Parses customId string back to planning action details.
+ * @param customId Raw customId.
+ * @returns Parsed planning action details, or null.
+ */
 export function parsePlanningCustomId(customId: string): { action: 'open' | 'proceed' | 'reject'; projectName: string | null; channelId: string | null } | null {
     if (customId === PLANNING_OPEN_ACTION_PREFIX) {
         return { action: 'open', projectName: null, channelId: null };
@@ -217,6 +285,13 @@ export function parsePlanningCustomId(customId: string): { action: 'open' | 'pro
     return null;
 }
 
+/**
+ * Builds customId string for error popup actions.
+ * @param action Error action type.
+ * @param projectName Workspace project name.
+ * @param channelId Target channel ID.
+ * @returns Formatted customId.
+ */
 export function buildErrorPopupCustomId(
     action: 'dismiss' | 'copy_debug' | 'retry',
     projectName: string,
@@ -233,6 +308,11 @@ export function buildErrorPopupCustomId(
     return `${prefix}:${projectName}`;
 }
 
+/**
+ * Parses customId string back to error popup action details.
+ * @param customId Raw customId.
+ * @returns Parsed action details, or null.
+ */
 export function parseErrorPopupCustomId(customId: string): { action: 'dismiss' | 'copy_debug' | 'retry'; projectName: string | null; channelId: string | null } | null {
     if (customId === ERROR_POPUP_DISMISS_ACTION_PREFIX) {
         return { action: 'dismiss', projectName: null, channelId: null };
@@ -261,6 +341,13 @@ export function parseErrorPopupCustomId(customId: string): { action: 'dismiss' |
     return null;
 }
 
+/**
+ * Builds customId string for run command permission prompts.
+ * @param action Run action choice type.
+ * @param projectName Workspace project name.
+ * @param channelId Target channel ID.
+ * @returns Formatted customId.
+ */
 export function buildRunCommandCustomId(
     action: 'run' | 'reject',
     projectName: string,
@@ -275,6 +362,11 @@ export function buildRunCommandCustomId(
     return `${prefix}:${projectName}`;
 }
 
+/**
+ * Parses customId string back to run command action details.
+ * @param customId Raw customId.
+ * @returns Parsed action details, or null.
+ */
 export function parseRunCommandCustomId(customId: string): { action: 'run' | 'reject'; projectName: string | null; channelId: string | null } | null {
     if (customId === RUN_COMMAND_RUN_ACTION_PREFIX) {
         return { action: 'run', projectName: null, channelId: null };
@@ -295,6 +387,13 @@ export function parseRunCommandCustomId(customId: string): { action: 'run' | 're
     return null;
 }
 
+/**
+ * Builds customId string for file changes accept/reject actions.
+ * @param action File action type.
+ * @param projectName Workspace project name.
+ * @param channelId Target channel ID.
+ * @returns Formatted customId.
+ */
 export function buildFileChangeCustomId(
     action: 'accept' | 'reject',
     projectName: string,
@@ -309,6 +408,11 @@ export function buildFileChangeCustomId(
     return `${prefix}:${projectName}`;
 }
 
+/**
+ * Parses customId string back to file changes action details.
+ * @param customId Raw customId.
+ * @returns Parsed action details, or null.
+ */
 export function parseFileChangeCustomId(customId: string): { action: 'accept' | 'reject'; projectName: string | null; channelId: string | null } | null {
     if (customId === FILE_CHANGE_ACCEPT_ACTION_PREFIX) {
         return { action: 'accept', projectName: null, channelId: null };
@@ -329,7 +433,14 @@ export function parseFileChangeCustomId(customId: string): { action: 'accept' | 
     return null;
 }
 
-/** Initialize the CDP bridge (lazy connection: pool creation only) */
+/**
+ * Initialize the CDP bridge (lazy connection: pool creation only).
+ * @param autoApproveDefault Auto approve edits setting.
+ * @param accountPorts Port mappings.
+ * @param accountUserDataDirs User directories mapping.
+ * @param cdpHost CDP host name.
+ * @returns Constructed CdpBridge manager.
+ */
 export function initCdpBridge(
     autoApproveDefault: boolean,
     accountPorts: Record<string, number> = {},
@@ -367,6 +478,8 @@ export function initCdpBridge(
  * Helper to get the currently active CdpService from lastActiveWorkspace.
  * Used in contexts where the workspace path is not explicitly provided,
  * such as button interactions and model/mode switching.
+ * @param bridge Active CdpBridge.
+ * @returns Connected CdpService instance, or null.
  */
 export function getCurrentCdp(bridge: CdpBridge): CdpService | null {
     if (!bridge.lastActiveWorkspace) return null;
@@ -376,6 +489,10 @@ export function getCurrentCdp(bridge: CdpBridge): CdpService | null {
 /**
  * Helper to start an approval detector for each workspace.
  * Does nothing if a detector for the same workspace is already running.
+ * @param bridge Active CdpBridge.
+ * @param cdp Active CdpService client.
+ * @param projectName Workspace project name.
+ * @param accountName Scoped account name.
  */
 export function ensureApprovalDetector(
     bridge: CdpBridge,
@@ -501,6 +618,10 @@ export function ensureApprovalDetector(
 /**
  * Helper to start a planning detector for each workspace.
  * Does nothing if a detector for the same workspace is already running.
+ * @param bridge Active CdpBridge.
+ * @param cdp Active CdpService client.
+ * @param projectName Workspace project name.
+ * @param accountName Scoped account name.
  */
 export function ensurePlanningDetector(
     bridge: CdpBridge,
@@ -585,6 +706,10 @@ export function ensurePlanningDetector(
 /**
  * Helper to start an error popup detector for each workspace.
  * Does nothing if a detector for the same workspace is already running.
+ * @param bridge Active CdpBridge.
+ * @param cdp Active CdpService client.
+ * @param projectName Workspace project name.
+ * @param accountName Scoped account name.
  */
 export function ensureErrorPopupDetector(
     bridge: CdpBridge,
@@ -668,6 +793,10 @@ export function ensureErrorPopupDetector(
  * Helper to start a run command detector for each workspace.
  * Detects "Run command?" confirmation dialogs and forwards them to Discord.
  * Does nothing if a detector for the same workspace is already running.
+ * @param bridge Active CdpBridge.
+ * @param cdp Active CdpService client.
+ * @param projectName Workspace project name.
+ * @param accountName Scoped account name.
  */
 export function ensureRunCommandDetector(
     bridge: CdpBridge,
@@ -753,6 +882,11 @@ export function ensureRunCommandDetector(
  * Detects messages typed directly in the Antigravity UI (e.g., from a PC)
  * and mirrors them to a Discord channel.
  * Does nothing if a detector for the same workspace is already running.
+ * @param bridge Active CdpBridge.
+ * @param cdp Active CdpService client.
+ * @param projectName Workspace project name.
+ * @param onUserMessage Callback function when a message is detected.
+ * @param accountName Scoped account name.
  */
 export function ensureUserMessageDetector(
     bridge: CdpBridge,
@@ -788,6 +922,13 @@ export function ensureUserMessageDetector(
     logger.debug(`[UserMessageDetector:${projectName}] Started user message detection`);
 }
 
+/**
+ * Helper starting QuestionDetector monitoring for a workspace.
+ * @param bridge Active CdpBridge.
+ * @param cdp Active CdpService client.
+ * @param projectName Workspace project name.
+ * @param accountName Scoped account name.
+ */
 export function ensureQuestionDetector(
     bridge: CdpBridge,
     cdp: CdpService,

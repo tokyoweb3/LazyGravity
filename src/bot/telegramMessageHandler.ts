@@ -34,33 +34,49 @@ import type { ChannelPreferenceRepository } from '../database/channelPreferenceR
 import type { AntigravityAccountConfig } from '../utils/configLoader';
 import { resolveScopedAccountName } from '../utils/accountUtils';
 
+/**
+ * Dependencies injected into the Telegram message handler.
+ */
 export interface TelegramMessageHandlerDeps {
+    /** Target CDP bridge manager instance. */
     readonly bridge: CdpBridge;
+    /** Telegram binds repository store. */
     readonly telegramBindingRepo: TelegramBindingRepository;
+    /** Workspace paths list resolver. */
     readonly workspaceService?: WorkspaceService;
+    /** Mode service configurations. */
     readonly modeService?: ModeService;
+    /** Model service configurations. */
     readonly modelService?: ModelService;
+    /** Active extraction mode settings. */
     readonly extractionMode?: ExtractionMode;
+    /** Repository managing custom templates. */
     readonly templateRepo?: import('../database/templateRepository').TemplateRepository;
+    /** Callback fetching live quota data. */
     readonly fetchQuota?: () => Promise<any[]>;
-    /** Shared map of active ResponseMonitors keyed by project name.
-     *  Used by /stop to halt monitoring and prevent stale re-sends. */
+    /** Primary active monitors registry map. */
     readonly activeMonitors?: Map<string, ResponseMonitor>;
-    /** Bot token for downloading Telegram file attachments. */
+    /** Bot credentials token for downloads. */
     readonly botToken?: string;
-    /** Bot API object for getFile calls. */
+    /** Raw Telegram bot API helper interface. */
     readonly botApi?: import('../platform/telegram/wrappers').TelegramBotLike['api'];
+    /** Active chat sessions service manager. */
     readonly chatSessionService?: ChatSessionService;
-    /** Response monitor inactivity timeout in ms. Defaults to ResponseMonitor default (900000). */
+    /** Response monitoring timeout limit in ms. */
     readonly responseTimeoutMs?: number;
+    /** Account preferences data repository. */
     readonly accountPrefRepo?: AccountPreferenceRepository;
+    /** Channel preferences data repository. */
     readonly channelPrefRepo?: ChannelPreferenceRepository;
+    /** Active configured accounts configurations. */
     readonly antigravityAccounts?: AntigravityAccountConfig[];
 }
 
 /**
  * Create a handler for Telegram messages.
  * Returns an async function that processes a single PlatformMessage.
+ * @param deps Injected dependencies.
+ * @returns Message handler callback function.
  */
 export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
     // Per-workspace prompt queue to serialize messages
@@ -402,7 +418,11 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
     };
 }
 
-/** Split long text into Telegram-safe chunks (max 4096 chars). */
+/**
+ * Split long text into Telegram-safe chunks (max 4096 chars).
+ * @param channel Platform channel destination.
+ * @param text Log/response text content to send.
+ */
 async function sendTextChunked(
     channel: PlatformChannel,
     text: string,

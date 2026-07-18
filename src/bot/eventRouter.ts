@@ -8,15 +8,25 @@ import type {
 } from '../platform/types';
 import { logger } from '../utils/logger';
 
+/**
+ * Configuration options dictionary for the EventRouter.
+ */
 export interface EventRouterConfig {
     /** Map of platform type to allowed user IDs on that platform. */
     readonly allowedUsers: ReadonlyMap<PlatformType, ReadonlySet<string>>;
 }
 
+/**
+ * Event callbacks mappings object.
+ */
 export interface EventHandlers {
+    /** Triggered on new inbound messages. */
     readonly onMessage?: (message: PlatformMessage) => Promise<void>;
+    /** Triggered on button click interactions. */
     readonly onButtonInteraction?: (interaction: PlatformButtonInteraction) => Promise<void>;
+    /** Triggered on dropdown select menu interactions. */
     readonly onSelectInteraction?: (interaction: PlatformSelectInteraction) => Promise<void>;
+    /** Triggered on slash command invocations. */
     readonly onCommandInteraction?: (interaction: PlatformCommandInteraction) => Promise<void>;
 }
 
@@ -29,6 +39,10 @@ export class EventRouter {
     private readonly handlers: EventHandlers;
     private readonly adapters: PlatformAdapter[] = [];
 
+    /**
+     * @param config EventRouter configurations.
+     * @param handlers Handlers registry object.
+     */
     constructor(config: EventRouterConfig, handlers: EventHandlers) {
         this.config = config;
         this.handlers = handlers;
@@ -60,6 +74,11 @@ export class EventRouter {
         return allowed ? allowed.has(userId) : false;
     }
 
+    /**
+     * Internal factory constructing platform events listener callbacks.
+     * @param adapter Target PlatformAdapter instance.
+     * @returns AdapterEvents configuration callbacks.
+     */
     private createAdapterEvents(adapter: PlatformAdapter): PlatformAdapterEvents {
         return {
             onReady: () => {

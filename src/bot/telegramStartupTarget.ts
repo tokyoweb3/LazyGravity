@@ -1,27 +1,56 @@
 import type { TelegramBindingRecord } from '../database/telegramBindingRepository';
 import type { TelegramBotLike } from '../platform/telegram/wrappers';
 
+/**
+ * Candidate structure for determining Telegram startup channels/chats.
+ */
 interface StartupChatCandidate {
+    /** Raw binding chat identifier. */
     bindingChatId: string;
+    /** Resolved base chat identifier. */
     resolvedChatId: string;
+    /** Chat type (e.g. group, supergroup, private). */
     type: string;
+    /** Friendly display title or name. */
     title: string;
+    /** Whether it corresponds directly to a top-level binding. */
     isDirectBinding: boolean;
 }
 
+/**
+ * Strips sub-channel qualifiers from a compound chat ID.
+ * @param chatId Target chat ID.
+ * @returns Base chat ID.
+ */
 function getBaseChatId(chatId: string): string {
     const sepIdx = chatId.indexOf('_');
     return sepIdx > 0 ? chatId.slice(0, sepIdx) : chatId;
 }
 
+/**
+ * Normalizes chat titles for consistency.
+ * @param title Chat title.
+ * @returns Normalized title string.
+ */
 function normalizeTitle(title: string): string {
     return title.trim().replace(/^#/, '').toLowerCase();
 }
 
+/**
+ * Evaluates whether a chat title represents a general chat.
+ * @param title Chat title.
+ * @returns True if title matches 'general'.
+ */
 function isGeneralChat(title: string): boolean {
     return normalizeTitle(title) === 'general';
 }
 
+/**
+ * Resolves the primary chat ID target to emit initial startup greeting message options.
+ * @param api Telegram bot api client instance.
+ * @param bindings Registered Telegram bindings lists.
+ * @returns Selected chat ID string, or null if none resolved.
+ */
 export async function selectTelegramStartupChatId(
     api: TelegramBotLike['api'],
     bindings: TelegramBindingRecord[],

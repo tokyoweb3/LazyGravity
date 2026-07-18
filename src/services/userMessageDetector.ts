@@ -9,6 +9,7 @@ export interface UserMessageInfo {
     text: string;
 }
 
+/** Config options for UserMessageDetector. */
 export interface UserMessageDetectorOptions {
     /** CDP service instance */
     cdpService: CdpService;
@@ -67,6 +68,8 @@ const DETECT_USER_MESSAGE_SCRIPT = `(() => {
 /**
  * Normalize text for echo hash comparison.
  * Trims, collapses whitespace, and takes first 200 chars.
+ * @param text Raw input string.
+ * @returns Clean normalized string.
  */
 function normalizeForHash(text: string): string {
     return text.trim().replace(/\s+/g, ' ').slice(0, 200);
@@ -74,6 +77,8 @@ function normalizeForHash(text: string): string {
 
 /**
  * Compute a short hash for echo prevention.
+ * @param text Raw message text.
+ * @returns Shortened checksum hash.
  */
 function computeEchoHash(text: string): string {
     return createHash('sha256').update(normalizeForHash(text)).digest('hex').slice(0, 16);
@@ -101,6 +106,9 @@ export class UserMessageDetector extends EventEmitter {
     /** True during the first poll — seeds existing DOM state without firing callback */
     private isPriming: boolean = false;
 
+    /**
+     * @param options Detector configurations.
+     */
     constructor(options: UserMessageDetectorOptions) {
         super();
         this.cdpService = options.cdpService;
@@ -110,6 +118,7 @@ export class UserMessageDetector extends EventEmitter {
     /**
      * Register a message hash as an echo (sent by LazyGravity).
      * When this message is detected in the DOM, it will be skipped.
+     * @param text Sent message text.
      */
     addEchoHash(text: string): void {
         const hash = computeEchoHash(text);
@@ -120,6 +129,9 @@ export class UserMessageDetector extends EventEmitter {
         }, 60000);
     }
 
+    /**
+     * Start active polling.
+     */
     start(): void {
         if (this.isRunning) return;
         this.isRunning = true;
@@ -141,7 +153,9 @@ export class UserMessageDetector extends EventEmitter {
         }
     }
 
-    /** Returns whether monitoring is currently active. */
+    /** Returns whether monitoring is currently active.
+     * @returns True if running.
+     */
     isActive(): boolean {
         return this.isRunning;
     }

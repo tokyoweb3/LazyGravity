@@ -4,15 +4,24 @@ import type { CdpBridge } from '../services/cdpBridgeManager';
 import type { WorkspaceCommandHandler } from '../commands/workspaceCommandHandler';
 import { logger } from '../utils/logger';
 import { QUESTION_SKIP_ACTION_PREFIX } from '../services/notificationSender';
-
-export interface QuestionSkipActionDeps {
-    readonly bridge: CdpBridge;
-    readonly wsHandler: WorkspaceCommandHandler;
-}
-
 import { parseQuestionCustomId } from '../utils/questionActionUtils';
 import { resolveProjectName } from '../utils/projectResolver';
 
+/**
+ * Dependencies injected into question skip action creator.
+ */
+export interface QuestionSkipActionDeps {
+    /** Target CDP bridge manager instance. */
+    readonly bridge: CdpBridge;
+    /** Workspace command handler instance. */
+    readonly wsHandler: WorkspaceCommandHandler;
+}
+
+/**
+ * Factory creating ButtonAction for skipping interactive question inputs.
+ * @param deps Injected dependencies.
+ * @returns ButtonAction implementation.
+ */
 export function createQuestionSkipAction(deps: QuestionSkipActionDeps): ButtonAction {
     return {
         match(customId: string): Record<string, string> | null {

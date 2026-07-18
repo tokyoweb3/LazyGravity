@@ -17,13 +17,23 @@ export interface ChatSessionInfo {
     hasActiveChat: boolean;
 }
 
+/**
+ * Representation of the chat panel session view state diagnostics.
+ */
 interface SessionViewState extends ChatSessionInfo {
+    /** If the agent side panel container element was located in DOM. */
     panelFound?: boolean;
+    /** If a loading/progress spinner is active. */
     hasLoadingIndicator: boolean;
+    /** If actual assistant text messages exist. */
     hasRenderableContent: boolean;
+    /** Scraped content text summary pieces. */
     renderablePreview?: Array<{
+        /** Text element tag name. */
         tag: string;
+        /** Text element class names. */
         className: string;
+        /** Preview snippet text. */
         text: string;
     }>;
 }
@@ -344,6 +354,8 @@ function buildActivateChatByTitleScript(title: string): string {
 /**
  * Build a script that opens Past Conversations and selects a conversation by title.
  * This path is required for older chats that are not visible in the current side panel.
+ * @param title Target conversation title.
+ * @returns Serialized evaluation script.
  */
 export function buildActivateViaPastConversationsScript(title: string): string {
     const safeTitle = JSON.stringify(title);
@@ -713,6 +725,7 @@ export class ChatSessionService {
 
     /**
      * Close the Past Conversations panel by sending Escape key events.
+     * @param cdpService Target cdp client.
      */
     private async closePanelWithEscape(cdpService: CdpService): Promise<void> {
         try {
@@ -729,6 +742,10 @@ export class ChatSessionService {
 
     /**
      * Evaluate a script on the first context that returns a truthy value.
+     * @param cdpService Active CdpService client.
+     * @param expression Script string.
+     * @param awaitPromise Await promise setting.
+     * @returns Script evaluation result value.
      */
     private async evaluateOnAnyContext(
         cdpService: CdpService,
@@ -750,6 +767,9 @@ export class ChatSessionService {
 
     /**
      * Click at coordinates via CDP Input.dispatchMouseEvent.
+     * @param cdpService Target cdp client.
+     * @param x X coordinate.
+     * @param y Y coordinate.
      */
     private async cdpMouseClick(cdpService: CdpService, x: number, y: number): Promise<void> {
         await cdpService.call('Input.dispatchMouseEvent', {
@@ -763,6 +783,10 @@ export class ChatSessionService {
         });
     }
 
+    /**
+     * Sends shortcut key events triggering new conversation in the UI.
+     * @param cdpService Target cdp client.
+     */
     private async dispatchNewConversationShortcut(cdpService: CdpService): Promise<void> {
         const modifiers = process.platform === 'darwin' ? 8 : 10;
         await cdpService.call('Input.dispatchKeyEvent', {
@@ -887,6 +911,11 @@ export class ChatSessionService {
         }
     }
 
+    /**
+     * Retrieves current session view details including message content presence.
+     * @param cdpService Target cdp client.
+     * @returns Session view state diagnostics details.
+     */
     async getCurrentSessionViewState(cdpService: CdpService): Promise<SessionViewState> {
         try {
             const contexts = cdpService.getContexts();
@@ -929,6 +958,12 @@ export class ChatSessionService {
         };
     }
 
+    /**
+     * Checks if a session view appears stuck and tries to recover if needed.
+     * @param cdpService Target cdp client.
+     * @param title Active session title.
+     * @returns Recovery result state.
+     */
     async refreshSessionViewIfStuck(
         cdpService: CdpService,
         title: string,
@@ -953,6 +988,13 @@ export class ChatSessionService {
         };
     }
 
+    /**
+     * Recovers a stuck session view by performing a bounce through an empty chat.
+     * @param cdpService Target cdp client.
+     * @param title Target conversation title.
+     * @param options Bouncing delay overrides options.
+     * @returns Recovery result state.
+     */
     async recoverSessionViewWithNewConversationBounce(
         cdpService: CdpService,
         title: string,
@@ -1013,6 +1055,10 @@ export class ChatSessionService {
     /**
      * Activate an existing chat by title.
      * Returns ok:false if the target chat cannot be located or verified.
+     * @param cdpService Target cdp client.
+     * @param title Target conversation title.
+     * @param options Warmup/retry delay overrides options.
+     * @returns Operation result.
      */
     async activateSessionByTitle(
         cdpService: CdpService,
@@ -1160,6 +1206,12 @@ export class ChatSessionService {
         };
     }
 
+    /**
+     * Tries to find and select target conversation row from the direct visible side panel list.
+     * @param cdpService Target cdp client.
+     * @param title Target conversation title.
+     * @returns Selection script result.
+     */
     private async tryActivateByDirectSidePanel(
         cdpService: CdpService,
         title: string,
@@ -1167,6 +1219,12 @@ export class ChatSessionService {
         return this.tryActivateWithScript(cdpService, buildActivateChatByTitleScript(title), false);
     }
 
+    /**
+     * Tries to find and select target conversation row by opening Past Conversations wizard.
+     * @param cdpService Target cdp client.
+     * @param title Target conversation title.
+     * @returns Selection script result.
+     */
     private async tryActivateByPastConversations(
         cdpService: CdpService,
         title: string,
@@ -1174,6 +1232,13 @@ export class ChatSessionService {
         return this.tryActivateWithScript(cdpService, buildActivateViaPastConversationsScript(title), true);
     }
 
+    /**
+     * Runs custom activation script on the active cdp contexts.
+     * @param cdpService Target cdp client.
+     * @param script Script content string.
+     * @param awaitPromise Await promise setting.
+     * @returns Operation result.
+     */
     private async tryActivateWithScript(
         cdpService: CdpService,
         script: string,
@@ -1213,6 +1278,9 @@ export class ChatSessionService {
 
     /**
      * Get the state (enabled/disabled, coordinates) of the new chat button.
+     * @param cdpService Target cdp client.
+     * @param contexts Active cdp contexts.
+     * @returns Coordinates and state details of the new chat button.
      */
     private async getNewChatButtonState(
         cdpService: CdpService,
@@ -1238,6 +1306,9 @@ export class ChatSessionService {
      * Rename the current chat in the Antigravity UI directly by updating the DOM.
      * Note: This is a cosmetic change until Antigravity persists a rename.
      * IDE syncing for chat renaming is strictly "best-effort".
+     * @param cdpService Target cdp client.
+     * @param newTitle New chat title string.
+     * @returns Success/failure indicator.
      */
     async renameCurrentChatInUI(cdpService: CdpService, newTitle: string): Promise<{ ok: boolean; error?: string }> {
         try {

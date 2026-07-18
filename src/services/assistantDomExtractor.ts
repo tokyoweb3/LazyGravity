@@ -42,21 +42,39 @@ export interface AssistantDomSegmentPayload {
     segments: AssistantDomSegment[];
 }
 
+/**
+ * Classified outcome result format from raw segment arrays.
+ */
 export interface ClassifyResult {
+    /** Extracted main assistant output text converted to markdown. */
     finalOutputText: string;
+    /** Extracted intermediate logs. */
     activityLines: string[];
+    /** Extracted feedback text snippets. */
     feedback: string[];
+    /** Extracted planning cards. */
     planCards: string[];
+    /** Extracted action buttons metadata. */
     actionButtons: string[];
+    /** Extracted file changes list path/type pairs. */
     fileChanges: { path: string; type: string }[];
+    /** Extracted raw citations string array. */
     citations: string[];
+    /** Extracted raw file changes text summaries. */
     fileChangesTexts: string[];
+    /** De-duplicated and validated cited files array. */
     citedFiles: string[];
+    /** Diagnostic metrics for telemetry. */
     diagnostics: {
+        /** Extraction engine source label. */
         source: 'dom-structured' | 'legacy-fallback';
+        /** Segment counts mapped by type labels. */
         segmentCounts: Record<string, number>;
+        /** Fingerprint string checksum. */
         allFingerprints: string[];
+        /** Total segments count. */
         totalSegments: number;
+        /** Diagnostic warning messages. */
         fallbackReason?: string;
     };
 }
@@ -70,6 +88,8 @@ export interface ClassifyResult {
  * feedback, and diagnostics.
  *
  * If the payload is invalid, returns a legacy-fallback result with empty fields.
+ * @param payload Raw payload parameter.
+ * @returns Classified outcome result wrapper.
  */
 export function classifyAssistantSegments(payload: unknown): ClassifyResult {
     if (!isValidPayload(payload)) {
@@ -218,6 +238,7 @@ export function classifyAssistantSegments(payload: unknown): ClassifyResult {
  * - thinking segments (from <details> summary text)
  * - tool-call / tool-result segments (from <details> content)
  * - feedback segments (Good/Bad buttons)
+ * @returns Evaluatable IIFE script string.
  */
 export function extractAssistantSegmentsPayloadScript(): string {
     // The IIFE is a plain string evaluated in the browser context via CDP.
@@ -627,6 +648,11 @@ export function extractAssistantSegmentsPayloadScript(): string {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Validates payload structures for Cdp response DOM structures.
+ * @param value Raw payload candidate.
+ * @returns True if valid structure.
+ */
 function isValidPayload(value: unknown): value is AssistantDomSegmentPayload {
     if (!value || typeof value !== 'object') return false;
     const obj = value as Record<string, unknown>;

@@ -1,21 +1,43 @@
+/**
+ * Service to manage and send periodic heartbeat messages to a configured Discord channel.
+ */
+
 import { Client, EmbedBuilder, TextChannel } from 'discord.js';
 import { logger } from '../utils/logger';
 import { ConfigLoader } from '../utils/configLoader';
 import { CdpBridge } from './cdpBridgeManager';
 
+/**
+ * Service that publishes status, uptime, activity, and session metrics at regular intervals.
+ */
 export class HeartbeatService {
+    /** Target Discord client interface instance. */
     private client: Client | null = null;
+    /** Target CdpBridge manager. */
     private bridge: CdpBridge | null = null;
+    /** Active polling interval timer. */
     private intervalId: NodeJS.Timeout | null = null;
     
+    /** Generation token used to ignore obsolete delayed requests. */
     private generationToken: number = 0;
+    /** Lock flag to prevent overlapping send requests. */
     private isSending: boolean = false;
     
+    /** Timestamp when the bot application started. */
     public botStartTime: number = Date.now();
+    /** Timestamp of the most recent user action. */
     public lastActivityTimestamp: number = Date.now();
 
+    /**
+     * Initializes a new HeartbeatService.
+     */
     constructor() {}
 
+    /**
+     * Binds the Discord client and CdpBridge dependencies.
+     * @param client Discord client connection.
+     * @param bridge active bridge manager.
+     */
     public init(client: Client, bridge: CdpBridge) {
         this.client = client;
         this.bridge = bridge;
@@ -23,10 +45,16 @@ export class HeartbeatService {
         this.lastActivityTimestamp = Date.now();
     }
 
+    /**
+     * Records user/client activity by resetting the activity timestamp.
+     */
     public recordActivity() {
         this.lastActivityTimestamp = Date.now();
     }
 
+    /**
+     * Starts the periodic heartbeat posting loop if enabled by configuration.
+     */
     public start() {
         this.stop();
 
@@ -64,6 +92,9 @@ export class HeartbeatService {
         }, interval);
     }
 
+    /**
+     * Stops the periodic heartbeat loop and increments the generation token.
+     */
     public stop() {
         this.generationToken++;
         if (this.intervalId) {
@@ -72,6 +103,12 @@ export class HeartbeatService {
         }
     }
 
+    /**
+     * Updates the local configuration and restarts the loop.
+     * @param enabled Enabled state flag.
+     * @param intervalMs Cycle delay in milliseconds.
+     * @param channelId Destination Discord channel ID.
+     */
     public async updateConfig(enabled: boolean, intervalMs: number, channelId: string) {
         this.generationToken++;
         const config = ConfigLoader.load();
@@ -107,6 +144,9 @@ export class HeartbeatService {
         this.start();
     }
 
+    /**
+     * Deletes the active message, updates configuration state to disabled, and stops the loop.
+     */
     public async disable() {
         this.generationToken++;
         const config = ConfigLoader.load();
@@ -131,6 +171,9 @@ export class HeartbeatService {
         logger.info('[HeartbeatService] Heartbeat disabled.');
     }
 
+    /**
+     * Formulates and posts/edits the heartbeat embed on the configured channel.
+     */
     public async sendHeartbeat() {
         if (!this.client || !this.bridge) {
             logger.warn('[HeartbeatService] Cannot send heartbeat: client or bridge not initialized.');
@@ -207,6 +250,10 @@ export class HeartbeatService {
         }
     }
 
+    /**
+     * Constructs the heartbeat visual embed with diagnostic information.
+     * @returns Mapped EmbedBuilder instance.
+     */
     private buildHeartbeatEmbed(): EmbedBuilder {
         const uptimeMs = Date.now() - this.botStartTime;
         const uptimeStr = formatDuration(uptimeMs);
@@ -234,6 +281,8 @@ export class HeartbeatService {
 /**
  * Parse a duration string like "1h", "6h", "30m", or "2d" to milliseconds.
  * Requiring a unit prevents ambiguity with bare numbers.
+ * @param str Input raw interval string.
+ * @returns Millisecond value, or null if parser pattern mismatch.
  */
 export function parseInterval(str: string): number | null {
     const match = str.trim().toLowerCase().match(/^(\d+)(ms|s|m|h|d)$/);
@@ -253,6 +302,8 @@ export function parseInterval(str: string): number | null {
 
 /**
  * Format milliseconds to a human-readable duration (e.g. "2h 15m")
+ * @param ms Time segment in milliseconds.
+ * @returns Formatted friendly duration text.
  */
 export function formatDuration(ms: number): string {
     const seconds = Math.floor((ms / 1000) % 60);
@@ -270,6 +321,8 @@ export function formatDuration(ms: number): string {
 
 /**
  * Format a past timestamp to a relative string (e.g. "5m ago")
+ * @param timestamp Historical epoch timestamp.
+ * @returns Friendly relative time suffix.
  */
 export function formatRelativeTime(timestamp: number): string {
     const diff = Date.now() - timestamp;

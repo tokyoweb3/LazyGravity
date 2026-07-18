@@ -14,6 +14,7 @@ export interface ApprovalInfo {
     description: string;
 }
 
+/** Config options for ApprovalDetector. */
 export interface ApprovalDetectorOptions {
     /** CDP service instance */
     cdpService: CdpService;
@@ -491,6 +492,8 @@ export class ApprovalDetector {
 
     /**
      * Execute Runtime.evaluate with contextId and return result.value.
+     * @param expression Script string.
+     * @returns Evaluation result.
      */
     private async runEvaluateScript(expression: string): Promise<any> {
         const contextId = this.cdpService.getPrimaryContextId();

@@ -13,15 +13,24 @@ export interface CommandResult {
     prompt?: string;
 }
 
+/**
+ * Handler parsing and processing slash commands.
+ */
 export class SlashCommandHandler {
     private templateRepo: TemplateRepository;
 
+    /**
+     * @param templateRepo The templates database repository.
+     */
     constructor(templateRepo: TemplateRepository) {
         this.templateRepo = templateRepo;
     }
 
     /**
-     * Parse the slash command name and arguments, then route to the appropriate handler
+     * Parse the slash command name and arguments, then route to the appropriate handler.
+     * @param commandName Trigger slash command name.
+     * @param args Array of parsed parameters/arguments.
+     * @returns Command execution result metadata.
      */
     public async handleCommand(commandName: string, args: string[]): Promise<CommandResult> {
         switch (commandName.toLowerCase()) {
@@ -35,6 +44,11 @@ export class SlashCommandHandler {
         }
     }
 
+    /**
+     * Internal template command handler logic.
+     * @param args Parameter arguments list.
+     * @returns Command execution result.
+     */
     private handleTemplateCommand(args: string[]): CommandResult {
         if (args.length === 0) {
             const templates = this.templateRepo.findAll();

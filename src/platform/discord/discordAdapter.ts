@@ -24,11 +24,17 @@ import type {
     ChatInputCommandInteraction,
 } from 'discord.js';
 
+/**
+ * Discord platform adapter implementation.
+ */
 export class DiscordAdapter implements PlatformAdapter {
     readonly platform = 'discord' as const;
     private readonly client: Client;
     private botUserId: string = '';
 
+    /**
+     * @param client Raw discord.js Client instance.
+     */
     constructor(client: Client) {
         this.client = client;
     }

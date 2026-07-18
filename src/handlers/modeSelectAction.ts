@@ -16,11 +16,21 @@ import { MODE_DISPLAY_NAMES } from '../services/modeService';
 import { buildModePayload } from '../ui/modeUi';
 import { logger } from '../utils/logger';
 
+/**
+ * Dependencies injected into mode selection select action creator.
+ */
 export interface ModeSelectActionDeps {
+    /** Target CDP bridge manager instance. */
     readonly bridge: CdpBridge;
+    /** Mode configuration state manager. */
     readonly modeService: ModeService;
 }
 
+/**
+ * Factory creating SelectAction for mode selection menu updates.
+ * @param deps Injected dependencies.
+ * @returns SelectAction implementation.
+ */
 export function createModeSelectAction(deps: ModeSelectActionDeps): SelectAction {
     return {
         match(customId: string): boolean {

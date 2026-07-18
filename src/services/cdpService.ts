@@ -6,43 +6,69 @@ import { execFile, spawn } from 'child_process';
 import { getAntigravityCliPath, extractProjectNameFromPath } from '../utils/pathUtils';
 import WebSocket from 'ws';
 
+/** Configuration options for the CDP service. */
 export interface CdpServiceOptions {
+    /** Target CDP ports to scan for active sessions. */
     portsToScan?: number[];
+    /** Request timeout duration in milliseconds. */
     cdpCallTimeout?: number;
     /** Number of auto-reconnect attempts on disconnect. 0 = no reconnect. Default: 3 */
     maxReconnectAttempts?: number;
     /** Delay between reconnect attempts (ms). Default: 2000 */
     reconnectDelayMs?: number;
+    /** Target instance profile configuration name. */
     accountName?: string;
+    /** Custom ports mapped per account name. */
     accountPorts?: Record<string, number>;
+    /** Custom profile storage paths mapped per account. */
     accountUserDataDirs?: Record<string, string>;
+    /** IP address or hostname of the CDP target. */
     cdpHost?: string;
 }
 
+/** Execution context payload metadata. */
 export interface CdpContext {
+    /** Target context unique ID identifier. */
     id: number;
+    /** Display name of target execution scope. */
     name: string;
+    /** Context location URL address. */
     url: string;
 }
 
+/** Output result payload for message injection. */
 export interface InjectResult {
+    /** Flag showing if message injection succeeded. */
     ok: boolean;
+    /** Injection trigger method key string. */
     method?: string;
+    /** Context identifier number target. */
     contextId?: number;
+    /** Error message string, if applicable. */
     error?: string;
 }
 
+/** Base64 metadata payload of extracted images. */
 export interface ExtractedResponseImage {
+    /** Base filename reference label. */
     name: string;
+    /** MIME type identifier. */
     mimeType: string;
+    /** Binary raw Base64 data payload. */
     base64Data?: string;
+    /** Source resource locator address. */
     url?: string;
 }
 
+/** Runtime telemetry metadata for workspace chats. */
 export interface WorkspaceRuntimeState {
+    /** Check showing if generation is actively processing. */
     isGenerating: boolean;
+    /** Active chat window session title. */
     sessionTitle: string;
+    /** Check showing if chat session is initialized. */
     hasActiveChat: boolean;
+    /** Active primary context identifier number. */
     contextId: number | null;
 }
 
@@ -148,6 +174,9 @@ const INJECT_RETRY_BACKOFF_MS = 500;
 const MODE_READY_TIMEOUT_MS = 4000;
 const MODE_RETRY_READY_TIMEOUT_MS = 2000;
 
+/**
+ * Service for communicating with Antigravity / Claude Code via Chrome DevTools Protocol (CDP).
+ */
 export class CdpService extends EventEmitter {
     private ports: number[];
     private isConnectedFlag: boolean = false;
@@ -177,6 +206,9 @@ export class CdpService extends EventEmitter {
     private accountPorts: Record<string, number>;
     private accountUserDataDirs: Record<string, string>;
 
+    /**
+     * @param options Service configuration options.
+     */
     constructor(options: CdpServiceOptions = {}) {
         super();
         this.accountName = options.accountName || 'default';
@@ -189,6 +221,11 @@ export class CdpService extends EventEmitter {
         this.cdpHost = options.cdpHost ?? '127.0.0.1';
     }
 
+    /**
+     * Resolves the scanning ports for the given account configuration.
+     * @param accountName Target account configuration name.
+     * @returns Array of ports.
+     */
     private resolveAccountPorts(accountName: string): number[] {
         const explicitPort = this.accountPorts[accountName];
         if (Number.isInteger(explicitPort) && explicitPort > 0) {
@@ -197,6 +234,11 @@ export class CdpService extends EventEmitter {
         return [...CDP_PORTS];
     }
 
+    /**
+     * Resolves the user data directory setting for the account.
+     * @param accountName Target account configuration name.
+     * @returns User data directory string path, or null.
+     */
     private resolveConfiguredUserDataDir(accountName: string): string | null {
         const configured = this.accountUserDataDirs[accountName];
         if (typeof configured === 'string' && configured.trim().length > 0) {
@@ -205,6 +247,11 @@ export class CdpService extends EventEmitter {
         return null;
     }
 
+    /**
+     * Fetch JSON payload from a HTTP endpoint.
+     * @param url Request target URL.
+     * @returns Parsed JSON array or object.
+     */
     private async getJson(url: string): Promise<any[]> {
         return new Promise((resolve, reject) => {
             http.get(url, (res) => {
@@ -217,6 +264,10 @@ export class CdpService extends EventEmitter {
         });
     }
 
+    /**
+     * Scans ports to find the active Antigravity/Claude Code workbench page and establishes target URL.
+     * @returns WebSocket debugger URL.
+     */
     async discoverTarget(): Promise<string> {
         let allPages: any[] = [];
         for (const port of this.ports) {
@@ -281,6 +332,9 @@ export class CdpService extends EventEmitter {
         throw new Error('CDP target not found on any port.');
     }
 
+    /**
+     * Connects to the target WebSocket debugger URL.
+     */
     async connect(): Promise<void> {
         if (!this.targetUrl) {
             await this.discoverTarget();
@@ -351,6 +405,12 @@ export class CdpService extends EventEmitter {
         }
     }
 
+    /**
+     * Sends a command payload directly via WebSocket.
+     * @param method CDP domain method name.
+     * @param params Method configuration parameters.
+     * @returns Command result promise.
+     */
     async call(method: string, params: any = {}): Promise<any> {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
             throw new Error('WebSocket is not connected');
@@ -391,6 +451,9 @@ export class CdpService extends EventEmitter {
         }
     }
 
+    /**
+     * Disconnects the socket and resets session state properties.
+     */
     async disconnect(): Promise<void> {
         // Stop reconnection attempts
         this.maxReconnectAttempts = 0;
@@ -406,6 +469,13 @@ export class CdpService extends EventEmitter {
         this.clearPendingCalls(new Error('disconnect() was called'));
     }
 
+    /**
+     * Evaluates a script expression across all available execution contexts.
+     * @param expression Script string.
+     * @param accept Filtering logic callback.
+     * @param options Await promise setting.
+     * @returns Evaluation result and the context identifier.
+     */
     private async evaluateAcrossContexts<T = unknown>(
         expression: string,
         accept: (value: T) => boolean,
@@ -457,6 +527,10 @@ export class CdpService extends EventEmitter {
         return this.currentWorkspaceName;
     }
 
+    /**
+     * Gets the current workspace folder path.
+     * @returns Absolute path string, or null.
+     */
     getCurrentWorkspacePath(): string | null {
         return this.currentWorkspacePath;
     }
@@ -491,6 +565,11 @@ export class CdpService extends EventEmitter {
         }
     }
 
+    /**
+     * Connects to the workbench page or launches a new workbench for the workspace path.
+     * @param workspacePath Absolute workspace path.
+     * @returns True if workspace opened successfully.
+     */
     async openWorkspace(workspacePath: string): Promise<boolean> {
         const projectName = extractProjectNameFromPath(workspacePath);
         this.currentWorkspacePath = workspacePath;
@@ -533,6 +612,12 @@ export class CdpService extends EventEmitter {
         return this.probeWorkspaceFolderPath(projectName, workspacePath);
     }
 
+    /**
+     * Scan port configurations to locate and establish connection to target workspace page.
+     * @param workspacePath Absolute filepath to workspace.
+     * @param projectName Short workspace project name keyword.
+     * @returns True if target page connected successfully.
+     */
     private async _discoverAndConnectForWorkspaceImpl(
         workspacePath: string,
         projectName: string,
@@ -1017,6 +1102,11 @@ export class CdpService extends EventEmitter {
         }
     }
 
+    /**
+     * Spawns a CLI command process and awaits its completion.
+     * @param command Base binary executable command name.
+     * @param args Array of argument strings.
+     */
     private async runCommand(command: string, args: string[]): Promise<void> {
         await new Promise<void>((resolve, reject) => {
             const child = spawn(command, args, { stdio: 'ignore' });
@@ -1035,6 +1125,11 @@ export class CdpService extends EventEmitter {
         });
     }
 
+    /**
+     * Resolves the running user-data-dir configured for a specific port.
+     * @param port Target port number.
+     * @returns User data directory string path, or null.
+     */
     private async resolveRunningUserDataDirForPort(port: number): Promise<string | null> {
         const commandLines = await this.getProcessCommandLines();
         if (commandLines.length === 0) return null;
@@ -1058,6 +1153,10 @@ export class CdpService extends EventEmitter {
         return null;
     }
 
+    /**
+     * Queries active system processes command lines.
+     * @returns Command line strings list.
+     */
     private async getProcessCommandLines(): Promise<string[]> {
         const run = (command: string, args: string[]): Promise<string> =>
             new Promise((resolve, reject) => {
@@ -1121,6 +1220,10 @@ export class CdpService extends EventEmitter {
         }
     }
 
+    /**
+     * Closes the current CDP target page and disconnects the socket.
+     * @returns True if target closed successfully.
+     */
     async closeCurrentTarget(): Promise<boolean> {
         if (!this.targetId) {
             return false;
@@ -1134,6 +1237,10 @@ export class CdpService extends EventEmitter {
         }
     }
 
+    /**
+     * Inspects the current workspace UI runtime state.
+     * @returns WorkspaceRuntimeState object.
+     */
     async inspectWorkspaceRuntimeState(): Promise<WorkspaceRuntimeState> {
         const result = await this.evaluateAcrossContexts<WorkspaceRuntimeState>(
             WORKSPACE_STATE_SCRIPT,
@@ -1151,6 +1258,11 @@ export class CdpService extends EventEmitter {
         };
     }
 
+    /**
+     * Closes current target gracefully, using shortcut key sequences.
+     * @param timeoutMs Timeout duration.
+     * @returns True if gracefully closed target.
+     */
     async closeCurrentTargetGracefully(timeoutMs = 5000): Promise<boolean> {
         if (!this.targetId) {
             return false;
@@ -1338,10 +1450,18 @@ export class CdpService extends EventEmitter {
         }
     }
 
+    /**
+     * Checks if the WebSocket is currently connected.
+     * @returns True if connected.
+     */
     isConnected(): boolean {
         return this.isConnectedFlag;
     }
 
+    /**
+     * Retrieves the current list of execution contexts.
+     * @returns Array of CdpContext.
+     */
     getContexts(): CdpContext[] {
         return [...this.contexts];
     }
@@ -1369,6 +1489,10 @@ export class CdpService extends EventEmitter {
         return false;
     }
 
+    /**
+     * Resolves the primary cascade-panel context ID, fallback extension context or first context.
+     * @returns Resolved context ID or null.
+     */
     getPrimaryContextId(): number | null {
         // Find cascade-panel context
         const context = this.contexts.find(c => c.url && c.url.includes('cascade-panel'));
@@ -1412,6 +1536,11 @@ export class CdpService extends EventEmitter {
         return { ok: false, error: 'Chat input field not found' };
     }
 
+    /**
+     * Polls until the chat input is focused and ready.
+     * @param timeoutMs Timeout duration in milliseconds.
+     * @returns Focus result payload.
+     */
     private async waitForChatInputReady(timeoutMs = CHAT_READY_TIMEOUT_MS): Promise<{ ok: boolean; contextId?: number; error?: string }> {
         const deadline = Date.now() + timeoutMs;
         let lastError = 'Chat input field not found';
@@ -1428,6 +1557,11 @@ export class CdpService extends EventEmitter {
         return { ok: false, error: lastError };
     }
 
+    /**
+     * Determines if a message injection error is transient.
+     * @param error Error description string.
+     * @returns True if error is transient.
+     */
     private isTransientInjectError(error?: string): boolean {
         const message = String(error || '');
         return [
@@ -1438,6 +1572,10 @@ export class CdpService extends EventEmitter {
         ].some((fragment) => message.includes(fragment));
     }
 
+    /**
+     * Evaluates if the mode toggle button is ready in the DOM.
+     * @returns True if toggle button exists and is visible.
+     */
     private async isModeToggleReady(): Promise<boolean> {
         const expression = '(() => {'
             + ' const uiNameMap = { fast: "Fast", plan: "Planning" };'
@@ -1466,6 +1604,11 @@ export class CdpService extends EventEmitter {
         }
     }
 
+    /**
+     * Polls until the mode toggle button is ready.
+     * @param timeoutMs Timeout duration in milliseconds.
+     * @returns True if ready.
+     */
     private async waitForModeToggleReady(timeoutMs = MODE_READY_TIMEOUT_MS): Promise<boolean> {
         const deadline = Date.now() + timeoutMs;
         while (Date.now() < deadline) {
@@ -1477,6 +1620,11 @@ export class CdpService extends EventEmitter {
         return false;
     }
 
+    /**
+     * Determines if a mode toggle error is transient.
+     * @param error Error description string.
+     * @returns True if error is transient.
+     */
     private isTransientModeError(error?: string): boolean {
         const message = String(error || '');
         return [
@@ -1486,6 +1634,12 @@ export class CdpService extends EventEmitter {
         ].some((fragment) => message.includes(fragment));
     }
 
+    /**
+     * Core message injection logic.
+     * @param text Prompt text content.
+     * @param imageFilePaths Image file paths list to attach.
+     * @returns Injection outcome details.
+     */
     private async injectMessageCore(text: string, imageFilePaths?: string[]): Promise<InjectResult> {
         // Check if chat input is already available
         let focusResult = await this.waitForChatInputReady(500);
@@ -1519,6 +1673,13 @@ export class CdpService extends EventEmitter {
         };
     }
 
+    /**
+     * Retries message injection once if the first attempt fails.
+     * @param text Prompt text content.
+     * @param firstError The error message from the first attempt.
+     * @param imageFilePaths Optional image file paths list.
+     * @returns Injection outcome details.
+     */
     private async retryInjectOnce(
         text: string,
         firstError: string,

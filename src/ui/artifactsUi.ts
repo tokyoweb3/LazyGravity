@@ -40,11 +40,22 @@ const MAX_SELECT_OPTIONS = 25;
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Truncates a string value if it exceeds the specified maximum length.
+ * @param str Target string.
+ * @param max Maximum length.
+ * @returns Truncated string with ellipsis.
+ */
 function truncate(str: string, max: number): string {
     if (str.length <= max) return str;
     return str.slice(0, max - 1) + '…';
 }
 
+/**
+ * Formats the select menu option description for an artifact.
+ * @param artifact Artifact metadata.
+ * @returns Description string, or undefined if empty.
+ */
 function formatOptionDescription(artifact: ArtifactInfo): string | undefined {
     const parts: string[] = [];
     parts.push(artifactTypeLabel(artifact.artifactType));
@@ -56,6 +67,11 @@ function formatOptionDescription(artifact: ArtifactInfo): string | undefined {
     return combined.length > 0 ? truncate(combined, 100) : undefined;
 }
 
+/**
+ * Formats an ISO date string into a localized friendly date representation.
+ * @param iso ISO date string.
+ * @returns Localized friendly date string.
+ */
 function formatUpdatedAt(iso?: string): string {
     if (!iso) return '';
     try {

@@ -12,6 +12,9 @@ import { logger } from '../utils/logger';
 // Action definition
 // ---------------------------------------------------------------------------
 
+/**
+ * Interface definition for button click action handlers.
+ */
 export interface ButtonAction {
     /** Parse a customId and return extracted parameters, or null if not matching. */
     match: (customId: string) => Record<string, string> | null;
@@ -26,6 +29,9 @@ export interface ButtonAction {
 // Dependency injection interface
 // ---------------------------------------------------------------------------
 
+/**
+ * Dependencies injected into button handler factory.
+ */
 export interface ButtonHandlerDeps {
     /** Registered button action handlers. */
     actions: readonly ButtonAction[];
@@ -38,6 +44,8 @@ export interface ButtonHandlerDeps {
 /**
  * Create a platform-agnostic button interaction handler.
  * Returns an async function that processes PlatformButtonInteraction events.
+ * @param deps Injected dependencies.
+ * @returns Button click handler dispatch function.
  */
 export function createPlatformButtonHandler(deps: ButtonHandlerDeps) {
     return async (interaction: PlatformButtonInteraction): Promise<void> => {

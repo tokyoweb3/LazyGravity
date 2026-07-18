@@ -16,10 +16,19 @@ import {
     buildAutoAcceptPayload,
 } from '../ui/autoAcceptUi';
 
+/**
+ * Dependencies injected into auto-accept button action creator.
+ */
 export interface AutoAcceptButtonActionDeps {
+    /** AutoAcceptService managing current configuration state. */
     readonly autoAcceptService: AutoAcceptService;
 }
 
+/**
+ * Factory creating ButtonAction for auto-accept config toggling button clicks.
+ * @param deps Injected dependencies.
+ * @returns ButtonAction implementation.
+ */
 export function createAutoAcceptButtonAction(deps: AutoAcceptButtonActionDeps): ButtonAction {
     return {
         match(customId: string): Record<string, string> | null {

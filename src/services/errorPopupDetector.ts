@@ -13,6 +13,7 @@ export interface ErrorPopupInfo {
     buttons: string[];
 }
 
+/** Config options for ErrorPopupDetector. */
 export interface ErrorPopupDetectorOptions {
     /** CDP service instance */
     cdpService: CdpService;
@@ -296,7 +297,12 @@ export class ErrorPopupDetector {
         }
     }
 
-    /** Execute Runtime.evaluate with contextId and return result.value. */
+    /**
+     * Execute Runtime.evaluate with contextId and return result.value.
+     * @param expression Script string.
+     * @param awaitPromise Await promise setting.
+     * @returns Evaluation result.
+     */
     private async runEvaluateScript(expression: string, awaitPromise: boolean = false): Promise<any> {
         const contextId = this.cdpService.getPrimaryContextId();
         const callParams: Record<string, unknown> = {

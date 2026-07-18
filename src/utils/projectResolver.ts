@@ -1,6 +1,14 @@
 import type { WorkspaceCommandHandler } from '../commands/workspaceCommandHandler';
 import type { CdpBridge } from '../services/cdpBridgeManager';
 
+/**
+ * Resolves the target workspace project name. If not explicitly provided, attempts to resolve
+ * from the session channel bindings.
+ * @param deps Injected dependencies.
+ * @param channelId Active channel ID.
+ * @param providedProjectName Optional explicit project name.
+ * @returns Resolved project name, or undefined.
+ */
 export function resolveProjectName(
     deps: { wsHandler: WorkspaceCommandHandler; bridge: CdpBridge },
     channelId: string,

@@ -49,11 +49,17 @@ export interface UpdateScheduleInput {
 export class ScheduleRepository {
     private db: Database.Database;
 
+    /**
+     * @param db SQLite database connection.
+     */
     constructor(db: Database.Database) {
         this.db = db;
         this.initialize();
     }
 
+    /**
+     * Initializes the schedules table and schema migrations.
+     */
     private initialize(): void {
         this.db.exec(`
             CREATE TABLE IF NOT EXISTS schedules (
@@ -217,6 +223,8 @@ export class ScheduleRepository {
 
     /**
      * Map a DB row to ScheduleRecord
+     * @param row SQLite database row.
+     * @returns Mapped ScheduleRecord payload.
      */
     private mapRow(row: any): ScheduleRecord {
         return {

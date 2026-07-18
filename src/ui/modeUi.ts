@@ -17,7 +17,11 @@ import {
     withTimestamp,
 } from '../platform/richContentBuilder';
 
+/**
+ * Dependencies injected into Mode UI builder functions.
+ */
 export interface ModeUiDeps {
+    /** Optional getter returning the currently active CdpService connection. */
     getCurrentCdp?: () => CdpService | null;
 }
 

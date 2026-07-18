@@ -7,11 +7,22 @@ import type { WorkspaceCommandHandler } from '../commands/workspaceCommandHandle
 import { logger } from '../utils/logger';
 
 import { executeBrowserClick } from '../utils/questionActionUtils';
+
+/**
+ * Dependencies injected into file change button action creator.
+ */
 export interface FileChangeButtonActionDeps {
+    /** Target CDP bridge manager instance. */
     readonly bridge: CdpBridge;
+    /** Workspace command handler instance. */
     readonly wsHandler: WorkspaceCommandHandler;
 }
 
+/**
+ * Factory creating ButtonAction for file change approval/reject button clicks.
+ * @param deps Injected dependencies.
+ * @returns ButtonAction implementation.
+ */
 export function createFileChangeButtonAction(
     deps: FileChangeButtonActionDeps,
 ): ButtonAction {

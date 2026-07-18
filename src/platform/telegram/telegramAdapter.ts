@@ -25,17 +25,31 @@ import { logger } from '../../utils/logger';
 // TelegramAdapter
 // ---------------------------------------------------------------------------
 
+/**
+ * Adapter implementing multi-platform interface for Telegram.
+ */
 export class TelegramAdapter implements PlatformAdapter {
+    /** The target messaging platform string. */
     readonly platform = 'telegram' as const;
 
+    /** Telegram bot client wrapper. */
     private readonly bot: TelegramBotLike;
+    /** The bot's own user ID. */
     private readonly botUserId: string;
+    /** Registered event handlers. */
     private events: PlatformAdapterEvents | null = null;
+    /** Polling loop status flag. */
     private started = false;
+    /** True if telegram event list handlers are bound. */
     private handlersRegistered = false;
     /** Timestamp when the adapter started — messages older than this are discarded. */
     private startedAt: number = 0;
 
+    /**
+     * Initializes the Telegram adapter.
+     * @param bot Bot library wrapper.
+     * @param botUserId Bot native user ID.
+     */
     constructor(bot: TelegramBotLike, botUserId: string) {
         this.bot = bot;
         this.botUserId = botUserId;
@@ -46,6 +60,7 @@ export class TelegramAdapter implements PlatformAdapter {
      *
      * Registers Telegram event handlers that translate incoming events to the
      * platform-agnostic event callbacks, then starts the bot polling loop.
+     * @param events Callbacks for handling received events.
      */
     async start(events: PlatformAdapterEvents): Promise<void> {
         if (this.started) {
@@ -90,6 +105,8 @@ export class TelegramAdapter implements PlatformAdapter {
     /**
      * Retrieve a channel (chat) by its platform-native ID.
      * Returns a PlatformChannel backed by the bot API.
+     * @param chatId Telegram Chat ID.
+     * @returns Fully mapped PlatformChannel, or null if retrieval failed.
      */
     async getChannel(chatId: string): Promise<PlatformChannel | null> {
         try {
@@ -109,6 +126,7 @@ export class TelegramAdapter implements PlatformAdapter {
 
     /**
      * Return the bot's own user ID.
+     * @returns Bot user ID string.
      */
     getBotUserId(): string {
         return this.botUserId;
@@ -121,6 +139,8 @@ export class TelegramAdapter implements PlatformAdapter {
     /**
      * Shared handler for both text and photo messages.
      * Wraps the Telegram message and fires onMessage.
+     * @param eventName Identifier event name for logging.
+     * @param ctx Event update context.
      */
     private handleIncomingMessage(eventName: string, ctx: any): void {
         if (!this.events?.onMessage) return;
@@ -162,6 +182,9 @@ export class TelegramAdapter implements PlatformAdapter {
         }
     }
 
+    /**
+     * Binds internal event listeners to the Telegram Bot client.
+     */
     private registerHandlers(): void {
         // Text messages
         this.bot.on('message:text', async (ctx: any) => {
@@ -217,6 +240,10 @@ export class TelegramAdapter implements PlatformAdapter {
         });
     }
 
+    /**
+     * Safely triggers the onError event handler callback.
+     * @param error The thrown error object.
+     */
     private emitError(error: unknown): void {
         if (!this.events?.onError) return;
 

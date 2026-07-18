@@ -13,11 +13,21 @@ import { resolveProjectName } from '../utils/projectResolver';
 import type { WorkspaceCommandHandler } from '../commands/workspaceCommandHandler';
 import { logger } from '../utils/logger';
 
+/**
+ * Dependencies injected into approval button action creator.
+ */
 export interface ApprovalButtonActionDeps {
+    /** Target CDP bridge manager instance. */
     readonly bridge: CdpBridge;
+    /** Workspace command handler instance. */
     readonly wsHandler: WorkspaceCommandHandler;
 }
 
+/**
+ * Factory creating ButtonAction for handling platform approvals.
+ * @param deps Injected dependencies.
+ * @returns ButtonAction implementation.
+ */
 export function createApprovalButtonAction(
     deps: ApprovalButtonActionDeps,
 ): ButtonAction {

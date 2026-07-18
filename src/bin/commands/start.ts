@@ -10,6 +10,8 @@ import { checkForUpdates } from '../../services/updateCheckService';
 /**
  * Resolve log level from CLI flags on the root program.
  * Priority: --verbose > --quiet > undefined (fall through to env/config)
+ * @param cmd Active commander Command.
+ * @returns Resolved LogLevel.
  */
 function resolveCliLogLevel(cmd: Command | undefined): LogLevel | undefined {
     if (!cmd) return undefined;
@@ -20,6 +22,11 @@ function resolveCliLogLevel(cmd: Command | undefined): LogLevel | undefined {
     return undefined;
 }
 
+/**
+ * Command action to start/run the LazyGravity bot backend.
+ * @param _opts Unused command options map.
+ * @param cmd Active commander Command.
+ */
 export async function startAction(
     _opts?: Record<string, unknown>,
     cmd?: Command,

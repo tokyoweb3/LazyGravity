@@ -20,6 +20,7 @@ export interface PlanningInfo {
     hasOpenButton?: boolean;
 }
 
+/** Config options for PlanningDetector. */
 export interface PlanningDetectorOptions {
     /** CDP service instance */
     cdpService: CdpService;
@@ -383,7 +384,11 @@ export class PlanningDetector {
         }
     }
 
-    /** Execute Runtime.evaluate with contextId and return result.value. */
+    /**
+     * Execute Runtime.evaluate with contextId and return result.value.
+     * @param expression Script string.
+     * @returns Evaluation result.
+     */
     private async runEvaluateScript(expression: string): Promise<any> {
         const contextId = this.cdpService.getPrimaryContextId();
         const callParams: Record<string, unknown> = {

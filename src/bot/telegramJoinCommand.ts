@@ -14,23 +14,41 @@ import type { AccountPreferenceRepository } from '../database/accountPreferenceR
 import type { ChannelPreferenceRepository } from '../database/channelPreferenceRepository';
 import type { AntigravityAccountConfig } from '../utils/configLoader';
 
+/**
+ * Dependencies injected into Telegram join command handlers.
+ */
 export interface TelegramJoinCommandDeps {
+    /** Target CDP bridge manager instance. */
     readonly bridge: CdpBridge;
+    /** ChatSessionService managing active chats list. */
     readonly chatSessionService?: ChatSessionService;
+    /** Database repository containing Telegram chat binds. */
     readonly telegramBindingRepo?: TelegramBindingRepository;
+    /** Service mapping workspace name and directories. */
     readonly workspaceService?: WorkspaceService;
+    /** Low-level platform telegram client interface wrapper. */
     readonly botApi?: any;
+    /** Account preference configurations repository. */
     readonly accountPrefRepo?: AccountPreferenceRepository;
+    /** Channel preference configurations repository. */
     readonly channelPrefRepo?: ChannelPreferenceRepository;
+    /** Configured accounts lists database credentials. */
     readonly antigravityAccounts?: AntigravityAccountConfig[];
+    /** Extraction mode config preference. */
     readonly extractionMode?: import('../utils/config').ExtractionMode;
-    /** Primary active monitors from the main Telegram message handler (keyed by project name).
-     *  Used to skip passive mirror monitors when a primary monitor is already running. */
+    /** Primary active monitors from the main Telegram message handler (keyed by project name). */
     readonly activeMonitors?: Map<string, ResponseMonitor>;
 }
 
 const activeResponseMonitors = new Map<string, ResponseMonitor>();
 
+/**
+ * Resolves the account name for the interaction based on channel preferences.
+ * @param deps Injected dependencies.
+ * @param chatId Chat channel ID.
+ * @param userId Author user ID.
+ * @returns Resolved account name.
+ */
 function resolveAccount(deps: TelegramJoinCommandDeps, chatId: string, userId: string): string {
     return resolveScopedAccountName({
         channelId: chatId,
@@ -42,6 +60,11 @@ function resolveAccount(deps: TelegramJoinCommandDeps, chatId: string, userId: s
     });
 }
 
+/**
+ * Command handler function for the telegram /join command.
+ * @param deps Injected dependencies.
+ * @param message Platform message trigger.
+ */
 export async function handleJoin(deps: TelegramJoinCommandDeps, message: PlatformMessage): Promise<void> {
     const binding = deps.telegramBindingRepo?.findByChatIdWithParentFallback(message.channel.id);
     if (!binding) {
@@ -75,6 +98,11 @@ export async function handleJoin(deps: TelegramJoinCommandDeps, message: Platfor
     }
 }
 
+/**
+ * Event handler triggered when a session is selected inside Telegram dropdown UI.
+ * @param deps Injected dependencies.
+ * @param interaction Dropdown selection interaction.
+ */
 export async function handleTelegramJoinSelect(deps: TelegramJoinCommandDeps, interaction: PlatformSelectInteraction): Promise<void> {
     const selectedTitle = interaction.values[0];
     const originalChannelId = interaction.channel.id;
@@ -128,6 +156,11 @@ export async function handleTelegramJoinSelect(deps: TelegramJoinCommandDeps, in
     await interaction.update({ text: replyMsg }).catch(logger.error);
 }
 
+/**
+ * Command handler function for the /mirror command to toggle mirroring.
+ * @param deps Injected dependencies.
+ * @param message Platform command trigger.
+ */
 export async function handleMirror(deps: TelegramJoinCommandDeps, message: PlatformMessage): Promise<void> {
     const binding = deps.telegramBindingRepo?.findByChatIdWithParentFallback(message.channel.id);
     if (!binding) {
@@ -176,6 +209,14 @@ export async function handleMirror(deps: TelegramJoinCommandDeps, message: Platf
     }
 }
 
+/**
+ * Route a mirrored message to the appropriate Telegram channel.
+ * @param deps Injected dependencies.
+ * @param cdp Active CdpService.
+ * @param workspacePath Workspace root directory.
+ * @param info Input metadata containing text.
+ * @param channel Platform channel target.
+ */
 async function routeMirroredMessage(
     deps: TelegramJoinCommandDeps,
     cdp: CdpService,
@@ -192,6 +233,14 @@ async function routeMirroredMessage(
     startResponseMirror(deps, cdp, workspacePath, channel, chatTitle || 'Unknown');
 }
 
+/**
+ * Monitor and forward AI responses passively to Telegram channel.
+ * @param deps Injected dependencies.
+ * @param cdp Active CdpService.
+ * @param workspacePath Workspace directory path.
+ * @param channel Target channel.
+ * @param chatTitle Current session chat title.
+ */
 export function startResponseMirror(
     deps: TelegramJoinCommandDeps,
     cdp: CdpService,

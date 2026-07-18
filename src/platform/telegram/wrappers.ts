@@ -25,12 +25,19 @@ import { richContentToHtml, markdownToTelegramHtml } from './telegramFormatter';
 // grammy-compatible interfaces (no grammy import needed)
 // ---------------------------------------------------------------------------
 
+/**
+ * Interface mimicking a GrammY bot client for modular dependency injection.
+ */
 export interface TelegramBotLike {
     /** Bot token — needed to construct file download URLs. */
     token?: string;
+    /** Starts bot polling. */
     start(): void | Promise<void>;
+    /** Stops bot polling. */
     stop(): void;
+    /** Registers update event listeners. */
     on(event: string, handler: (...args: any[]) => any): void;
+    /** API client methods subset. */
     api: {
         sendMessage(chatId: number | string, text: string, options?: any): Promise<any>;
         editMessageText(chatId: number | string, messageId: number, text: string, options?: any): Promise<any>;
@@ -51,44 +58,81 @@ export interface TelegramBotLike {
     toInputFile?: (data: Buffer, filename?: string) => unknown;
 }
 
+/**
+ * Represents a Telegram sender structure.
+ */
 export interface TelegramFrom {
+    /** Native user ID. */
     id: number;
+    /** First name of the user. */
     first_name: string;
+    /** Optional last name of the user. */
     last_name?: string;
+    /** Optional username handle. */
     username?: string;
+    /** True if the user is a bot. */
     is_bot: boolean;
 }
 
+/**
+ * Represents a Telegram photo size detail.
+ */
 export interface TelegramPhotoSize {
+    /** Native file unique ID. */
     file_id: string;
+    /** Unique media ID. */
     file_unique_id: string;
+    /** Image pixel width. */
     width: number;
+    /** Image pixel height. */
     height: number;
+    /** File size in bytes. */
     file_size?: number;
 }
 
+/**
+ * Represents a Telegram message payload.
+ */
 export interface TelegramMessageLike {
+    /** Message ID. */
     message_id: number;
+    /** Sender user. */
     from?: TelegramFrom;
+    /** Chat destination info. */
     chat: { id: number; title?: string; type: string };
+    /** Optional raw message text. */
     text?: string;
     /** Photo messages store user text in caption, not text. */
     caption?: string;
     /** Array of photo sizes; last element is the largest. */
     photo?: TelegramPhotoSize[];
+    /** Unix timestamp. */
     date: number;
 }
 
+/**
+ * Represents a Telegram callback query update.
+ */
 export interface TelegramCallbackQueryLike {
+    /** Query identifier. */
     id: string;
+    /** Sender user. */
     from: TelegramFrom;
+    /** Original message, if any. */
     message?: TelegramMessageLike;
+    /** Callback payload data. */
     data?: string;
 }
 
+/**
+ * Options package for Telegram message deliveries.
+ */
 export interface TelegramSendOptions {
+    /** Outbound text markup. */
     text: string;
+    /** HTML formatting flag. */
     parse_mode: 'HTML';
+    /** Dynamic keyboard buttons. */
     reply_markup?: {
         inline_keyboard: ReadonlyArray<
             ReadonlyArray<{ text: string; callback_data: string }>
@@ -102,6 +146,11 @@ export interface TelegramSendOptions {
 
 type InlineButton = { text: string; callback_data: string };
 
+/**
+ * Converts a button definition to an inline button.
+ * @param btn The button definition.
+ * @returns InlineButton structure.
+ */
 function buttonDefToInline(btn: ButtonDef): InlineButton {
     return { text: btn.label, callback_data: btn.customId };
 }
@@ -113,12 +162,22 @@ function buttonDefToInline(btn: ButtonDef): InlineButton {
  */
 export const SELECT_CALLBACK_SEP = '\x1f';
 
+/**
+ * Converts select menu options to inline keyboard rows.
+ * @param menu Select menu definition.
+ * @returns Grid array of inline buttons.
+ */
 function selectMenuToInlineRows(menu: SelectMenuDef): ReadonlyArray<ReadonlyArray<InlineButton>> {
     return menu.options.map((opt) => [
         { text: opt.label, callback_data: `${menu.customId}${SELECT_CALLBACK_SEP}${opt.value}` },
     ]);
 }
 
+/**
+ * Transforms generic component rows to Telegram-compatible keyboard arrays.
+ * @param rows Input components grid.
+ * @returns Multi-dimensional inline button array.
+ */
 function componentRowsToInlineKeyboard(
     rows: readonly ComponentRow[],
 ): ReadonlyArray<ReadonlyArray<InlineButton>> {
@@ -163,6 +222,8 @@ function componentRowsToInlineKeyboard(
  * - RichContent is rendered to HTML via richContentToHtml
  * - ComponentRow[] become inline_keyboard
  * - text + richContent are combined into one HTML message
+ * @param payload Outbound payload.
+ * @returns Fully formatted TelegramSendOptions object.
  */
 export function toTelegramPayload(payload: MessagePayload): TelegramSendOptions {
     const parts: string[] = [];
@@ -206,7 +267,11 @@ export function toTelegramPayload(payload: MessagePayload): TelegramSendOptions 
 // Entity wrappers
 // ---------------------------------------------------------------------------
 
-/** Wrap a Telegram user object to a PlatformUser. */
+/**
+ * Wrap a Telegram user object to a PlatformUser.
+ * @param from Telegram source user.
+ * @returns Mapped PlatformUser.
+ */
 export function wrapTelegramUser(from: TelegramFrom): PlatformUser {
     const displayParts = [from.first_name];
     if (from.last_name) {
@@ -225,9 +290,13 @@ export function wrapTelegramUser(from: TelegramFrom): PlatformUser {
 /**
  * Try to send a file attachment via Telegram photo/document API.
  * Returns the sent message, or null if file sending is not available.
- *
- * @param toInputFile - Optional converter that wraps Buffer for the Telegram API.
- *   grammY requires Buffer wrapped in InputFile; pass `bot.toInputFile` here.
+ * @param api Bot API instance.
+ * @param chatId Destination chat ID.
+ * @param file Attachment payload.
+ * @param caption Custom caption text.
+ * @param extraOptions Optional additional options.
+ * @param toInputFile GrammY file formatter helper.
+ * @returns Resolves to sent message object, or null.
  */
 async function trySendFile(
     api: TelegramBotLike['api'],
@@ -260,7 +329,13 @@ async function trySendFile(
     return null;
 }
 
-/** Wrap a Telegram chat as a PlatformChannel. */
+/**
+ * Wrap a Telegram chat as a PlatformChannel.
+ * @param api Bot API reference.
+ * @param chatId Target chat ID.
+ * @param toInputFile Optional GrammY file formatter helper.
+ * @returns PlatformChannel abstraction interface.
+ */
 export function wrapTelegramChannel(
     api: TelegramBotLike['api'],
     chatId: number | string,
@@ -300,6 +375,9 @@ export function wrapTelegramChannel(
  * Build PlatformAttachment[] from a Telegram photo message.
  * Uses the largest photo size (last in the array) and constructs
  * the download URL from the bot token and file_id.
+ * @param photo Image sizes array.
+ * @param botToken Bot token to build uri.
+ * @returns Mapped PlatformAttachment array.
  */
 function buildPhotoAttachments(
     photo: TelegramPhotoSize[],
@@ -324,7 +402,14 @@ function buildPhotoAttachments(
     }];
 }
 
-/** Wrap a Telegram message as a PlatformMessage. */
+/**
+ * Wrap a Telegram message as a PlatformMessage.
+ * @param msg Original update message.
+ * @param api Bot API instance.
+ * @param toInputFile GrammY file formatter helper.
+ * @param botToken Bot connection token.
+ * @returns PlatformMessage interface.
+ */
 export function wrapTelegramMessage(
     msg: TelegramMessageLike,
     api: TelegramBotLike['api'],
@@ -405,6 +490,7 @@ export function wrapTelegramMessage(
 /**
  * Validate that a chatId is usable for sending messages.
  * Throws a descriptive error if the chatId is synthetic (0).
+ * @param chatId Target ID value.
  */
 function assertValidChatId(chatId: number | string): void {
     if (chatId === 0 || chatId === '0') {
@@ -415,7 +501,12 @@ function assertValidChatId(chatId: number | string): void {
     }
 }
 
-/** Wrap a Telegram callback query as a PlatformButtonInteraction. */
+/**
+ * Wrap a Telegram callback query as a PlatformButtonInteraction.
+ * @param query Native callback query event.
+ * @param api Bot API instance.
+ * @returns PlatformButtonInteraction interface wrapper.
+ */
 export function wrapTelegramCallbackQuery(
     query: TelegramCallbackQueryLike,
     api: TelegramBotLike['api'],
@@ -472,7 +563,13 @@ export function wrapTelegramCallbackQuery(
 // Sent message wrapper
 // ---------------------------------------------------------------------------
 
-/** Wrap a Telegram API send result as a PlatformSentMessage. */
+/**
+ * Wrap a Telegram API send result as a PlatformSentMessage.
+ * @param msg Return message from Telegram API.
+ * @param api Bot API instance.
+ * @param chatId Target destination ID.
+ * @returns Mapped PlatformSentMessage.
+ */
 export function wrapTelegramSentMessage(
     msg: any,
     api: TelegramBotLike['api'],

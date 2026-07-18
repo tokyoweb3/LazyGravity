@@ -2,6 +2,12 @@ import type { CdpService } from '../services/cdpService';
 import { logger } from './logger';
 import { buildClickScript } from '../services/approvalDetector';
 
+/**
+ * Parses question action button customIds into actions and scope metadata.
+ * @param customId Raw customId.
+ * @param expectedPrefix Expected prefix string.
+ * @returns Parsed properties dictionary, or null.
+ */
 export function parseQuestionCustomId(customId: string, expectedPrefix: string): { action: string; projectName?: string; channelId?: string } | null {
     if (customId !== expectedPrefix && !customId.startsWith(expectedPrefix + ':')) return null;
 
@@ -27,6 +33,9 @@ export function parseQuestionCustomId(customId: string, expectedPrefix: string):
 /**
  * Executes a click on an element matching the target text in the IDE.
  * Returns true if the click was successfully dispatched, false otherwise.
+ * @param cdp Active CdpService.
+ * @param buttonText Target innerText of the button.
+ * @returns True if click succeeded.
  */
 export async function executeBrowserClick(cdp: CdpService, buttonText: string): Promise<boolean> {
     try {

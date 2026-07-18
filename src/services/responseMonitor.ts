@@ -480,6 +480,7 @@ export const RESPONSE_SELECTORS = {
 /** Response generation phases */
 export type ResponsePhase = 'waiting' | 'thinking' | 'generating' | 'complete' | 'timeout' | 'quotaReached' | 'disconnected';
 
+/** Configuration options passed to constructed ResponseMonitor instances */
 export interface ResponseMonitorOptions {
     /** CDP service instance */
     cdpService: CdpService;
@@ -515,7 +516,9 @@ export interface ResponseMonitorOptions {
  * Snapshot of pre-injection output and process-log state used to seed monitoring.
  */
 export interface ResponseMonitorBaselineSnapshot {
+    /** Captured response output text. */
     text: string | null;
+    /** Unique activity line keys. */
     processLogKeys: string[];
 }
 
@@ -523,8 +526,11 @@ export interface ResponseMonitorBaselineSnapshot {
  * Execution context metadata used when probing multiple CDP runtime contexts.
  */
 interface ContextProbeTarget {
+    /** Execution context ID. */
     id: number;
+    /** Custom target context name string. */
     name?: string;
+    /** Target window page url address. */
     url?: string;
 }
 
@@ -532,14 +538,20 @@ interface ContextProbeTarget {
  * Evaluation result paired with the context that produced it.
  */
 interface ContextProbeResult<T = unknown> {
+    /** Evaluation result value payload. */
     value: T;
+    /** Executed context target ID. */
     contextId: number | null;
+    /** Executed context name. */
     contextName: string | null;
+    /** Executed context URL. */
     contextUrl: string | null;
 }
 
 /**
  * Prefer the active runtime context first, then fall back to any discovered contexts.
+ * @param cdpService Active CdpService client.
+ * @returns Ordered list of execution context targets.
  */
 function getOrderedContextTargets(cdpService: CdpService): ContextProbeTarget[] {
     const primaryId = cdpService.getPrimaryContextId?.() ?? null;
@@ -570,6 +582,11 @@ function getOrderedContextTargets(cdpService: CdpService): ContextProbeTarget[] 
 
 /**
  * Evaluate an expression across known runtime contexts until one returns an acceptable value.
+ * @param cdpService Active CdpService client.
+ * @param expression Script string to evaluate.
+ * @param accept Filtering validator callback.
+ * @param options Await evaluations settings.
+ * @returns Evaluated target context result value wrapper.
  */
 async function evaluateAcrossContexts<T = unknown>(
     cdpService: CdpService,
@@ -641,6 +658,8 @@ async function evaluateAcrossContexts<T = unknown>(
 /**
  * Capture the current assistant/output DOM state before sending a new prompt.
  * This avoids races where a fast reply is mistaken for baseline text.
+ * @param cdpService Active CdpService client.
+ * @returns Baseline snapshot data wrapper.
  */
 export async function captureResponseMonitorBaseline(
     cdpService: CdpService,
@@ -730,6 +749,9 @@ export class ResponseMonitor {
     private lastActivityTime: number = 0;
     private startTime: number = 0;
 
+    /**
+     * @param options Monitor setup configuration options.
+     */
     constructor(options: ResponseMonitorOptions) {
         this.cdpService = options.cdpService;
         this.pollIntervalMs = options.pollIntervalMs ?? 2000;
@@ -747,6 +769,10 @@ export class ResponseMonitor {
         this.initialSeenProcessLogKeys = options.initialSeenProcessLogKeys;
     }
 
+    /**
+     * Retrieves the latest structured classification data snapshot.
+     * @returns Last classified result.
+     */
     public getLastClassified(): ClassifyResult | null {
         return this.lastClassified;
     }
@@ -766,7 +792,10 @@ export class ResponseMonitor {
         return this.initMonitoring(true);
     }
 
-    /** Internal initialization shared between start() and startPassive() */
+    /**
+     * Core monitoring initialization method.
+     * @param passive Passive generation detection flag.
+     */
     private async initMonitoring(passive: boolean): Promise<void> {
         if (this.isRunning) return;
         this.isRunning = true;
@@ -914,6 +943,11 @@ export class ResponseMonitor {
         }
     }
 
+    /**
+     * Updates and logs response generation phases.
+     * @param phase Active generation phase.
+     * @param text Current extracted output text candidate.
+     */
     private setPhase(phase: ResponsePhase, text: string | null): void {
         if (this.currentPhase !== phase) {
             this.currentPhase = phase;
@@ -944,6 +978,9 @@ export class ResponseMonitor {
         }
     }
 
+    /**
+     * Subscribes connection hook events from active CdpService client.
+     */
     private registerCdpConnectionListeners(): void {
         this.onCdpDisconnected = () => {
             if (!this.isRunning) return;
@@ -984,6 +1021,9 @@ export class ResponseMonitor {
         this.cdpService.on('reconnectFailed', this.onCdpReconnectFailed);
     }
 
+    /**
+     * Unsubscribes connection hook events from active CdpService client.
+     */
     private unregisterCdpConnectionListeners(): void {
         if (this.onCdpDisconnected) {
             this.cdpService.removeListener('disconnected', this.onCdpDisconnected);
@@ -999,6 +1039,9 @@ export class ResponseMonitor {
         }
     }
 
+    /**
+     * Schedules the next polling timeout interval cycle.
+     */
     private schedulePoll(): void {
         if (!this.isRunning || this.isPaused) return;
         this.pollTimer = setTimeout(async () => {
@@ -1009,6 +1052,12 @@ export class ResponseMonitor {
         }, this.pollIntervalMs);
     }
 
+    /**
+     * Helper to evaluate script expressions across active contexts.
+     * @param expression Script string.
+     * @param accept Context validation filtering check.
+     * @returns Evaluation result.
+     */
     private async evaluateAcrossContexts<T = unknown>(
         expression: string,
         accept: (value: T) => boolean,
@@ -1029,6 +1078,10 @@ export class ResponseMonitor {
         return result;
     }
 
+    /**
+     * Logs structured data extraction warnings diagnostics details.
+     * @param payload Extracted DOM payload data.
+     */
     private async logStructuredExtractionDiagnostics(payload: unknown): Promise<void> {
         try {
             const dumpResult = await this.evaluateAcrossContexts<any[] | null>(
@@ -1103,6 +1156,7 @@ export class ResponseMonitor {
 
     /**
      * Emit new process log entries, deduplicating against previously seen keys.
+     * @param entries Log entries text array.
      */
     private emitNewProcessLogs(entries: string[]): void {
         const newEntries: string[] = [];

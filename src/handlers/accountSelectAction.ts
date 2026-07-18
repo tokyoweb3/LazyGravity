@@ -9,15 +9,29 @@ import { listAccountNames } from '../utils/accountUtils';
 import { ACCOUNT_SELECT_ID, buildAccountPayload } from '../ui/accountUi';
 import { logger } from '../utils/logger';
 
+/**
+ * Dependencies injected into account selection action creator.
+ */
 export interface AccountSelectActionDeps {
+    /** Target CDP bridge manager instance. */
     readonly bridge: CdpBridge;
+    /** User account configuration preferences repository. */
     readonly accountPrefRepo: AccountPreferenceRepository;
+    /** Channel preferences repository. */
     readonly channelPrefRepo?: ChannelPreferenceRepository;
+    /** Chat session binding repository. */
     readonly chatSessionRepo?: ChatSessionRepository;
+    /** Resolve bound workspace directory for target channel. */
     readonly getWorkspacePathForChannel?: (channelId: string) => string | null | undefined;
+    /** Registered account credentials mappings configurations. */
     readonly antigravityAccounts: AntigravityAccountConfig[];
 }
 
+/**
+ * Factory creating SelectAction for account selection dropdown changes.
+ * @param deps Injected dependencies.
+ * @returns SelectAction implementation.
+ */
 export function createAccountSelectAction(deps: AccountSelectActionDeps): SelectAction {
     return {
         match(customId: string): boolean {

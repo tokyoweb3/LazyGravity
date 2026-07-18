@@ -3,6 +3,13 @@ import { CdpConnectionPool } from '../services/cdpConnectionPool';
 import { t } from '../utils/i18n';
 import { logger } from '../utils/logger';
 
+/**
+ * Executes the modal submission logic for custom comments injected into the workspace plan.
+ * @param interaction Platform modal submit interaction payload.
+ * @param projectName Active workspace project name.
+ * @param pool CDP connection pool service.
+ * @param accountName Active user account name.
+ */
 export async function execute(
     interaction: PlatformModalSubmitInteraction,
     projectName: string | null,

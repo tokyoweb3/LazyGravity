@@ -29,6 +29,7 @@ export interface CaptureResult {
     error?: string;
 }
 
+/** Config options for ScreenshotService. */
 export interface ScreenshotServiceOptions {
     /** CDP service instance */
     cdpService: CdpService;
@@ -43,6 +44,9 @@ export interface ScreenshotServiceOptions {
 export class ScreenshotService {
     private cdpService: CdpService;
 
+    /**
+     * @param options Service configuration options.
+     */
     constructor(options: ScreenshotServiceOptions) {
         this.cdpService = options.cdpService;
     }

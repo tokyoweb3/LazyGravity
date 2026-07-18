@@ -7,11 +7,18 @@ import Database from 'better-sqlite3';
 export class ArtifactThreadRepository {
     private readonly db: Database.Database;
 
+    /**
+     * Initializes the artifact thread repository and schema.
+     * @param db SQLite database connection.
+     */
     constructor(db: Database.Database) {
         this.db = db;
         this.initialize();
     }
 
+    /**
+     * Creates table and runs migration checks for artifact thread mapping.
+     */
     private initialize(): void {
         const tableInfo = this.db.prepare("PRAGMA table_info('artifact_threads')").all() as any[];
         

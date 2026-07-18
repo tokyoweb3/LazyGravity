@@ -15,6 +15,7 @@ export interface RunCommandInfo {
     rejectText: string;
 }
 
+/** Config options for RunCommandDetector. */
 export interface RunCommandDetectorOptions {
     /** CDP service instance */
     cdpService: CdpService;
@@ -273,6 +274,8 @@ export class RunCommandDetector {
 
     /**
      * Execute Runtime.evaluate with contextId and return result.value.
+     * @param expression Script string.
+     * @returns Evaluation result.
      */
     private async runEvaluateScript(expression: string): Promise<any> {
         const contextId = this.cdpService.getPrimaryContextId();

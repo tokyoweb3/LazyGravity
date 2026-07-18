@@ -11,10 +11,16 @@ import { logger } from '../utils/logger';
 // Command definition
 // ---------------------------------------------------------------------------
 
+/**
+ * Interface definition for slash commands.
+ */
 export interface CommandDef {
     /** Command name (e.g. "mode", "project", "model"). */
     readonly name: string;
-    /** Execute the command. */
+    /**
+     * Executes the command logic.
+     * @param interaction Trigger command interaction.
+     */
     execute: (interaction: PlatformCommandInteraction) => Promise<void>;
 }
 
@@ -22,6 +28,9 @@ export interface CommandDef {
 // Dependency injection interface
 // ---------------------------------------------------------------------------
 
+/**
+ * Dependencies injected into command handler factory.
+ */
 export interface CommandHandlerDeps {
     /** Registered command definitions. */
     commands: readonly CommandDef[];
@@ -34,6 +43,8 @@ export interface CommandHandlerDeps {
 /**
  * Create a platform-agnostic slash command handler.
  * Returns an async function that processes PlatformCommandInteraction events.
+ * @param deps Injected dependencies.
+ * @returns Command handler dispatch function.
  */
 export function createPlatformCommandHandler(deps: CommandHandlerDeps) {
     const commandMap = new Map<string, CommandDef>();

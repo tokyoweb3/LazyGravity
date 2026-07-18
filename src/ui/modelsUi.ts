@@ -11,15 +11,26 @@ import {
     withTimestamp,
 } from '../platform/richContentBuilder';
 
+/**
+ * Dependencies injected into Model UI builder functions.
+ */
 export interface ModelsUiDeps {
+    /** Getter returning the currently active CdpService connection. */
     getCurrentCdp: () => CdpService | null;
+    /** Callback for fetching quota data. */
     fetchQuota: () => Promise<any[]>;
 }
 
+/**
+ * Return type containing the structured Discord components payload for model display.
+ */
 export interface ModelsUiPayload {
+    /** Formatted embed cards. */
     embeds: EmbedBuilder[];
+    /** Formatted button action rows. */
     components: ActionRowBuilder<ButtonBuilder>[];
 }
+
 
 /**
  * Build a platform-agnostic MessagePayload for model selection UI.

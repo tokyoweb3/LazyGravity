@@ -37,11 +37,18 @@ export interface CreateChatSessionInput {
 export class ChatSessionRepository {
     private readonly db: Database.Database;
 
+    /**
+     * Initializes the repository and triggers schema updates.
+     * @param db SQLite database connection.
+     */
     constructor(db: Database.Database) {
         this.db = db;
         this.initialize();
     }
 
+    /**
+     * Creates the table schema and updates it for newer migrations/columns.
+     */
     private initialize(): void {
         this.db.exec(`
             CREATE TABLE IF NOT EXISTS chat_sessions (
@@ -95,6 +102,11 @@ export class ChatSessionRepository {
         }
     }
 
+    /**
+     * Persists a new chat session database entry.
+     * @param input Data required to register the chat session.
+     * @returns The fully constructed ChatSessionRecord.
+     */
     public create(input: CreateChatSessionInput): ChatSessionRecord {
         const activeAccountName = input.activeAccountName ?? null;
         const stmt = this.db.prepare(`
@@ -126,6 +138,11 @@ export class ChatSessionRepository {
         };
     }
 
+    /**
+     * Finds a chat session by its Discord channel ID.
+     * @param channelId The channel ID to search by.
+     * @returns The ChatSessionRecord if found, otherwise undefined.
+     */
     public findByChannelId(channelId: string): ChatSessionRecord | undefined {
         const row = this.db.prepare(
             'SELECT * FROM chat_sessions WHERE channel_id = ?'
@@ -134,6 +151,11 @@ export class ChatSessionRepository {
         return this.mapRow(row);
     }
 
+    /**
+     * Retrieves all chat sessions associated with a specific channel category.
+     * @param categoryId The category ID to query by.
+     * @returns Array of matching ChatSessionRecord, ordered by session number.
+     */
     public findByCategoryId(categoryId: string): ChatSessionRecord[] {
         const rows = this.db.prepare(
             'SELECT * FROM chat_sessions WHERE category_id = ? ORDER BY session_number ASC'
@@ -162,6 +184,12 @@ export class ChatSessionRepository {
         return result.changes > 0;
     }
 
+    /**
+     * Updates the active account name linked with a chat session.
+     * @param channelId The target channel ID.
+     * @param accountName The new active account name.
+     * @returns True if updated successfully, false otherwise.
+     */
     public setActiveAccountName(channelId: string, accountName: string): boolean {
         const result = this.db.prepare(
             'UPDATE chat_sessions SET active_account_name = ? WHERE channel_id = ?'
@@ -169,6 +197,12 @@ export class ChatSessionRepository {
         return result.changes > 0;
     }
 
+    /**
+     * Updates the original account name linked with a chat session.
+     * @param channelId The target channel ID.
+     * @param accountName The origin account name.
+     * @returns True if updated successfully, false otherwise.
+     */
     public setOriginAccountName(channelId: string, accountName: string): boolean {
         const result = this.db.prepare(
             'UPDATE chat_sessions SET origin_account_name = ? WHERE channel_id = ?'
@@ -176,6 +210,12 @@ export class ChatSessionRepository {
         return result.changes > 0;
     }
 
+    /**
+     * Associates a specific conversation ID with a chat session.
+     * @param channelId The target channel ID.
+     * @param conversationId The IDE conversation ID.
+     * @returns True if updated successfully, false otherwise.
+     */
     public setConversationId(channelId: string, conversationId: string): boolean {
         const result = this.db.prepare(
             'UPDATE chat_sessions SET conversation_id = ? WHERE channel_id = ?'
@@ -183,6 +223,12 @@ export class ChatSessionRepository {
         return result.changes > 0;
     }
 
+    /**
+     * Initializes the conversation ID if it is currently unset (null).
+     * @param channelId The target channel ID.
+     * @param conversationId The initial conversation ID.
+     * @returns True if updated successfully, false otherwise.
+     */
     public initializeConversationId(channelId: string, conversationId: string): boolean {
         const result = this.db.prepare(
             'UPDATE chat_sessions SET conversation_id = ? WHERE channel_id = ? AND conversation_id IS NULL'
@@ -190,6 +236,12 @@ export class ChatSessionRepository {
         return result.changes > 0;
     }
 
+    /**
+     * Initializes the original account name if it is currently unset (null).
+     * @param channelId The target channel ID.
+     * @param accountName The default origin account name.
+     * @returns True if updated successfully, false otherwise.
+     */
     public initializeOriginAccountName(channelId: string, accountName: string): boolean {
         const result = this.db.prepare(
             'UPDATE chat_sessions SET origin_account_name = ? WHERE channel_id = ? AND origin_account_name IS NULL'
@@ -209,6 +261,11 @@ export class ChatSessionRepository {
         return this.mapRow(row);
     }
 
+    /**
+     * Removes a chat session from database storage.
+     * @param channelId The target channel ID.
+     * @returns True if deleted successfully, false otherwise.
+     */
     public deleteByChannelId(channelId: string): boolean {
         const result = this.db.prepare(
             'DELETE FROM chat_sessions WHERE channel_id = ?'
@@ -216,6 +273,11 @@ export class ChatSessionRepository {
         return result.changes > 0;
     }
 
+    /**
+     * Maps database row columns to a structured ChatSessionRecord object.
+     * @param row Database row object.
+     * @returns Fully parsed ChatSessionRecord.
+     */
     private mapRow(row: any): ChatSessionRecord {
         return {
             id: row.id,
@@ -233,3 +295,4 @@ export class ChatSessionRepository {
         };
     }
 }
+

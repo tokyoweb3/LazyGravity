@@ -4,15 +4,24 @@ import type { CdpBridge } from '../services/cdpBridgeManager';
 import type { WorkspaceCommandHandler } from '../commands/workspaceCommandHandler';
 import { logger } from '../utils/logger';
 import { QUESTION_SELECT_ACTION_PREFIX } from '../services/notificationSender';
-
-export interface QuestionSelectActionDeps {
-    readonly bridge: CdpBridge;
-    readonly wsHandler: WorkspaceCommandHandler;
-}
-
 import { parseQuestionCustomId } from '../utils/questionActionUtils';
 import { resolveProjectName } from '../utils/projectResolver';
 
+/**
+ * Dependencies injected into question selection action creator.
+ */
+export interface QuestionSelectActionDeps {
+    /** Target CDP bridge manager instance. */
+    readonly bridge: CdpBridge;
+    /** Workspace command handler instance. */
+    readonly wsHandler: WorkspaceCommandHandler;
+}
+
+/**
+ * Factory creating SelectAction for interactive question select menu changes.
+ * @param deps Injected dependencies.
+ * @returns SelectAction implementation.
+ */
 export function createQuestionSelectAction(deps: QuestionSelectActionDeps): SelectAction {
     return {
         match(customId: string): boolean {

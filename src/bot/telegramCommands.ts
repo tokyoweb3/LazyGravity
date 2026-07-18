@@ -1,23 +1,4 @@
 import { handleJoin, handleMirror } from './telegramJoinCommand';
-/**
- * Telegram command parser and handlers.
- *
- * Handles built-in bot commands that can be answered immediately
- * without routing through CDP/Antigravity:
- *   /start      — Welcome message
- *   /help       — List available commands
- *   /status     — Show bot connection status
- *   /stop       — Interrupt active LLM generation
- *   /ping       — Latency check
- *   /mode       — Switch execution mode
- *   /model      — Switch LLM model
- *   /screenshot — Capture Antigravity screenshot
- *   /autoaccept — Toggle auto-accept for approval dialogs
- *   /template   — List and execute prompt templates
- *   /logs       — Show recent log entries
- *   /new        — Start a new chat session
- */
-
 import fs from 'fs';
 import type { PlatformMessage, MessagePayload } from '../platform/types';
 import type { CdpBridge } from '../services/cdpBridgeManager';
@@ -55,8 +36,13 @@ type KnownCommand = typeof KNOWN_COMMANDS[number];
 // Parser
 // ---------------------------------------------------------------------------
 
+/**
+ * Representation of parsed Telegram command components.
+ */
 export interface ParsedTelegramCommand {
+    /** Target command name. */
     readonly command: string;
+    /** Command arguments string. */
     readonly args: string;
 }
 
@@ -71,6 +57,8 @@ export interface ParsedTelegramCommand {
  *
  * Returns null if the text is not a known command (unknown commands
  * are forwarded to Antigravity as normal messages).
+ * @param text Input message text.
+ * @returns Parsed command results, or null.
  */
 export function parseTelegramCommand(text: string): ParsedTelegramCommand | null {
     const trimmed = text.trim();
@@ -90,21 +78,35 @@ export function parseTelegramCommand(text: string): ParsedTelegramCommand | null
 // Dependencies
 // ---------------------------------------------------------------------------
 
+/**
+ * Dependencies injected into the Telegram commands dispatcher.
+ */
 export interface TelegramCommandDeps {
+    /** Target CDP bridge manager instance. */
     readonly bridge: CdpBridge;
+    /** Low-level bot API. */
     readonly botApi?: any;
+    /** Switch mode configurations service. */
     readonly modeService?: ModeService;
+    /** Model configurations service. */
     readonly modelService?: ModelService;
+    /** Bindings database repository store. */
     readonly telegramBindingRepo?: TelegramBindingRepository;
+    /** Templates database repository store. */
     readonly templateRepo?: TemplateRepository;
+    /** Workspace paths list builder. */
     readonly workspaceService?: WorkspaceService;
+    /** Chat sessions service manager. */
     readonly chatSessionService?: ChatSessionService;
+    /** Live quota fetcher callback. */
     readonly fetchQuota?: () => Promise<any[]>;
-    /** Shared map of active ResponseMonitors keyed by project name.
-     *  Used by /stop to halt monitoring and prevent stale re-sends. */
+    /** Primary active response monitors registry. */
     readonly activeMonitors?: Map<string, ResponseMonitor>;
+    /** Account preferences repository. */
     readonly accountPrefRepo?: AccountPreferenceRepository;
+    /** Channel preferences repository. */
     readonly channelPrefRepo?: ChannelPreferenceRepository;
+    /** Configured accounts lists configurations. */
     readonly antigravityAccounts?: AntigravityAccountConfig[];
 }
 
@@ -115,6 +117,9 @@ export interface TelegramCommandDeps {
 /**
  * Handle a parsed Telegram command.
  * Routes to the appropriate sub-handler based on command name.
+ * @param deps Injected dependencies.
+ * @param message Platform message trigger.
+ * @param parsed Parsed command metadata.
  */
 export async function handleTelegramCommand(
     deps: TelegramCommandDeps,
@@ -192,6 +197,10 @@ export async function handleTelegramCommand(
 // Sub-handlers
 // ---------------------------------------------------------------------------
 
+/**
+ * Handle /start command.
+ * @param message Platform message context.
+ */
 async function handleStart(message: PlatformMessage): Promise<void> {
     const text = [
         '<b>Welcome to LazyGravity!</b>',
@@ -208,6 +217,10 @@ async function handleStart(message: PlatformMessage): Promise<void> {
     await message.reply({ text }).catch(logger.error);
 }
 
+/**
+ * Handle /help command.
+ * @param message Platform message context.
+ */
 async function handleHelp(message: PlatformMessage): Promise<void> {
     const text = [
         '<b>Available Commands</b>',
@@ -238,6 +251,11 @@ async function handleHelp(message: PlatformMessage): Promise<void> {
     await message.reply({ text }).catch(logger.error);
 }
 
+/**
+ * Handle /status command.
+ * @param deps Injected dependencies.
+ * @param message Platform message context.
+ */
 async function handleStatus(deps: TelegramCommandDeps, message: PlatformMessage): Promise<void> {
     const chatId = message.channel.id;
 
@@ -269,6 +287,11 @@ async function handleStatus(deps: TelegramCommandDeps, message: PlatformMessage)
     await message.reply({ text: lines.join('\n') }).catch(logger.error);
 }
 
+/**
+ * Handle /stop command.
+ * @param deps Injected dependencies.
+ * @param message Platform message context.
+ */
 async function handleStop(deps: TelegramCommandDeps, message: PlatformMessage): Promise<void> {
     const workspace = deps.bridge.lastActiveWorkspace;
 
@@ -316,10 +339,19 @@ async function handleStop(deps: TelegramCommandDeps, message: PlatformMessage): 
     }
 }
 
+/**
+ * Handle /ping command.
+ * @param message Platform message context.
+ */
 async function handlePing(message: PlatformMessage): Promise<void> {
     await message.reply({ text: 'Pong!' }).catch(logger.error);
 }
 
+/**
+ * Handle /mode command.
+ * @param deps Injected dependencies.
+ * @param message Platform message context.
+ */
 async function handleMode(deps: TelegramCommandDeps, message: PlatformMessage): Promise<void> {
     if (!deps.modeService) {
         await message.reply({ text: 'Mode service not available.' }).catch(logger.error);
@@ -331,6 +363,11 @@ async function handleMode(deps: TelegramCommandDeps, message: PlatformMessage): 
     await message.reply(payload).catch(logger.error);
 }
 
+/**
+ * Handle /model command.
+ * @param deps Injected dependencies.
+ * @param message Platform message context.
+ */
 async function handleModel(deps: TelegramCommandDeps, message: PlatformMessage): Promise<void> {
     const cdp = getCurrentCdp(deps.bridge);
     if (!cdp) {
@@ -352,6 +389,11 @@ async function handleModel(deps: TelegramCommandDeps, message: PlatformMessage):
     await message.reply(payload).catch(logger.error);
 }
 
+/**
+ * Handle /screenshot command.
+ * @param deps Injected dependencies.
+ * @param message Platform message context.
+ */
 async function handleScreenshot(deps: TelegramCommandDeps, message: PlatformMessage): Promise<void> {
     const cdp = getCurrentCdp(deps.bridge);
     const payload = await buildScreenshotPayload(cdp);
@@ -365,6 +407,12 @@ async function handleScreenshot(deps: TelegramCommandDeps, message: PlatformMess
     }
 }
 
+/**
+ * Handle /autoaccept command.
+ * @param deps Injected dependencies.
+ * @param message Platform message context.
+ * @param args Command arguments.
+ */
 async function handleAutoAccept(deps: TelegramCommandDeps, message: PlatformMessage, args: string): Promise<void> {
     // If args are provided (e.g. /autoaccept on), handle directly
     if (args) {
@@ -378,6 +426,12 @@ async function handleAutoAccept(deps: TelegramCommandDeps, message: PlatformMess
     await message.reply(payload).catch(logger.error);
 }
 
+/**
+ * Handle /account command.
+ * @param deps Injected dependencies.
+ * @param message Platform message context.
+ * @param args Command arguments.
+ */
 async function handleAccount(deps: TelegramCommandDeps, message: PlatformMessage, args: string): Promise<void> {
     if (!deps.accountPrefRepo) {
         await message.reply({ text: 'Account preference service not available.' }).catch(logger.error);
@@ -435,6 +489,11 @@ async function handleAccount(deps: TelegramCommandDeps, message: PlatformMessage
     await message.reply(payload).catch(logger.error);
 }
 
+/**
+ * Handle /template command.
+ * @param deps Injected dependencies.
+ * @param message Platform message context.
+ */
 async function handleTemplate(deps: TelegramCommandDeps, message: PlatformMessage): Promise<void> {
     if (!deps.templateRepo) {
         await message.reply({ text: 'Template service not available.' }).catch(logger.error);
@@ -446,6 +505,12 @@ async function handleTemplate(deps: TelegramCommandDeps, message: PlatformMessag
     await message.reply(payload).catch(logger.error);
 }
 
+/**
+ * Handle /template_add command.
+ * @param deps Injected dependencies.
+ * @param message Platform message context.
+ * @param args Command arguments.
+ */
 async function handleTemplateAdd(deps: TelegramCommandDeps, message: PlatformMessage, args: string): Promise<void> {
     if (!deps.templateRepo) {
         await message.reply({ text: 'Template service not available.' }).catch(logger.error);
@@ -477,6 +542,12 @@ async function handleTemplateAdd(deps: TelegramCommandDeps, message: PlatformMes
     }
 }
 
+/**
+ * Handle /template_delete command.
+ * @param deps Injected dependencies.
+ * @param message Platform message context.
+ * @param args Command arguments.
+ */
 async function handleTemplateDelete(deps: TelegramCommandDeps, message: PlatformMessage, args: string): Promise<void> {
     if (!deps.templateRepo) {
         await message.reply({ text: 'Template service not available.' }).catch(logger.error);
@@ -499,6 +570,12 @@ async function handleTemplateDelete(deps: TelegramCommandDeps, message: Platform
     }
 }
 
+/**
+ * Handle /project_create command.
+ * @param deps Injected dependencies.
+ * @param message Platform message context.
+ * @param args Command arguments.
+ */
 async function handleProjectCreate(deps: TelegramCommandDeps, message: PlatformMessage, args: string): Promise<void> {
     if (!deps.workspaceService) {
         await message.reply({ text: 'Workspace service not available.' }).catch(logger.error);
@@ -529,6 +606,11 @@ async function handleProjectCreate(deps: TelegramCommandDeps, message: PlatformM
     }
 }
 
+/**
+ * Handle /logs command.
+ * @param message Platform message context.
+ * @param args Command arguments.
+ */
 async function handleLogs(message: PlatformMessage, args: string): Promise<void> {
     const countArg = args ? parseInt(args, 10) : 20;
     const count = isNaN(countArg) ? 20 : Math.min(Math.max(countArg, 1), 50);
@@ -550,6 +632,11 @@ async function handleLogs(message: PlatformMessage, args: string): Promise<void>
     await message.reply({ text: truncated }).catch(logger.error);
 }
 
+/**
+ * Handle /new command.
+ * @param deps Injected dependencies.
+ * @param message Platform message context.
+ */
 async function handleNew(deps: TelegramCommandDeps, message: PlatformMessage): Promise<void> {
     const originalChannelId = message.channel.id;
     const binding = deps.telegramBindingRepo?.findByChatIdWithParentFallback(originalChannelId);
@@ -617,6 +704,8 @@ async function handleNew(deps: TelegramCommandDeps, message: PlatformMessage): P
 /**
  * Send a MessagePayload that contains file attachments.
  * Falls back to a text reply if file sending is not supported.
+ * @param message Platform message destination.
+ * @param payload Payload context containing files.
  */
 async function sendFilePayload(message: PlatformMessage, payload: MessagePayload): Promise<void> {
     // Try sending with files — the Telegram adapter supports this if sendPhoto is available
@@ -628,7 +717,11 @@ async function sendFilePayload(message: PlatformMessage, payload: MessagePayload
     }
 }
 
-
+/**
+ * Handle /project_reopen command.
+ * @param deps Injected dependencies.
+ * @param message Platform message context.
+ */
 async function handleProjectReopen(deps: TelegramCommandDeps, message: PlatformMessage): Promise<void> {
     const chatId = message.channel.id;
     const channelBinding = deps.telegramBindingRepo?.findByChatIdWithParentFallback(chatId);

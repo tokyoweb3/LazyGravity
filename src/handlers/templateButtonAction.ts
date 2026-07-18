@@ -14,11 +14,21 @@ import { TEMPLATE_BTN_PREFIX, parseTemplateButtonId } from '../ui/templateUi';
 import type { TemplateRepository } from '../database/templateRepository';
 import { logger } from '../utils/logger';
 
+/**
+ * Dependencies injected into template button action creator.
+ */
 export interface TemplateButtonActionDeps {
+    /** Target CDP bridge manager instance. */
     readonly bridge: CdpBridge;
+    /** Repository managing custom prompting templates. */
     readonly templateRepo: TemplateRepository;
 }
 
+/**
+ * Factory creating ButtonAction for template injection button clicks.
+ * @param deps Injected dependencies.
+ * @returns ButtonAction implementation.
+ */
 export function createTemplateButtonAction(deps: TemplateButtonActionDeps): ButtonAction {
     return {
         match(customId: string): Record<string, string> | null {

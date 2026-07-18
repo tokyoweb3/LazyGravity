@@ -1,3 +1,8 @@
+/**
+ * Service to retrieve model usage quota information.
+ * Communicates with the local language server process.
+ */
+
 import { logger } from '../utils/logger';
 import { exec } from 'child_process';
 import { promisify } from 'util';
@@ -5,26 +10,51 @@ import * as https from 'https';
 
 const execAsync = promisify(exec);
 
+/**
+ * Representation of remaining quota usage fraction and reset timestamp.
+ */
 export interface QuotaInfo {
+    /** Fractional value of remaining quota (0.0 to 1.0). */
     remainingFraction: number;
+    /** Date string of when the quota resets. */
     resetTime: string;
 }
 
+/**
+ * Represents the quota configuration metadata for a specific AI model.
+ */
 export interface ModelQuota {
+    /** The display name/label of the model. */
     label: string;
+    /** The internal model key/identifier. */
     model: string;
+    /** Optional quota details. */
     quotaInfo?: QuotaInfo;
 }
 
+/**
+ * Payload structure of the user status response.
+ */
 export interface UserStatusData {
+    /** List of model quotas for the client. */
     clientModelConfigs?: ModelQuota[];
 }
 
+/**
+ * Service that connects to the local language server to check current AI usage limits.
+ */
 export class QuotaService {
+    /** Cached TCP port of the active language server. */
     private cachedPort: number | null = null;
+    /** Cached CSRF security token. */
     private cachedCsrfToken: string | null = null;
+    /** Cached PID of the language server process. */
     private cachedPid: number | null = null;
 
+    /**
+     * Resolves the current language server process PID and CSRF token.
+     * @returns Process details, or null if not found.
+     */
     private async getUnixProcessInfo(): Promise<{pid: number, csrf_token: string} | null> {
         try {
             // macOS
@@ -47,6 +77,11 @@ export class QuotaService {
         return null;
     }
 
+    /**
+     * Finds active TCP ports the specified process ID is listening on.
+     * @param pid Process ID.
+     * @returns Array of active listening ports.
+     */
     private async getListeningPorts(pid: number): Promise<number[]> {
         const ports: number[] = [];
         try {
@@ -66,6 +101,12 @@ export class QuotaService {
         return ports;
     }
 
+    /**
+     * Query the language server status HTTP RPC endpoint.
+     * @param port Target localhost TCP port.
+     * @param csrfToken CSRF token header value.
+     * @returns UserStatusData payload.
+     */
     private requestApi(port: number, csrfToken: string): Promise<UserStatusData> {
         return new Promise((resolve, reject) => {
             const data = JSON.stringify({
@@ -125,6 +166,10 @@ export class QuotaService {
         });
     }
 
+    /**
+     * Resolves process details, queries target ports, and fetches current quota usages.
+     * @returns Array of ModelQuota configurations.
+     */
     public async fetchQuota(): Promise<ModelQuota[]> {
         let processInfo = await this.getUnixProcessInfo();
         if (!processInfo) {

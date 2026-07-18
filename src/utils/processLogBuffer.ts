@@ -1,6 +1,12 @@
+/**
+ * Options configuration object for custom CLI/process log formatting and buffering.
+ */
 export interface ProcessLogBufferOptions {
+    /** Maximum character limit allowed in the log snapshot. */
     maxChars?: number;
+    /** Maximum number of distinct log lines/entries to keep in memory. */
     maxEntries?: number;
+    /** Maximum character length of any single log entry. */
     maxEntryLength?: number;
 }
 
@@ -8,10 +14,20 @@ const DEFAULT_MAX_CHARS = 3500;
 const DEFAULT_MAX_ENTRIES = 120;
 const DEFAULT_MAX_ENTRY_LENGTH = 260;
 
+/**
+ * Normalizes multi-line whitespace and strips raw carriage return characters.
+ * @param text Raw log text chunk.
+ * @returns Clean normalized string.
+ */
 function collapseWhitespace(text: string): string {
     return (text || '').replace(/\r/g, '').replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * Splits raw process logs into discrete blocks/lines.
+ * @param raw Raw process logs.
+ * @returns Array of separate log message blocks.
+ */
 function parseBlocks(raw: string): string[] {
     const normalized = (raw || '').replace(/\r/g, '').trim();
     if (!normalized) return [];
@@ -29,6 +45,11 @@ function parseBlocks(raw: string): string[] {
         .filter((line) => line.length > 0);
 }
 
+/**
+ * Picks an illustrative emoji icon for the entry text prefix.
+ * @param entry The formatted entry text.
+ * @returns An emoji character indicator.
+ */
 function pickEmoji(entry: string): string {
     const lower = entry.toLowerCase();
     if (/^thought for\b/.test(lower) || /^thinking\b/.test(lower)) return '🧠';
@@ -41,6 +62,12 @@ function pickEmoji(entry: string): string {
     return '•';
 }
 
+/**
+ * Prepares a raw entry for display by collapsing white space, picking an emoji, and truncating if too long.
+ * @param rawEntry Raw log line.
+ * @param maxEntryLength Maximum character limit for this single entry.
+ * @returns Clean display entry string.
+ */
 function toDisplayEntry(rawEntry: string, maxEntryLength: number): string {
     const trimmed = collapseWhitespace(rawEntry);
     if (!trimmed) return '';
@@ -51,6 +78,9 @@ function toDisplayEntry(rawEntry: string, maxEntryLength: number): string {
     return `${pickEmoji(clipped)} ${clipped}`;
 }
 
+/**
+ * Deduplicating log buffer designed for displaying formatted CLI activity logs in chat UI updates.
+ */
 export class ProcessLogBuffer {
     private readonly maxChars: number;
     private readonly maxEntries: number;
@@ -58,12 +88,20 @@ export class ProcessLogBuffer {
     private readonly entries: string[] = [];
     private readonly seen = new Set<string>();
 
+    /**
+     * @param options Buffer tuning options.
+     */
     constructor(options: ProcessLogBufferOptions = {}) {
         this.maxChars = options.maxChars ?? DEFAULT_MAX_CHARS;
         this.maxEntries = options.maxEntries ?? DEFAULT_MAX_ENTRIES;
         this.maxEntryLength = options.maxEntryLength ?? DEFAULT_MAX_ENTRY_LENGTH;
     }
 
+    /**
+     * Appends raw process log chunks to the buffer.
+     * @param raw Raw process logs chunk.
+     * @returns Consolidated snapshot string.
+     */
     append(raw: string): string {
         const blocks = parseBlocks(raw);
         for (const block of blocks) {
@@ -79,10 +117,17 @@ export class ProcessLogBuffer {
         return this.snapshot();
     }
 
+    /**
+     * Retrieves the consolidated buffer representation text.
+     * @returns Merged entries string.
+     */
     snapshot(): string {
         return this.entries.join('\n');
     }
 
+    /**
+     * Trims old entries from the circular queue if boundaries are exceeded.
+     */
     private trim(): void {
         while (this.entries.length > this.maxEntries) {
             this.dropOldest();
@@ -100,6 +145,9 @@ export class ProcessLogBuffer {
         }
     }
 
+    /**
+     * Discards the oldest cached entry in the queue.
+     */
     private dropOldest(): void {
         const removed = this.entries.shift();
         if (!removed) return;

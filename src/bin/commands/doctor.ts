@@ -13,11 +13,21 @@ const warn = (msg: string) => console.log(`  ${COLORS.yellow}[--]${COLORS.reset}
 const fail = (msg: string) => console.log(`  ${COLORS.red}[!!]${COLORS.reset} ${msg}`);
 const hint = (msg: string) => console.log(`       ${COLORS.dim}${msg}${COLORS.reset}`);
 
+/**
+ * Result structure of a single CDP port live check.
+ */
 interface PortCheckResult {
+    /** Whether the target port is listening and active. */
     alive: boolean;
+    /** List of target connections parsed from `/json/list`. */
     targets?: any[];
 }
 
+/**
+ * Check if the specified HTTP port is listening and responsive.
+ * @param port Target port number.
+ * @returns Port check status and optional targets list.
+ */
 function checkPort(port: number): Promise<PortCheckResult> {
     return new Promise((resolve) => {
         const req = http.get(`http://127.0.0.1:${port}/json/list`, (res) => {
@@ -44,6 +54,10 @@ function checkPort(port: number): Promise<PortCheckResult> {
     });
 }
 
+/**
+ * Checks for the presence of a local `.env` file in the current directory.
+ * @returns Object indicating status and absolute path.
+ */
 function checkEnvFile(): { exists: boolean; path: string } {
     const envPath = path.resolve(process.cwd(), '.env');
     return { exists: fs.existsSync(envPath), path: envPath };
@@ -51,6 +65,10 @@ function checkEnvFile(): { exists: boolean; path: string } {
 
 const VALID_PLATFORMS: readonly PlatformType[] = ['discord', 'telegram'];
 
+/**
+ * Checks environment configuration to determine currently configured chat platforms.
+ * @returns Array of active platform types.
+ */
 function getActivePlatforms(): PlatformType[] {
     const raw = process.env.PLATFORMS || 'discord';
     return raw
@@ -59,6 +77,10 @@ function getActivePlatforms(): PlatformType[] {
         .filter((p): p is PlatformType => VALID_PLATFORMS.includes(p as PlatformType));
 }
 
+/**
+ * Validates whether required variables are configured based on active platforms.
+ * @returns List of variable check status items.
+ */
 function checkRequiredEnvVars(): { name: string; set: boolean }[] {
     const platforms = getActivePlatforms();
     const required: string[] = [];
@@ -76,6 +98,9 @@ function checkRequiredEnvVars(): { name: string; set: boolean }[] {
     }));
 }
 
+/**
+ * Executes a diagnosis check suite to analyze local system health, configuration, and connectivity.
+ */
 export async function doctorAction(): Promise<void> {
     console.log(`\n${COLORS.cyan}lazy-gravity doctor${COLORS.reset}\n`);
     let allOk = true;

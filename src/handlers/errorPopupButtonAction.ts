@@ -13,13 +13,23 @@ import { parseErrorPopupCustomId } from '../services/cdpBridgeManager';
 import type { WorkspaceCommandHandler } from '../commands/workspaceCommandHandler';
 import { logger } from '../utils/logger';
 
+/**
+ * Dependencies injected into error popup button action creator.
+ */
 export interface ErrorPopupButtonActionDeps {
+    /** Target CDP bridge manager instance. */
     readonly bridge: CdpBridge;
+    /** Workspace command handler instance. */
     readonly wsHandler: WorkspaceCommandHandler;
 }
 
 const MAX_DEBUG_CONTENT = 4096;
 
+/**
+ * Factory creating ButtonAction for handling IDE error popups.
+ * @param deps Injected dependencies.
+ * @returns ButtonAction implementation.
+ */
 export function createErrorPopupButtonAction(
     deps: ErrorPopupButtonActionDeps,
 ): ButtonAction {

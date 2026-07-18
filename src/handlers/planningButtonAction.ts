@@ -17,13 +17,23 @@ import * as path from 'path';
 import { execFile } from 'child_process';
 import { getAntigravityCliPath } from '../utils/pathUtils';
 
+/**
+ * Dependencies injected into planning button action creator.
+ */
 export interface PlanningButtonActionDeps {
+    /** Target CDP bridge manager instance. */
     readonly bridge: CdpBridge;
+    /** Workspace command handler instance. */
     readonly wsHandler: WorkspaceCommandHandler;
 }
 
 const MAX_PLAN_CONTENT = 4096;
 
+/**
+ * Factory creating ButtonAction for planning prompt modal and proceed actions.
+ * @param deps Injected dependencies.
+ * @returns ButtonAction implementation.
+ */
 export function createPlanningButtonAction(
     deps: PlanningButtonActionDeps,
 ): ButtonAction {

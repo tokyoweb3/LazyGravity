@@ -12,6 +12,9 @@ import { logger } from '../utils/logger';
 // Action definition
 // ---------------------------------------------------------------------------
 
+/**
+ * Single select action definition logic interface.
+ */
 export interface SelectAction {
     /** Match a select menu customId. Return true if this handler should process it. */
     match: (customId: string) => boolean;
@@ -26,6 +29,9 @@ export interface SelectAction {
 // Dependency injection interface
 // ---------------------------------------------------------------------------
 
+/**
+ * Dependencies injected into select handler factory.
+ */
 export interface SelectHandlerDeps {
     /** Registered select menu action handlers. */
     actions: readonly SelectAction[];
@@ -38,6 +44,8 @@ export interface SelectHandlerDeps {
 /**
  * Create a platform-agnostic select menu handler.
  * Returns an async function that processes PlatformSelectInteraction events.
+ * @param deps Injected dependencies.
+ * @returns Handler function.
  */
 export function createPlatformSelectHandler(deps: SelectHandlerDeps) {
     return async (interaction: PlatformSelectInteraction): Promise<void> => {

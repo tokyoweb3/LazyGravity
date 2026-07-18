@@ -3,6 +3,7 @@ import * as https from 'https';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+
 // @inquirer/select is ESM-only — use native import() that tsc won't rewrite to require()
 // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
 const dynamicImport = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<any>;
@@ -10,6 +11,10 @@ const dynamicImport = new Function('specifier', 'return import(specifier)') as (
 type SelectFn = typeof import('@inquirer/select')['default'];
 let _select: SelectFn | undefined;
 
+/**
+ * Lazily loads the inquirer select function dynamically to support ES Module format.
+ * @returns Inquirer select prompt function.
+ */
 async function getSelect(): Promise<SelectFn> {
     if (_select === undefined) {
         const mod = await dynamicImport('@inquirer/select');
@@ -52,14 +57,29 @@ ${C.cyan}                \\__)      \\__)${C.reset}
 // Pure validators
 // ---------------------------------------------------------------------------
 
+/**
+ * Validates if the input string is not empty.
+ * @param value String candidate.
+ * @returns True if not empty.
+ */
 function isNonEmpty(value: string): boolean {
     return value.trim().length > 0;
 }
 
+/**
+ * Validates if the input string represents only digits.
+ * @param value String candidate.
+ * @returns True if numeric digits.
+ */
 function isNumericString(value: string): boolean {
     return /^\d+$/.test(value.trim());
 }
 
+/**
+ * Parses comma-separated user ID values from terminal inputs.
+ * @param raw Raw input string.
+ * @returns Clean parsed list array.
+ */
 function parseAllowedUserIds(raw: string): string[] {
     return raw
         .split(',')
@@ -67,6 +87,11 @@ function parseAllowedUserIds(raw: string): string[] {
         .filter((id) => id.length > 0);
 }
 
+/**
+ * Validates raw user IDs string format for terminal prompts.
+ * @param raw Input string.
+ * @returns Error description string, or null if valid.
+ */
 function validateAllowedUserIds(raw: string): string | null {
     const ids = parseAllowedUserIds(raw);
     if (ids.length === 0) {
@@ -79,6 +104,11 @@ function validateAllowedUserIds(raw: string): string | null {
     return null;
 }
 
+/**
+ * Expands home tilde characters into the user's home directory.
+ * @param raw Input path string.
+ * @returns Expanded absolute path string.
+ */
 function expandTilde(raw: string): string {
     if (raw === '~') return os.homedir();
     if (raw.startsWith('~/')) return path.join(os.homedir(), raw.slice(2));
@@ -89,14 +119,21 @@ function expandTilde(raw: string): string {
 // Discord API helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Representation of Discord API bot info.
+ */
 interface BotInfo {
+    /** Bot application ID. */
     id: string;
+    /** Bot username string. */
     username: string;
 }
 
 /**
  * Extract Bot ID from a Discord token.
  * Token format: base64(bot_id).timestamp.hmac
+ * @param token Raw Discord bot token.
+ * @returns Extracted bot/client ID or null.
  */
 function extractBotIdFromToken(token: string): string | null {
     const parts = token.split('.');
@@ -111,6 +148,8 @@ function extractBotIdFromToken(token: string): string | null {
 
 /**
  * Verify a Discord bot token via GET /users/@me and return bot info.
+ * @param token Bot token to verify.
+ * @returns BotInfo metadata object or null.
  */
 function verifyToken(token: string): Promise<BotInfo | null> {
     return new Promise((resolve) => {
@@ -144,6 +183,10 @@ function verifyToken(token: string): Promise<BotInfo | null> {
 // Readline helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Factory creating readline interface.
+ * @returns Readline interface instance.
+ */
 function createInterface(): readline.Interface {
     return readline.createInterface({
         input: process.stdin,
@@ -151,6 +194,12 @@ function createInterface(): readline.Interface {
     });
 }
 
+/**
+ * Helper to prompt the user with a question.
+ * @param rl Readline interface.
+ * @param prompt Prompt message.
+ * @returns Answer string.
+ */
 function ask(rl: readline.Interface, prompt: string): Promise<string> {
     return new Promise((resolve) => {
         rl.question(prompt, (answer) => {
@@ -162,6 +211,9 @@ function ask(rl: readline.Interface, prompt: string): Promise<string> {
 /**
  * Read a secret value without echoing to the terminal.
  * Falls back to normal readline if raw mode is unavailable (e.g. piped stdin).
+ * @param rl Readline interface.
+ * @param prompt Prompt message.
+ * @returns Secret input string.
  */
 function askSecret(rl: readline.Interface, prompt: string): Promise<string> {
     return new Promise((resolve) => {
@@ -212,22 +264,42 @@ function askSecret(rl: readline.Interface, prompt: string): Promise<string> {
 // Output helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Output helper logging section header.
+ * @param title Header title.
+ */
 function sectionHeader(title: string): void {
     console.log(`\n  ${C.cyan}—${C.reset} ${C.bold}${title}${C.reset}\n`);
 }
 
+/**
+ * Output helper logging hint information.
+ * @param text Hint text.
+ */
 function hint(text: string): void {
     console.log(`  ${C.dim}${text}${C.reset}`);
 }
 
+/**
+ * Prints a blank hint line.
+ */
 function hintBlank(): void {
     console.log('');
 }
 
+/**
+ * Output helper logging error messages.
+ * @param text Error text.
+ */
 function errMsg(text: string): void {
     console.log(`  ${C.red}${text}${C.reset}\n`);
 }
 
+/**
+ * Helper building Discord bot OAuth invite URL.
+ * @param clientId Bot application client ID.
+ * @returns OAuth invite URL.
+ */
 function buildInviteUrl(clientId: string): string {
     const permissions = '2147485696';
     return `https://discord.com/api/oauth2/authorize?client_id=${clientId}&permissions=${permissions}&scope=bot%20applications.commands`;
@@ -237,18 +309,38 @@ function buildInviteUrl(clientId: string): string {
 // Status detection (pure functions)
 // ---------------------------------------------------------------------------
 
+/**
+ * Checks if Discord is fully configured.
+ * @param p Current configurations.
+ * @returns True if configured.
+ */
 function isDiscordConfigured(p: PersistedConfig): boolean {
     return !!(p.discordToken && p.clientId && p.allowedUserIds && p.allowedUserIds.length > 0);
 }
 
+/**
+ * Checks if Telegram is fully configured.
+ * @param p Current configurations.
+ * @returns True if configured.
+ */
 function isTelegramConfigured(p: PersistedConfig): boolean {
     return !!(p.telegramToken && p.telegramAllowedUserIds && p.telegramAllowedUserIds.length > 0);
 }
 
+/**
+ * Formats directory path label for displays.
+ * @param p Current configurations.
+ * @returns Display workspace directory path.
+ */
 function workspaceLabel(p: PersistedConfig): string {
     return p.workspaceBaseDir ?? (path.join(os.homedir(), 'Code') + ' (default)');
 }
 
+/**
+ * Validates raw Telegram bot token format.
+ * @param token Candidate token.
+ * @returns True if format matches telegram credentials regex.
+ */
 function isValidTelegramTokenFormat(token: string): boolean {
     return /^\d+:[A-Za-z0-9_-]+$/.test(token);
 }
@@ -268,6 +360,7 @@ function savePlatformsFromState(): void {
 
 /**
  * Add a platform to the persisted platforms list (idempotent).
+ * @param platform Target platform.
  */
 function addPlatform(platform: PlatformType): void {
     const current = ConfigLoader.readPersisted();
@@ -280,6 +373,7 @@ function addPlatform(platform: PlatformType): void {
 /**
  * Remove a platform from the persisted platforms list (idempotent).
  * Credentials are preserved — only the enabled flag changes.
+ * @param platform Target platform.
  */
 function removePlatform(platform: PlatformType): void {
     const current = ConfigLoader.readPersisted();
@@ -289,6 +383,13 @@ function removePlatform(platform: PlatformType): void {
 
 type PlatformStatus = 'enabled' | 'disabled' | 'not_configured';
 
+/**
+ * Determines current platform setup status.
+ * @param hasCredentials Credentials configured state.
+ * @param platforms Enabled platforms list.
+ * @param platform Target platform.
+ * @returns Platform status.
+ */
 function platformStatus(
     hasCredentials: boolean,
     platforms: PlatformType[] | undefined,
@@ -299,6 +400,11 @@ function platformStatus(
     return 'disabled';
 }
 
+/**
+ * Formats a stylized status badge string for choices.
+ * @param status Target status string.
+ * @returns Stylized badge.
+ */
 function statusBadge(status: PlatformStatus): string {
     switch (status) {
         case 'enabled':
@@ -314,6 +420,11 @@ function statusBadge(status: PlatformStatus): string {
 // Input prompt helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Prompts user for Discord bot token and performs online validation.
+ * @param rl Readline interface.
+ * @returns Token parameters object.
+ */
 async function promptToken(rl: readline.Interface): Promise<{ token: string; clientId: string; botName: string | null }> {
     while (true) {
         const token = await askSecret(rl, `  ${C.yellow}>${C.reset} `);
@@ -343,6 +454,11 @@ async function promptToken(rl: readline.Interface): Promise<{ token: string; cli
     }
 }
 
+/**
+ * Prompts user for Discord Guild (Server) ID.
+ * @param rl Readline interface.
+ * @returns Guild ID or undefined.
+ */
 async function promptGuildId(rl: readline.Interface): Promise<string | undefined> {
     const raw = await ask(rl, `  ${C.yellow}>${C.reset} `);
     const trimmed = raw.trim();
@@ -352,6 +468,11 @@ async function promptGuildId(rl: readline.Interface): Promise<string | undefined
     return undefined;
 }
 
+/**
+ * Prompts user for allowed Discord operator user IDs.
+ * @param rl Readline interface.
+ * @returns Parsed user IDs.
+ */
 async function promptAllowedUserIds(rl: readline.Interface): Promise<string[]> {
     while (true) {
         const raw = await ask(rl, `  ${C.yellow}>${C.reset} `);
@@ -363,6 +484,11 @@ async function promptAllowedUserIds(rl: readline.Interface): Promise<string[]> {
     }
 }
 
+/**
+ * Prompts user for Workspace base directory path.
+ * @param rl Readline interface.
+ * @returns Absolute workspace directory path.
+ */
 async function promptWorkspaceDir(rl: readline.Interface): Promise<string> {
     const defaultDir = path.join(os.homedir(), 'Code');
 
@@ -390,6 +516,13 @@ async function promptWorkspaceDir(rl: readline.Interface): Promise<string> {
 
 type PlatformAction = 'enable' | 'reconfigure' | 'disable' | 'back';
 
+/**
+ * Platform sub-menu wizard.
+ * @param rl Readline interface.
+ * @param platformName Target platform name.
+ * @param status Current status.
+ * @returns Target action.
+ */
 async function platformSubMenu(
     rl: readline.Interface,
     platformName: string,
@@ -425,6 +558,10 @@ async function platformSubMenu(
 // Individual setup flows (each saves immediately)
 // ---------------------------------------------------------------------------
 
+/**
+ * Runs Discord configuration setup questions sequence.
+ * @param rl Readline interface.
+ */
 async function runDiscordSetup(rl: readline.Interface): Promise<void> {
     sectionHeader('Discord Bot Token');
     hint('1. Go to https://discord.com/developers/applications and log in');
@@ -466,6 +603,10 @@ async function runDiscordSetup(rl: readline.Interface): Promise<void> {
     console.log(`  ${C.dim}Invite URL:${C.reset} ${inviteUrl}\n`);
 }
 
+/**
+ * Runs Telegram configuration setup questions sequence.
+ * @param rl Readline interface.
+ */
 async function runTelegramSetup(rl: readline.Interface): Promise<void> {
     sectionHeader('Telegram Bot Token');
     hint('1. Open Telegram and message @BotFather');
@@ -503,6 +644,10 @@ async function runTelegramSetup(rl: readline.Interface): Promise<void> {
     console.log(`  ${C.green}Telegram saved!${C.reset}\n`);
 }
 
+/**
+ * Runs Workspace directory configuration setup questions sequence.
+ * @param rl Readline interface.
+ */
 async function runWorkspaceSetup(rl: readline.Interface): Promise<void> {
     sectionHeader('Workspace Base Directory');
     hint('The parent directory where your coding projects live.');
@@ -519,6 +664,9 @@ async function runWorkspaceSetup(rl: readline.Interface): Promise<void> {
 // Public action
 // ---------------------------------------------------------------------------
 
+/**
+ * Primary command runner function launched during setup interactive prompts loop.
+ */
 export async function setupAction(): Promise<void> {
     const rl = createInterface();
 

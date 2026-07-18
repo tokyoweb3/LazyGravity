@@ -39,19 +39,35 @@ import { logger } from '../utils/logger';
 import { HeartbeatService } from '../services/heartbeatService';
 import { WorkspaceQueue } from '../bot/workspaceQueue';
 
+/**
+ * Dependencies injected into message create handler factory.
+ */
 export interface MessageCreateHandlerDeps {
+    /** Configuration options including allowed user lists and timeout values. */
     config: { allowedUserIds: string[]; extractionMode?: import('../utils/config').ExtractionMode; responseTimeoutMs?: number };
+    /** Active CDP bridge manager reference. */
     bridge: CdpBridge;
+    /** Current ModeService instance. */
     modeService: ModeService;
+    /** Current ModelService instance. */
     modelService: ModelService;
+    /** Registered slash commands handler helper. */
     slashCommandHandler: SlashCommandHandler;
+    /** Workspace binding and directory configurations handler. */
     wsHandler: WorkspaceCommandHandler;
+    /** Sessions service interface. */
     chatSessionService: ChatSessionService;
+    /** Sessions local repository store. */
     chatSessionRepo: ChatSessionRepository;
+    /** Bound channels tracker manager. */
     channelManager: ChannelManager;
+    /** Channel titles AI generator service. */
     titleGenerator: TitleGeneratorService;
+    /** Optional Artifacts storage/retrieval service. */
     artifactService?: ArtifactService;
+    /** Discord client reference. */
     client: any;
+    /** Handler helper function sending prompts to the active Antigravity workspace. */
     sendPromptToAntigravity: (
         bridge: CdpBridge,
         message: Message,
@@ -62,6 +78,7 @@ export interface MessageCreateHandlerDeps {
         inboundImages?: InboundImageAttachment[],
         options?: any,
     ) => Promise<void>;
+    /** Handler helper function running channel auto-rename routine. */
     autoRenameChannel: (
         message: Message,
         chatSessionRepo: ChatSessionRepository,
@@ -69,26 +86,49 @@ export interface MessageCreateHandlerDeps {
         channelManager: ChannelManager,
         cdp?: CdpService,
     ) => Promise<void>;
+    /** Handler helper function generating/sending workspace screenshots. */
     handleScreenshot: (target: Message, cdp: CdpService | null) => Promise<void>;
+    /** Optional getter returning currently connected CdpService. */
     getCurrentCdp?: (bridge: CdpBridge) => CdpService | null;
+    /** Optional listener registers for approvals detector. */
     ensureApprovalDetector?: (bridge: CdpBridge, cdp: CdpService, projectName: string) => void;
+    /** Optional listener registers for error popup detector. */
     ensureErrorPopupDetector?: (bridge: CdpBridge, cdp: CdpService, projectName: string) => void;
+    /** Optional listener registers for planning detector. */
     ensurePlanningDetector?: (bridge: CdpBridge, cdp: CdpService, projectName: string) => void;
+    /** Optional listener registers for run commands detector. */
     ensureRunCommandDetector?: (bridge: CdpBridge, cdp: CdpService, projectName: string) => void;
+    /** Optional listener registers for questions detector. */
     ensureQuestionDetector?: (bridge: CdpBridge, cdp: CdpService, projectName: string, accountName?: string) => void;
+    /** Optional workspace approvals channel registrar callback. */
     registerApprovalWorkspaceChannel?: (bridge: CdpBridge, projectName: string, channel: PlatformChannel) => void;
+    /** Optional session approvals channel registrar callback. */
     registerApprovalSessionChannel?: (bridge: CdpBridge, projectName: string, sessionTitle: string, channel: PlatformChannel) => void;
+    /** Helper downloading image attachments to local disk temporarily. */
     downloadInboundImageAttachments?: (message: Message) => Promise<InboundImageAttachment[]>;
+    /** Helper cleaning up temporarily downloaded images. */
     cleanupInboundImageAttachments?: (attachments: InboundImageAttachment[]) => Promise<void>;
+    /** Helper validating if attachment mimetype corresponds to images. */
     isImageAttachment?: (contentType: string | null | undefined, fileName: string | null | undefined) => boolean;
+    /** User preferences repository database accessor. */
     userPrefRepo?: UserPreferenceRepository;
+    /** Account preferences repository database accessor. */
     accountPrefRepo?: AccountPreferenceRepository;
+    /** Channel preferences repository database accessor. */
     channelPrefRepo?: ChannelPreferenceRepository;
+    /** Mappings list of configured accounts. */
     antigravityAccounts?: { name: string; cdpPort: number }[];
+    /** Heartbeat tracker service emitter. */
     heartbeatService?: HeartbeatService;
+    /** Workspace execution request coordinator queue. */
     workspaceQueue?: WorkspaceQueue;
 }
 
+/**
+ * Factory creating Discord event listener callback on new messages.
+ * @param deps Injected dependencies.
+ * @returns Event listener callback function.
+ */
 export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
     const workspaceQueue = deps.workspaceQueue ?? new WorkspaceQueue();
     const getCurrentCdp = deps.getCurrentCdp ?? getCurrentCdpFn;

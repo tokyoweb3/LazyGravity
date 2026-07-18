@@ -12,6 +12,9 @@ import { logger } from '../utils/logger';
 // Dependency injection interface
 // ---------------------------------------------------------------------------
 
+/**
+ * Dependencies injected into the platform message handler.
+ */
 export interface MessageHandlerDeps {
     /** Get workspace path for a channel. */
     getWorkspaceForChannel: (channelId: string) => string | undefined;
@@ -36,6 +39,8 @@ export interface MessageHandlerDeps {
 /**
  * Create a platform-agnostic message handler.
  * Returns an async function that processes PlatformMessage events.
+ * @param deps Injected dependencies.
+ * @returns Message handler function.
  */
 export function createPlatformMessageHandler(deps: MessageHandlerDeps) {
     return async (message: PlatformMessage): Promise<void> => {

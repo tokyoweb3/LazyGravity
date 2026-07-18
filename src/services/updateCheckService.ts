@@ -10,10 +10,16 @@ export const COOLDOWN_MS = 24 * 60 * 60 * 1000; // 24 hours
 const REGISTRY_URL = 'https://registry.npmjs.org/lazy-gravity/latest';
 const REQUEST_TIMEOUT_MS = 5000;
 
+/** Cache file format for update checking telemetry. */
 interface UpdateCheckCache {
+    /** Last check timestamp in milliseconds. */
     lastCheck: number;
 }
 
+/**
+ * Gets path to the local home settings update file.
+ * @returns Absolute cache path.
+ */
 function getCachePath(): string {
     return path.join(os.homedir(), CONFIG_DIR, UPDATE_CHECK_FILE);
 }
@@ -21,6 +27,7 @@ function getCachePath(): string {
 /**
  * Determine whether enough time has elapsed since the last update check.
  * Returns true if we should query the registry.
+ * @returns True if checking cooldown duration expired.
  */
 export function shouldCheckForUpdates(): boolean {
     const cachePath = getCachePath();
@@ -36,6 +43,7 @@ export function shouldCheckForUpdates(): boolean {
 
 /**
  * Query the npm registry for the latest published version.
+ * @returns Latest package version string.
  */
 export function fetchLatestVersion(): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -67,6 +75,9 @@ export function fetchLatestVersion(): Promise<string> {
     });
 }
 
+/**
+ * Writes current timestamp cache details to disk file.
+ */
 function writeCache(): void {
     const cachePath = getCachePath();
     const dir = path.dirname(cachePath);
@@ -84,6 +95,9 @@ function writeCache(): void {
 /**
  * Compare two semver strings. Returns:
  *  -1 if a < b, 0 if a === b, 1 if a > b
+ * @param a First version string.
+ * @param b Second version string.
+ * @returns Comparison integer code.
  */
 function compareSemver(a: string, b: string): number {
     const partsA = a.split('.').map(Number);
@@ -99,6 +113,7 @@ function compareSemver(a: string, b: string): number {
 /**
  * Detect whether the process is running from a global npm install
  * (as opposed to a local dev checkout via `ts-node`, `tsx`, etc.).
+ * @returns True if global environment install.
  */
 export function isGlobalInstall(): boolean {
     const execPath = process.argv[1] || '';
@@ -112,6 +127,7 @@ export function isGlobalInstall(): boolean {
  * Non-blocking update check. Call at startup (fire-and-forget).
  * Respects a 24-hour cooldown via a local cache file.
  * Skipped when running from source (dev/local checkout).
+ * @param currentVersion Current package version string.
  */
 export async function checkForUpdates(currentVersion: string): Promise<void> {
     if (!isGlobalInstall()) return;

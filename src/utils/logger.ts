@@ -21,16 +21,29 @@ const LEVEL_PRIORITY: Record<LogLevel, number> = {
     none: 4,
 };
 
+/**
+ * Interface representing custom logger implementation functions.
+ */
 export interface Logger {
+    /** Output info severity messages. */
     info(...args: any[]): void;
+    /** Output warn severity messages. */
     warn(...args: any[]): void;
+    /** Output error severity messages. */
     error(...args: any[]): void;
+    /** Output debug severity messages. */
     debug(...args: any[]): void;
+    /** Output phase transitions/milestone messages. */
     phase(...args: any[]): void;
+    /** Output completed operation status messages. */
     done(...args: any[]): void;
+    /** Output structured user prompts. */
     prompt(text: string): void;
+    /** Output a stylized divider line. */
     divider(label?: string): void;
+    /** Set current severity level threshold. */
     setLogLevel(level: LogLevel): void;
+    /** Get current severity level threshold. */
     getLogLevel(): LogLevel;
 }
 
@@ -40,6 +53,11 @@ const getTimestamp = () => {
     return `${COLORS.dim}[${timeString}]${COLORS.reset}`;
 };
 
+/**
+ * Factory creating Logger instance with specified log level.
+ * @param initialLevel Initial log severity filter limit.
+ * @returns Logger implementation.
+ */
 export function createLogger(initialLevel: LogLevel = 'info'): Logger {
     let currentLevel: LogLevel = initialLevel;
 

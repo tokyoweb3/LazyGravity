@@ -8,10 +8,20 @@ import { RunCommandDetector } from './runCommandDetector';
 import { UserMessageDetector } from './userMessageDetector';
 import { QuestionDetector } from './questionDetector';
 
+/**
+ * Connection options detailing explicit target account names.
+ */
 export interface AccountSelection {
+    /** Target account name. */
     name?: string;
 }
 
+/**
+ * Builds unique caching map key representation for project/account pairs.
+ * @param projectName Workspace project name.
+ * @param accountName Scoped account name.
+ * @returns Unique connection cache key.
+ */
 function buildConnectionKey(projectName: string, accountName: string): string {
     return `${accountName}::${projectName}`;
 }
@@ -20,6 +30,7 @@ function buildConnectionKey(projectName: string, accountName: string): string {
  * Pool that manages independent CdpService instances per workspace/account pair.
  */
 export class CdpConnectionPool {
+    /** Cache of the last successfully active workspace name. */
     public lastActiveWorkspace: string | null = null;
     private readonly connections = new Map<string, CdpService>();
     private readonly workspaceToAccount = new Map<string, string>();
@@ -32,10 +43,20 @@ export class CdpConnectionPool {
     private readonly connectingPromises = new Map<string, Promise<CdpService>>();
     private readonly cdpOptions: CdpServiceOptions;
 
+    /**
+     * @param cdpOptions Options configuration passed to constructed CdpService client instances.
+     */
     constructor(cdpOptions: CdpServiceOptions = {}) {
         this.cdpOptions = cdpOptions;
     }
 
+    /**
+     * Resolves active account name according to override rules.
+     * @param projectName Workspace project name.
+     * @param accountName Scoped account name.
+     * @param explicitSelection Explicit selection indicator.
+     * @returns Resolved account name.
+     */
     private resolveAccountName(projectName: string, accountName: string, explicitSelection: boolean = false): string {
         if (explicitSelection) {
             return accountName;
@@ -44,6 +65,12 @@ export class CdpConnectionPool {
         return this.workspaceToAccount.get(projectName) || accountName;
     }
 
+    /**
+     * Retrieves or launches connection for a given workspace/account settings key.
+     * @param workspacePath Absolute workspace project directory path.
+     * @param selection Explicit account selection parameter.
+     * @returns Connected CdpService instance.
+     */
     async getOrConnect(workspacePath: string, selection?: AccountSelection): Promise<CdpService> {
         const projectName = this.extractProjectName(workspacePath);
         const explicitSelection = typeof selection?.name === 'string';
@@ -76,6 +103,12 @@ export class CdpConnectionPool {
         }
     }
 
+    /**
+     * Checks pool for active/cached connection by project/account parameters.
+     * @param projectName Target project name.
+     * @param accountName Target account name.
+     * @returns Connected CdpService if active, or null.
+     */
     getConnected(projectName: string, accountName: string = 'default'): CdpService | null {
         const effectiveAccount = this.resolveAccountName(projectName, accountName);
         const cdp = this.connections.get(buildConnectionKey(projectName, effectiveAccount)) || null;
@@ -86,6 +119,11 @@ export class CdpConnectionPool {
         return null;
     }
 
+    /**
+     * Disconnects a workspace from the CDP pool and stops all registered active detectors.
+     * @param projectName Workspace project name.
+     * @param accountName Target account name.
+     */
     disconnectWorkspace(projectName: string, accountName: string = 'default'): void {
         const effectiveAccount = this.resolveAccountName(projectName, accountName);
         const key = buildConnectionKey(projectName, effectiveAccount);
@@ -117,6 +155,9 @@ export class CdpConnectionPool {
         this.userMessageDetectors.delete(key);
     }
 
+    /**
+     * Disconnects all active workspaces.
+     */
     disconnectAll(): void {
         for (const key of [...this.connections.keys()]) {
             const [accountName, projectName] = key.split('::');
@@ -124,6 +165,12 @@ export class CdpConnectionPool {
         }
     }
 
+    /**
+     * Registers active ApprovalDetector for the workspace.
+     * @param projectName Workspace project name.
+     * @param detector Active detector implementation.
+     * @param accountName Scoped account name.
+     */
     registerApprovalDetector(projectName: string, detector: ApprovalDetector, accountName: string = 'default'): void {
         const effectiveAccount = this.resolveAccountName(projectName, accountName);
         const key = buildConnectionKey(projectName, effectiveAccount);
@@ -131,11 +178,23 @@ export class CdpConnectionPool {
         this.approvalDetectors.set(key, detector);
     }
 
+    /**
+     * Retrieves registered ApprovalDetector by workspace key.
+     * @param projectName Workspace project name.
+     * @param accountName Scoped account name.
+     * @returns Registered ApprovalDetector instance, or undefined.
+     */
     getApprovalDetector(projectName: string, accountName: string = 'default'): ApprovalDetector | undefined {
         const effectiveAccount = this.resolveAccountName(projectName, accountName);
         return this.approvalDetectors.get(buildConnectionKey(projectName, effectiveAccount));
     }
 
+    /**
+     * Registers active ErrorPopupDetector for the workspace.
+     * @param projectName Workspace project name.
+     * @param detector Active detector implementation.
+     * @param accountName Scoped account name.
+     */
     registerErrorPopupDetector(projectName: string, detector: ErrorPopupDetector, accountName: string = 'default'): void {
         const effectiveAccount = this.resolveAccountName(projectName, accountName);
         const key = buildConnectionKey(projectName, effectiveAccount);
@@ -143,11 +202,23 @@ export class CdpConnectionPool {
         this.errorPopupDetectors.set(key, detector);
     }
 
+    /**
+     * Retrieves registered ErrorPopupDetector by workspace key.
+     * @param projectName Workspace project name.
+     * @param accountName Scoped account name.
+     * @returns Registered ErrorPopupDetector instance, or undefined.
+     */
     getErrorPopupDetector(projectName: string, accountName: string = 'default'): ErrorPopupDetector | undefined {
         const effectiveAccount = this.resolveAccountName(projectName, accountName);
         return this.errorPopupDetectors.get(buildConnectionKey(projectName, effectiveAccount));
     }
 
+    /**
+     * Registers active PlanningDetector for the workspace.
+     * @param projectName Workspace project name.
+     * @param detector Active detector implementation.
+     * @param accountName Scoped account name.
+     */
     registerPlanningDetector(projectName: string, detector: PlanningDetector, accountName: string = 'default'): void {
         const effectiveAccount = this.resolveAccountName(projectName, accountName);
         const key = buildConnectionKey(projectName, effectiveAccount);
@@ -155,11 +226,23 @@ export class CdpConnectionPool {
         this.planningDetectors.set(key, detector);
     }
 
+    /**
+     * Retrieves registered QuestionDetector by workspace key.
+     * @param projectName Workspace project name.
+     * @param accountName Scoped account name.
+     * @returns Registered QuestionDetector instance, or undefined.
+     */
     getQuestionDetector(projectName: string, accountName: string = 'default'): QuestionDetector | undefined {
         const effectiveAccount = this.resolveAccountName(projectName, accountName);
         return this.questionDetectors.get(buildConnectionKey(projectName, effectiveAccount));
     }
 
+    /**
+     * Registers active QuestionDetector for the workspace.
+     * @param projectName Workspace project name.
+     * @param detector Active detector implementation.
+     * @param accountName Scoped account name.
+     */
     registerQuestionDetector(projectName: string, detector: QuestionDetector, accountName: string = 'default'): void {
         const effectiveAccount = this.resolveAccountName(projectName, accountName);
         const key = buildConnectionKey(projectName, effectiveAccount);
@@ -167,11 +250,23 @@ export class CdpConnectionPool {
         this.questionDetectors.set(key, detector);
     }
 
+    /**
+     * Retrieves registered PlanningDetector by workspace key.
+     * @param projectName Workspace project name.
+     * @param accountName Scoped account name.
+     * @returns Registered PlanningDetector instance, or undefined.
+     */
     getPlanningDetector(projectName: string, accountName: string = 'default'): PlanningDetector | undefined {
         const effectiveAccount = this.resolveAccountName(projectName, accountName);
         return this.planningDetectors.get(buildConnectionKey(projectName, effectiveAccount));
     }
 
+    /**
+     * Registers active RunCommandDetector for the workspace.
+     * @param projectName Workspace project name.
+     * @param detector Active detector implementation.
+     * @param accountName Scoped account name.
+     */
     registerRunCommandDetector(projectName: string, detector: RunCommandDetector, accountName: string = 'default'): void {
         const effectiveAccount = this.resolveAccountName(projectName, accountName);
         const key = buildConnectionKey(projectName, effectiveAccount);
@@ -179,11 +274,23 @@ export class CdpConnectionPool {
         this.runCommandDetectors.set(key, detector);
     }
 
+    /**
+     * Retrieves registered RunCommandDetector by workspace key.
+     * @param projectName Workspace project name.
+     * @param accountName Scoped account name.
+     * @returns Registered RunCommandDetector instance, or undefined.
+     */
     getRunCommandDetector(projectName: string, accountName: string = 'default'): RunCommandDetector | undefined {
         const effectiveAccount = this.resolveAccountName(projectName, accountName);
         return this.runCommandDetectors.get(buildConnectionKey(projectName, effectiveAccount));
     }
 
+    /**
+     * Registers active UserMessageDetector for the workspace.
+     * @param projectName Workspace project name.
+     * @param detector Active detector implementation.
+     * @param accountName Scoped account name.
+     */
     registerUserMessageDetector(projectName: string, detector: UserMessageDetector, accountName: string = 'default'): void {
         const effectiveAccount = this.resolveAccountName(projectName, accountName);
         const key = buildConnectionKey(projectName, effectiveAccount);
@@ -191,21 +298,41 @@ export class CdpConnectionPool {
         this.userMessageDetectors.set(key, detector);
     }
 
+    /**
+     * Retrieves registered UserMessageDetector by workspace key.
+     * @param projectName Workspace project name.
+     * @param accountName Scoped account name.
+     * @returns Registered UserMessageDetector instance, or undefined.
+     */
     getUserMessageDetector(projectName: string, accountName: string = 'default'): UserMessageDetector | undefined {
         const effectiveAccount = this.resolveAccountName(projectName, accountName);
         return this.userMessageDetectors.get(buildConnectionKey(projectName, effectiveAccount));
     }
 
+    /**
+     * Configures/overrides the preferred account settings for the workspace.
+     * @param workspacePath Target workspace directory path.
+     * @param accountName Assigned account name.
+     */
     setPreferredAccountForWorkspace(workspacePath: string, accountName: string): void {
         const projectName = this.extractProjectName(workspacePath);
         this.workspaceToAccount.set(projectName, accountName);
     }
 
+    /**
+     * Retrieves the preferred account settings for the workspace.
+     * @param workspacePath Target workspace directory path.
+     * @returns Preferred account name, or null.
+     */
     getPreferredAccountForWorkspace(workspacePath: string): string | null {
         const projectName = this.extractProjectName(workspacePath);
         return this.workspaceToAccount.get(projectName) ?? null;
     }
 
+    /**
+     * Lists active workspace names containing online connections.
+     * @returns Array of workspace name strings.
+     */
     getActiveWorkspaceNames(): string[] {
         const active = new Set<string>();
         for (const [key, cdp] of this.connections) {
@@ -216,10 +343,22 @@ export class CdpConnectionPool {
         return [...active];
     }
 
+    /**
+     * Extracts folder project name from path string.
+     * @param workspacePath Target workspace directory path.
+     * @returns Extracted project folder name string.
+     */
     extractProjectName(workspacePath: string): string {
         return extractProjectNameFromPath(workspacePath) || workspacePath;
     }
 
+    /**
+     * Core factory connecting and caching CdpService client instances.
+     * @param workspacePath Workspace directory path.
+     * @param projectName Workspace project name.
+     * @param accountName Scoped account name.
+     * @returns Active initialized CdpService client instance.
+     */
     private async createAndConnect(
         workspacePath: string,
         projectName: string,

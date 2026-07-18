@@ -23,29 +23,53 @@ const DEFAULT_DB_NAME = 'antigravity.db';
  * Every field is optional — missing keys fall through to env / defaults.
  */
 export interface PersistedConfig {
+    /** Bot token credential. */
     discordToken?: string;
+    /** Client application ID. */
     clientId?: string;
+    /** Discord guild/server ID. */
     guildId?: string;
+    /** Allowed Discord user IDs list. */
     allowedUserIds?: string[];
+    /** Default base workspace directory path. */
     workspaceBaseDir?: string;
+    /** Auto approve file edits toggle flag. */
     autoApproveFileEdits?: boolean;
+    /** Log severity level limit. */
     logLevel?: LogLevel;
+    /** Output extraction mode. */
     extractionMode?: 'legacy' | 'structured';
+    /** Telegram token credential. */
     telegramToken?: string;
+    /** Allowed Telegram user IDs list. */
     telegramAllowedUserIds?: string[];
+    /** Platforms enabled list. */
     platforms?: PlatformType[];
+    /** Response monitor timeout in ms. */
     responseTimeoutMs?: number;
+    /** Serialized or object config accounts array. */
     antigravityAccounts?: string | AntigravityAccountConfig[];
+    /** CDP target hostname. */
     cdpHost?: string;
+    /** Heartbeat notification enabled state. */
     heartbeatEnabled?: boolean;
+    /** Heartbeat notification frequency interval in ms. */
     heartbeatIntervalMs?: number;
+    /** Heartbeat notification destination channel. */
     heartbeatChannelId?: string;
+    /** Last heartbeat notification message ID. */
     heartbeatLastMessageId?: string;
 }
 
+/**
+ * Config item representation for accounts.
+ */
 export interface AntigravityAccountConfig {
+    /** Account name. */
     name: string;
+    /** CDP port identifier. */
     cdpPort: number;
+    /** Custom user data directory. */
     userDataDir?: string;
 }
 
@@ -53,25 +77,45 @@ export interface AntigravityAccountConfig {
 // Pure helpers (no side-effects)
 // ---------------------------------------------------------------------------
 
+/**
+ * Gets the home config directory path.
+ * @returns Absolute path string.
+ */
 function getConfigDir(): string {
     return path.join(os.homedir(), CONFIG_DIR_NAME);
 }
 
+/**
+ * Gets the config.json filepath.
+ * @returns Absolute filepath string.
+ */
 function getConfigFilePath(): string {
     return path.join(getConfigDir(), CONFIG_FILE_NAME);
 }
 
+/**
+ * Gets the default SQLite database path location.
+ * @returns Database filepath string.
+ */
 function getDefaultDbPath(): string {
     return path.join(getConfigDir(), DEFAULT_DB_NAME);
 }
 
-/** Expand leading `~` or `~/` to the user's home directory. */
+/** Expand leading `~` or `~/` to the user's home directory.
+ * @param raw Input path string.
+ * @returns Expanded absolute path string.
+ */
 function expandTilde(raw: string): string {
     if (raw === '~') return os.homedir();
     if (raw.startsWith('~/')) return path.join(os.homedir(), raw.slice(2));
     return raw;
 }
 
+/**
+ * Reads config.json contents safely.
+ * @param filePath Config json file location.
+ * @returns Read PersistedConfig options object.
+ */
 function readPersistedConfig(filePath: string): PersistedConfig {
     if (!fs.existsSync(filePath)) return {};
     const raw = fs.readFileSync(filePath, 'utf-8');
@@ -81,6 +125,8 @@ function readPersistedConfig(filePath: string): PersistedConfig {
 /**
  * Merge layers with priority: env vars > persisted config > defaults.
  * Returns a fresh AppConfig object (immutable pattern).
+ * @param persisted Parsed config options from disk.
+ * @returns Constructed AppConfig container.
  */
 function mergeConfig(persisted: PersistedConfig): AppConfig {
     // Resolve platforms FIRST so we only validate credentials for enabled platforms
@@ -193,6 +239,11 @@ function mergeConfig(persisted: PersistedConfig): AppConfig {
     };
 }
 
+/**
+ * Resolves allowed Discord user IDs list.
+ * @param persisted Persisted configuration values.
+ * @returns Array of user ID strings.
+ */
 function resolveAllowedUserIds(persisted: PersistedConfig): string[] {
     const envValue = process.env.ALLOWED_USER_IDS;
     if (envValue) {
@@ -209,6 +260,12 @@ function resolveAllowedUserIds(persisted: PersistedConfig): string[] {
 
 const VALID_LOG_LEVELS: readonly LogLevel[] = ['debug', 'info', 'warn', 'error', 'none'];
 
+/**
+ * Resolves active LogLevel settings parameter.
+ * @param envValue Environment string value.
+ * @param persistedValue Configured persisted log level.
+ * @returns Active LogLevel string.
+ */
 function resolveLogLevel(
     envValue: string | undefined,
     persistedValue: LogLevel | undefined,
@@ -220,6 +277,12 @@ function resolveLogLevel(
     return 'info';
 }
 
+/**
+ * Resolves output parsing/extraction mode parameters.
+ * @param envValue Environment string value.
+ * @param persistedValue Configured persisted extraction mode.
+ * @returns Active ExtractionMode string.
+ */
 function resolveExtractionMode(
     envValue: string | undefined,
     persistedValue: 'legacy' | 'structured' | undefined,
@@ -229,6 +292,11 @@ function resolveExtractionMode(
     return 'structured';
 }
 
+/**
+ * Resolves allowed Telegram operator user IDs list.
+ * @param persisted Persisted configuration values.
+ * @returns Array of user ID strings or undefined.
+ */
 function resolveTelegramAllowedUserIds(persisted: PersistedConfig): string[] | undefined {
     const envValue = process.env.TELEGRAM_ALLOWED_USER_IDS;
     if (envValue) {
@@ -243,6 +311,12 @@ function resolveTelegramAllowedUserIds(persisted: PersistedConfig): string[] | u
     return undefined;
 }
 
+/**
+ * Resolves configured accounts connections metadata configurations.
+ * @param envValue Environment string value.
+ * @param persistedValue Configured persisted accounts value.
+ * @returns Normalized accounts configurations list.
+ */
 function resolveAntigravityAccounts(
     envValue: string | undefined,
     persistedValue: string | AntigravityAccountConfig[] | undefined,
@@ -262,6 +336,12 @@ function resolveAntigravityAccounts(
 
 const VALID_PLATFORMS: readonly PlatformType[] = ['discord', 'telegram'];
 
+/**
+ * Resolves active platform adapters configuration list.
+ * @param envValue Environment platforms configuration string.
+ * @param persistedValue Persisted configurations enabled platforms.
+ * @returns Array of enabled platform types.
+ */
 function resolvePlatforms(
     envValue: string | undefined,
     persistedValue: PlatformType[] | undefined,
@@ -282,6 +362,13 @@ function resolvePlatforms(
     return ['discord'];
 }
 
+/**
+ * Resolves a simple boolean toggle flag.
+ * @param envValue Environment toggle string.
+ * @param persistedValue Persisted boolean parameter.
+ * @param defaultValue Default fallback boolean state.
+ * @returns Resolved boolean parameter state.
+ */
 function resolveBoolean(
     envValue: string | undefined,
     persistedValue: boolean | undefined,
@@ -295,6 +382,10 @@ function resolveBoolean(
 /**
  * Resolve a non-negative integer value from env var > persisted config > default.
  * Returns the default if the env/persisted value is not a valid non-negative integer.
+ * @param envValue Environment string integer.
+ * @param persistedValue Persisted integer.
+ * @param defaultValue Default fallback integer value.
+ * @returns Resolved integer configuration value.
  */
 function resolvePositiveInt(
     envValue: string | undefined,
@@ -313,6 +404,7 @@ function resolvePositiveInt(
 // Public API (ConfigLoader namespace)
 // ---------------------------------------------------------------------------
 
+/** Public ConfigLoader namespace containing load, read, and save configurations scripts. */
 export const ConfigLoader = {
     /** Return the config directory path (~/.lazy-gravity/). */
     getConfigDir,

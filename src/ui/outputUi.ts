@@ -58,6 +58,11 @@ export function buildOutputPayload(currentFormat: OutputFormat): MessagePayload 
     };
 }
 
+/**
+ * Sends or updates the output format preference UI.
+ * @param target The target Discord response context.
+ * @param currentFormat Active OutputFormat preference.
+ */
 export async function sendOutputUI(
     target: { editReply: (opts: any) => Promise<any> },
     currentFormat: OutputFormat,

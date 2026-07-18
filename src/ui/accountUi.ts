@@ -1,3 +1,7 @@
+/**
+ * UI Builder for the account selection interface.
+ */
+
 import { ActionRowBuilder, EmbedBuilder, StringSelectMenuBuilder } from 'discord.js';
 
 import type { MessagePayload } from '../platform/types';
@@ -10,8 +14,15 @@ import {
     withTimestamp,
 } from '../platform/richContentBuilder';
 
+/** Custom component identifier string for the account select menu. */
 export const ACCOUNT_SELECT_ID = 'account_select';
 
+/**
+ * Builds the platform-agnostic MessagePayload for rendering the account selection interface.
+ * @param currentAccount Current active account name.
+ * @param accountNames List of all available account options.
+ * @returns Fully constructed MessagePayload.
+ */
 export function buildAccountPayload(currentAccount: string, accountNames: string[]): MessagePayload {
     const names = accountNames.length > 0 ? accountNames : ['default'];
 
@@ -54,6 +65,12 @@ export function buildAccountPayload(currentAccount: string, accountNames: string
     };
 }
 
+/**
+ * Renders and sends the account management UI to the Discord target response.
+ * @param target The target Discord response handle.
+ * @param currentAccount Active account name.
+ * @param accountNames Available accounts list.
+ */
 export async function sendAccountUI(
     target: { editReply: (opts: any) => Promise<any> },
     currentAccount: string,

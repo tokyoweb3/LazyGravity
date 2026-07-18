@@ -1,20 +1,7 @@
 import { logger } from '../utils/logger';
-/**
- * Telegram /project command handler.
- *
- * Allows users to bind a Telegram chat to an Antigravity workspace
- * via inline keyboard buttons, similar to Discord's /project slash command.
- *
- * User flow:
- *   /project        → show workspace list as buttons → user taps → chat bound
- *   /project list   → show workspace list (same as bare /project)
- *   /project unbind → remove current binding
- */
-
 import type { PlatformMessage, PlatformSelectInteraction, SelectMenuDef } from '../platform/types';
 import type { TelegramBindingRepository } from '../database/telegramBindingRepository';
 import type { WorkspaceService } from '../services/workspaceService';
-
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -28,7 +15,11 @@ export const TG_PROJECT_SELECT_ID = 'tg_project_select';
 
 export type TelegramProjectSubcommand = 'list' | 'unbind';
 
+/**
+ * Command arguments container for the telegram project settings command.
+ */
 export interface ParsedProjectCommand {
+    /** Target subcommand (e.g. list, unbind). */
     readonly subcommand: TelegramProjectSubcommand;
 }
 
@@ -42,6 +33,8 @@ export interface ParsedProjectCommand {
  *   /project unbind
  *   /project@BotName
  *   /project@BotName list
+ * @param text Raw command text.
+ * @returns Parsed command results or null.
  */
 export function parseTelegramProjectCommand(text: string): ParsedProjectCommand | null {
     const trimmed = text.trim();
@@ -66,11 +59,17 @@ export function parseTelegramProjectCommand(text: string): ParsedProjectCommand 
 import type { CdpBridge } from '../services/cdpBridgeManager';
 import { escapeHtml } from '../platform/telegram/telegramFormatter';
 
-
+/**
+ * Dependencies injected into telegram project command handlers.
+ */
 export interface TelegramProjectCommandDeps {
+    /** Low-level bot API. */
     readonly botApi?: any;
+    /** Active CDP bridge manager reference. */
     readonly bridge?: CdpBridge;
+    /** Scan workspaces path helper. */
     readonly workspaceService: WorkspaceService;
+    /** Telegram bindings database store repository. */
     readonly telegramBindingRepo: TelegramBindingRepository;
 }
 
@@ -80,6 +79,9 @@ export interface TelegramProjectCommandDeps {
 
 /**
  * Handle a /project command from Telegram.
+ * @param deps Injected dependencies.
+ * @param message Platform trigger message.
+ * @param parsed Parsed subcommand arguments.
  */
 export async function handleTelegramProjectCommand(
     deps: TelegramProjectCommandDeps,
@@ -135,9 +137,14 @@ export async function handleTelegramProjectCommand(
 // ---------------------------------------------------------------------------
 
 /**
- * Handle a workspace selection callback from inline keyboard.
+ * Attempts to automatically create a dedicated Telegram topic for the workspace and bind it.
+ * @param botApi Low-level telegram bot API.
+ * @param originalChannelId Original base group chat ID.
+ * @param workspacePath Workspace directory path.
+ * @param telegramBindingRepo Database repository store.
+ * @param pool CdpConnectionPool manager.
+ * @returns Resolved channel/topic ID string.
  */
-
 export async function tryCreateTopicAndBind(
     botApi: any,
     originalChannelId: string,
@@ -204,6 +211,11 @@ export async function tryCreateTopicAndBind(
     return originalChannelId;
 }
 
+/**
+ * Handle a workspace selection callback from inline keyboard.
+ * @param deps Injected dependencies.
+ * @param interaction Select menu interaction.
+ */
 export async function handleTelegramProjectSelect(
     deps: TelegramProjectCommandDeps,
     interaction: PlatformSelectInteraction,
@@ -258,6 +270,8 @@ export async function handleTelegramProjectSelect(
 /**
  * Create a select interaction handler that routes by customId.
  * Returns a function suitable for EventRouter's onSelectInteraction.
+ * @param deps Injected dependencies.
+ * @returns Event selection handler function.
  */
 export function createTelegramSelectHandler(
     deps: TelegramProjectCommandDeps,

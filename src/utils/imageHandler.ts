@@ -10,18 +10,36 @@ const MAX_INBOUND_IMAGE_ATTACHMENTS = 4;
 const IMAGE_EXT_PATTERN = /\.(png|jpe?g|webp|gif|bmp)$/i;
 const TEMP_IMAGE_DIR = path.join(os.tmpdir(), 'lazy-gravity-images');
 
+/**
+ * Representation of downloaded inbound attachment metadata.
+ */
 export interface InboundImageAttachment {
+    /** Temporary local disk path. */
     localPath: string;
+    /** Original URL location. */
     url: string;
+    /** File base name. */
     name: string;
+    /** Content MIME type. */
     mimeType: string;
 }
 
+/**
+ * Validates if the content metadata corresponds to images.
+ * @param contentType HTTP content-type header.
+ * @param fileName Candidate filename.
+ * @returns True if validated as image.
+ */
 export function isImageAttachment(contentType: string | null | undefined, fileName: string | null | undefined): boolean {
     if ((contentType || '').toLowerCase().startsWith('image/')) return true;
     return IMAGE_EXT_PATTERN.test(fileName || '');
 }
 
+/**
+ * Maps a MIME type value to its canonical file extension suffix.
+ * @param mimeType MIME type string.
+ * @returns Extension suffix.
+ */
 export function mimeTypeToExtension(mimeType: string): string {
     const normalized = (mimeType || '').toLowerCase();
     if (normalized.includes('jpeg') || normalized.includes('jpg')) return 'jpg';
@@ -31,11 +49,22 @@ export function mimeTypeToExtension(mimeType: string): string {
     return 'png';
 }
 
+/**
+ * Sanitizes a filename string to make it safe for disk/URL usage.
+ * @param fileName Original filename candidate.
+ * @returns Sanitized safe filename string.
+ */
 export function sanitizeFileName(fileName: string): string {
     const sanitized = fileName.replace(/[^a-zA-Z0-9._-]/g, '-').replace(/-+/g, '-').replace(/^-+|-+$/g, '');
     return sanitized || `image-${Date.now()}.png`;
 }
 
+/**
+ * Extends the user prompt with descriptions and URLs of attached images.
+ * @param prompt User prompt text.
+ * @param attachments Downloaded image attachments.
+ * @returns Extended prompt text.
+ */
 export function buildPromptWithAttachmentUrls(prompt: string, attachments: InboundImageAttachment[]): string {
     const base = prompt.trim() || 'Please review the attached images and respond accordingly.';
     if (attachments.length === 0) return base;
@@ -47,6 +76,11 @@ export function buildPromptWithAttachmentUrls(prompt: string, attachments: Inbou
     return `${base}\n\n[Discord Attached Images]\n${lines.join('\n\n')}\n\nPlease refer to the attached images above in your response.`;
 }
 
+/**
+ * Downloader utility downloading message attachments locally.
+ * @param message Discord message payload.
+ * @returns Array of downloaded attachment metadata.
+ */
 export async function downloadInboundImageAttachments(message: Message): Promise<InboundImageAttachment[]> {
     const allAttachments = Array.from(message.attachments.values());
     const imageAttachments = allAttachments
@@ -96,12 +130,22 @@ export async function downloadInboundImageAttachments(message: Message): Promise
     return downloaded;
 }
 
+/**
+ * Cleans up temporary downloaded image files on disk.
+ * @param attachments Downloaded image list.
+ */
 export async function cleanupInboundImageAttachments(attachments: InboundImageAttachment[]): Promise<void> {
     for (const image of attachments) {
         await fs.unlink(image.localPath).catch(() => { });
     }
 }
 
+/**
+ * Formats a CDP image payload into a Discord AttachmentBuilder helper.
+ * @param image Captured/Extracted image info.
+ * @param index Sequence index of the image.
+ * @returns Discord AttachmentBuilder helper, or null if failed.
+ */
 export async function toDiscordAttachment(image: ExtractedResponseImage, index: number): Promise<AttachmentBuilder | null> {
     let buffer: Buffer | null = null;
     let mimeType = image.mimeType || 'image/png';

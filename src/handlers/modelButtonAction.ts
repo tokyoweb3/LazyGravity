@@ -14,14 +14,27 @@ import type { ModelService } from '../services/modelService';
 import type { UserPreferenceRepository } from '../database/userPreferenceRepository';
 import { logger } from '../utils/logger';
 
+/**
+ * Dependencies injected into model button action creator.
+ */
 export interface ModelButtonActionDeps {
+    /** Target CDP bridge manager instance. */
     readonly bridge: CdpBridge;
+    /** Callback for fetching quota usage datasets. */
     readonly fetchQuota: () => Promise<any[]>;
+    /** Model configurations service. */
     readonly modelService?: ModelService;
+    /** User preferences repository. */
     readonly userPrefRepo?: UserPreferenceRepository;
+    /** Optional activation callback interface checker. */
     readonly ensureSessionActivated?: (channelId: string, userId: string, cdp: NonNullable<ReturnType<typeof getCurrentCdp>>) => Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
+/**
+ * Factory creating ButtonAction for selecting active AI models.
+ * @param deps Injected dependencies.
+ * @returns ButtonAction implementation.
+ */
 export function createModelButtonAction(deps: ModelButtonActionDeps): ButtonAction {
     return {
         match(customId: string): Record<string, string> | null {
@@ -114,6 +127,12 @@ export function createModelButtonAction(deps: ModelButtonActionDeps): ButtonActi
     };
 }
 
+/**
+ * Refreshes the models selection interface layout by fetching fresh metrics.
+ * @param cdp Active CdpService connection.
+ * @param actionDeps Injected button deps options.
+ * @param interaction Platform button click interaction.
+ */
 async function refreshModelsUI(
     cdp: NonNullable<ReturnType<typeof getCurrentCdp>>,
     actionDeps: ModelButtonActionDeps,

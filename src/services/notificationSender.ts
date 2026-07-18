@@ -38,8 +38,11 @@ const ERROR_POPUP_COPY_DEBUG_ACTION_PREFIX = 'error_popup_copy_debug_action';
 const ERROR_POPUP_RETRY_ACTION_PREFIX = 'error_popup_retry_action';
 const RUN_COMMAND_RUN_ACTION_PREFIX = 'run_command_run_action';
 const RUN_COMMAND_REJECT_ACTION_PREFIX = 'run_command_reject_action';
+/** Prefix for interactive feedback action buttons. */
 export const FEEDBACK_ACTION_PREFIX = 'feedback_action';
+/** Prefix for interactive question choice option selection. */
 export const QUESTION_SELECT_ACTION_PREFIX = 'question_select_action';
+/** Prefix for interactive question skip button action. */
 export const QUESTION_SKIP_ACTION_PREFIX = 'question_skip_action';
 
 // ---------------------------------------------------------------------------
@@ -73,12 +76,22 @@ const PHASE_COLOURS: Readonly<Record<string, number>> = {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-/** Create a single button definition. */
+/**
+ * Create a single button definition.
+ * @param customId Button identifier payload.
+ * @param label Button display text.
+ * @param style Button visual styling keyword.
+ * @returns ButtonDef configuration structure.
+ */
 function button(customId: string, label: string, style: ButtonStyle): ButtonDef {
     return { type: 'button', customId, label, style };
 }
 
-/** Wrap one or more buttons into a component row. */
+/**
+ * Wrap one or more buttons into a component row.
+ * @param buttons Buttons configuration array.
+ * @returns ComponentRow wrapper.
+ */
 function buttonRow(...buttons: readonly ButtonDef[]): ComponentRow {
     return { components: buttons };
 }
@@ -86,6 +99,10 @@ function buttonRow(...buttons: readonly ButtonDef[]): ComponentRow {
 /**
  * Build a colon-separated customId following the project convention:
  *   `<prefix>:<projectName>` or `<prefix>:<projectName>:<channelId>`
+ * @param prefix Action identifier prefix.
+ * @param projectName Active workspace name.
+ * @param channelId Optional channel snowflake.
+ * @returns Serialized customId string.
  */
 function customId(prefix: string, projectName: string, channelId: string | null): string {
     if (channelId !== null && channelId.trim().length > 0) {
@@ -98,7 +115,11 @@ function customId(prefix: string, projectName: string, channelId: string | null)
 // Public API
 // ---------------------------------------------------------------------------
 
-/** Build the approval notification message. */
+/**
+ * Build the approval notification message.
+ * @param opts Parameter attributes configuration.
+ * @returns Platform-agnostic MessagePayload result.
+ */
 export function buildApprovalNotification(opts: {
     readonly title: string;
     readonly description: string;
@@ -163,7 +184,11 @@ export function buildApprovalNotification(opts: {
     return { richContent, components };
 }
 
-/** Build the planning mode notification message. */
+/**
+ * Build the planning mode notification message.
+ * @param opts Parameter attributes configuration.
+ * @returns Platform-agnostic MessagePayload result.
+ */
 export function buildPlanningNotification(opts: {
     readonly title: string;
     readonly description: string;
@@ -205,7 +230,11 @@ export function buildPlanningNotification(opts: {
     return { richContent, components };
 }
 
-/** Build the error popup notification message. */
+/**
+ * Build the error popup notification message.
+ * @param opts Parameter attributes configuration.
+ * @returns Platform-agnostic MessagePayload result.
+ */
 export function buildErrorPopupNotification(opts: {
     readonly title: string;
     readonly errorMessage: string;
@@ -240,7 +269,11 @@ export function buildErrorPopupNotification(opts: {
     return { richContent, components };
 }
 
-/** Build the run command notification message. */
+/**
+ * Build the run command notification message.
+ * @param opts Parameter attributes configuration.
+ * @returns Platform-agnostic MessagePayload result.
+ */
 export function buildRunCommandNotification(opts: {
     readonly title: string;
     readonly commandText: string;
@@ -281,7 +314,11 @@ export function buildRunCommandNotification(opts: {
     return { richContent, components };
 }
 
-/** Build an auto-approved notification (shown when auto-accept fires). */
+/**
+ * Build an auto-approved notification (shown when auto-accept fires).
+ * @param opts Parameter attributes configuration.
+ * @returns Platform-agnostic MessagePayload result.
+ */
 export function buildAutoApprovedNotification(opts: {
     readonly accepted: boolean;
     readonly projectName: string;
@@ -319,6 +356,9 @@ export function buildAutoApprovedNotification(opts: {
 /**
  * Build a "resolved" overlay from an existing notification payload.
  * Changes colour to grey, adds a Status field, and disables all buttons.
+ * @param original Original source MessagePayload context.
+ * @param statusText Resulting outcome text label.
+ * @returns Modified resolved MessagePayload.
  */
 export function buildResolvedOverlay(
     original: MessagePayload,
@@ -334,7 +374,7 @@ export function buildResolvedOverlay(
         ? original.components.map((row) => ({
               components: row.components.map((comp) =>
                   comp.type === 'button' ? { ...comp, disabled: true as const } : comp,
-              ),
+               ),
           }))
         : undefined;
 
@@ -345,7 +385,11 @@ export function buildResolvedOverlay(
     };
 }
 
-/** Build a simple status embed. */
+/**
+ * Build a simple status embed.
+ * @param opts Parameter attributes configuration.
+ * @returns Platform-agnostic MessagePayload result.
+ */
 export function buildStatusNotification(opts: {
     readonly title: string;
     readonly description: string;
@@ -371,14 +415,25 @@ export function buildStatusNotification(opts: {
     return { richContent };
 }
 
+/** Configuration interface for buildQuestionNotification. */
 export interface BuildQuestionNotificationParams {
+    /** Alert question title. */
     title: string;
+    /** Question detailed prompt. */
     description: string;
+    /** Target workspace project name. */
     projectName: string;
+    /** Target channel identifier. */
     channelId: string;
+    /** Available choices list. */
     options: { text: string; x: number; y: number }[];
 }
 
+/**
+ * Build a multiple-choice question notification message.
+ * @param params Parameter attributes configuration.
+ * @returns Platform-agnostic MessagePayload result.
+ */
 export function buildQuestionNotification(
     params: BuildQuestionNotificationParams,
 ): MessagePayload {
@@ -441,7 +496,11 @@ export function buildQuestionNotification(
     };
 }
 
-/** Build a progress / phase notification (e.g. "Thinking...", "Generating..."). */
+/**
+ * Build a progress / phase notification (e.g. "Thinking...", "Generating...").
+ * @param opts Parameter attributes configuration.
+ * @returns Platform-agnostic MessagePayload result.
+ */
 export function buildProgressNotification(opts: {
     readonly phase: string;
     readonly projectName?: string;

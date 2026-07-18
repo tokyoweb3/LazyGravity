@@ -1,29 +1,40 @@
 import type { ButtonAction } from './buttonHandler';
 import type { CdpBridge } from '../services/cdpBridgeManager';
-import { getCurrentCdp } from '../services/cdpBridgeManager';
-import { logger } from '../utils/logger';
 import { resolveProjectName } from '../utils/projectResolver';
 
 import type { WorkspaceCommandHandler } from '../commands/workspaceCommandHandler';
 import { executeBrowserClick } from '../utils/questionActionUtils';
+import { logger } from '../utils/logger';
+
+/**
+ * Dependencies injected into generic action button creator.
+ */
 export interface GenericActionButtonActionDeps {
+    /** Target CDP bridge manager instance. */
     readonly bridge: CdpBridge;
+    /** Workspace command handler instance. */
     readonly wsHandler: WorkspaceCommandHandler;
+}
+
+/**
+ * Structured details of parsed generic action button customIds.
+ */
+export interface ParsedGenericAction {
+    /** Label/Name of the action. */
+    actionName: string;
+    /** Associated project workspace name. */
+    projectName?: string;
+    /** Trigger channel ID. */
+    channelId?: string;
 }
 
 /**
  * Parses a generic action button customId into its components.
  * Format: action_btn_[action_name]:[project_name]:[channel_id]
  *
- * @param customId The customId to parse
- * @returns Parsed action details, or null if not an action button
+ * @param customId The customId to parse.
+ * @returns Parsed action details, or null if not an action button.
  */
-export interface ParsedGenericAction {
-    actionName: string;
-    projectName?: string;
-    channelId?: string;
-}
-
 export function parseGenericActionCustomId(customId: string): ParsedGenericAction | null {
     if (!customId.startsWith('action_btn_')) return null;
     const parts = customId.split(':');
@@ -45,6 +56,11 @@ export function parseGenericActionCustomId(customId: string): ParsedGenericActio
     };
 }
 
+/**
+ * Factory creating ButtonAction for generic workspace button click triggers.
+ * @param deps Injected dependencies.
+ * @returns ButtonAction implementation.
+ */
 export function createGenericActionButtonAction(deps: GenericActionButtonActionDeps): ButtonAction {
     return {
         match(customId: string): Record<string, string> | null {

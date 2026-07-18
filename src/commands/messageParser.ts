@@ -1,10 +1,22 @@
+/**
+ * Structured details of a parsed text message.
+ */
 export interface ParsedMessage {
+    /** True if the message represents a slash/bot command. */
     isCommand: boolean;
+    /** Command name, if parsed. */
     commandName?: string;
+    /** Arguments array, if parsed. */
     args?: string[];
+    /** Original message text, if not a command. */
     text?: string;
 }
 
+/**
+ * Parses user input message text to extract potential bot command name and arguments.
+ * @param content Raw input content string.
+ * @returns Parsed message properties.
+ */
 export function parseMessageContent(content: string): ParsedMessage {
     const trimmed = content.trim();
 

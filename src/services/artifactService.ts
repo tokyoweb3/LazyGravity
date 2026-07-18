@@ -18,6 +18,7 @@ import { logger } from '../utils/logger';
 // Types
 // ---------------------------------------------------------------------------
 
+/** Valid artifact markdown document types enum. */
 export type ArtifactType =
     | 'ARTIFACT_TYPE_IMPLEMENTATION_PLAN'
     | 'ARTIFACT_TYPE_TASK'
@@ -25,14 +26,25 @@ export type ArtifactType =
     | 'ARTIFACT_TYPE_OTHER'
     | string;
 
+/**
+ * Representation of the companion `.metadata.json` properties.
+ */
 export interface ArtifactMetadata {
+    /** Artifact category type. */
     artifactType: ArtifactType;
+    /** Summary description text. */
     summary?: string;
+    /** Last updated ISO timestamp string. */
     updatedAt?: string;
+    /** Current version of the artifact. */
     version?: string;
+    /** Feedback requests modal trigger check. */
     requestFeedback?: boolean;
 }
 
+/**
+ * Combined details mapping a located artifact's metadata and absolute path.
+ */
 export interface ArtifactInfo {
     /** The conversation UUID this artifact belongs to */
     conversationId: string;
@@ -61,6 +73,11 @@ const ARTIFACT_TYPE_LABELS: Record<string, string> = {
     ARTIFACT_TYPE_OTHER: '📄 Other',
 };
 
+/**
+ * Maps artifact type identifier keys to localized/emoji labels.
+ * @param type Target artifact type.
+ * @returns Human-readable label string.
+ */
 export function artifactTypeLabel(type: ArtifactType): string {
     return ARTIFACT_TYPE_LABELS[type] ?? '📄 Artifact';
 }
@@ -72,9 +89,15 @@ export function artifactTypeLabel(type: ArtifactType): string {
 /** Common words to ignore when scoring fuzzy title matches */
 const COMMON_WORDS = new Set(['the', 'and', 'for', 'with', 'from', 'this', 'that']);
 
+/**
+ * Local file reader service scanning Antigravity workspace artifact directories.
+ */
 export class ArtifactService {
     private readonly brainBasePath: string;
 
+    /**
+     * @param brainBasePath Optional base directory override.
+     */
     constructor(brainBasePath?: string) {
         if (brainBasePath) {
             this.brainBasePath = brainBasePath;
@@ -85,12 +108,17 @@ export class ArtifactService {
         }
     }
 
+    /**
+     * Gets the active base directory path.
+     * @returns Base path string.
+     */
     public getBrainBasePath(): string {
         return this.brainBasePath;
     }
 
     /**
      * List all conversations in the brain directory (UUIDs).
+     * @returns Array of conversation UUID strings.
      */
     private listConversationIds(): string[] {
         try {
@@ -110,6 +138,9 @@ export class ArtifactService {
 
     /**
      * Read the .metadata.json file for a given artifact in a conversation.
+     * @param conversationId Conversation UUID.
+     * @param mdFilename Artifact target markdown filename.
+     * @returns Loaded metadata details, or null.
      */
     private readMetadata(
         conversationId: string,
@@ -132,6 +163,8 @@ export class ArtifactService {
     /**
      * List all artifacts in a given conversation directory.
      * An artifact must be a .md file with a companion .metadata.json.
+     * @param conversationId Conversation UUID.
+     * @returns ArtifactInfo objects list.
      */
     listArtifacts(conversationId: string): ArtifactInfo[] {
         const convDir = path.join(this.brainBasePath, conversationId);
@@ -179,6 +212,9 @@ export class ArtifactService {
      * Uses an exact match first, falling back to keyword overlap scoring.
      * If workspaceFilter is provided, restricts matching exclusively to conversations belonging to that workspace.
      * Returns the UUID or null if not found.
+     * @param title Chat session title needle.
+     * @param workspaceFilter Optional workspace name filter.
+     * @returns Matching conversation ID or null.
      */
     findConversationByTitle(title: string, workspaceFilter?: string): string | null {
         if (!title || !title.trim()) return null;
@@ -284,6 +320,8 @@ export class ArtifactService {
      * Return the conversation ID of the most recently modified conversation
      * that has at least one artifact. Falls back to the most recent conversation
      * overall if none have artifacts.
+     * @param workspaceFilter Optional workspace directory name filter.
+     * @returns Conversation UUID, or null.
      */
     getLatestConversationWithArtifacts(workspaceFilter?: string): string | null {
         const ids = this.listConversationIds();
@@ -345,6 +383,9 @@ export class ArtifactService {
 
     /**
      * Build the filesystem path for a specific artifact file.
+     * @param conversationId Conversation UUID.
+     * @param filename Target filename.
+     * @returns Absolute path to target artifact file.
      */
     getArtifactPath(conversationId: string, filename: string): string {
         const safe = path.basename(filename);
@@ -354,6 +395,9 @@ export class ArtifactService {
     /**
      * Read the markdown content of a specific artifact file.
      * Returns null if the file cannot be read.
+     * @param conversationId Conversation UUID.
+     * @param filename Target filename.
+     * @returns Content string, or null.
      */
     getArtifactContent(conversationId: string, filename: string): string | null {
         // Sanitize: prevent path traversal
@@ -376,6 +420,9 @@ export class ArtifactService {
      * Encode conversationId and filename into a single string for Discord select menu values.
      * We use a prefix 'art_', followed by a short slice of the conv ID, and the filename.
      * Added a short hash of the filename to prevent collisions on long-filename truncation.
+     * @param conversationId Conversation UUID.
+     * @param filename Target filename.
+     * @returns Encoded select value string.
      */
     static encodeSelectValue(conversationId: string, filename: string): string {
         const shortConv = conversationId.replace(/-/g, '').slice(0, 12);
@@ -394,6 +441,9 @@ export class ArtifactService {
      * Decode a select menu value back into conversationId and filename.
      * Since we only have a slice of the conversationId, we must look it up
      * in the provided list of artifacts.
+     * @param value Encoded select value string.
+     * @param artifacts Current artifacts options.
+     * @returns Decoded conversationId and filename payload, or null.
      */
     decodeSelectValue(value: string, artifacts: ArtifactInfo[]): { conversationId: string; filename: string } | null {
         if (!value.startsWith('art_')) return null;

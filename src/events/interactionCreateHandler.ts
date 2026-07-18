@@ -70,32 +70,55 @@ import type { AntigravityAccountConfig } from '../utils/configLoader';
 import { inferParentScopeChannelId, listAccountNames, resolveScopedAccountName } from '../utils/accountUtils';
 import { ACCOUNT_SELECT_ID, sendAccountUI } from '../ui/accountUi';
 
+/**
+ * Dependencies injected into interaction create handler factory.
+ */
 export interface InteractionCreateHandlerDeps {
+    /** Configuration options including allowed user lists and workspace directories. */
     config: { allowedUserIds: string[]; workspaceBaseDir?: string };
+    /** Active CDP bridge manager reference. */
     bridge: CdpBridge;
+    /** Command handler for cleanup actions. */
     cleanupHandler: CleanupCommandHandler;
+    /** Current ModeService instance. */
     modeService: ModeService;
+    /** Current ModelService instance. */
     modelService: ModelService;
+    /** Helper dispatching slash commands. */
     slashCommandHandler: SlashCommandHandler;
+    /** Handler coordinating workspace directories. */
     wsHandler: WorkspaceCommandHandler;
+    /** Handler executing chat interactions. */
     chatHandler: ChatCommandHandler;
+    /** Discord client handle reference. */
     client: any;
+    /** Helper function displaying mode selection interface. */
     sendModeUI: (target: { editReply: (opts: any) => Promise<any> }, modeService: ModeService, deps?: import('../ui/modeUi').ModeUiDeps) => Promise<void>;
+    /** Helper function displaying models selection interface. */
     sendModelsUI: (
         target: { editReply: (opts: any) => Promise<any> },
         deps: { getCurrentCdp: () => CdpService | null; fetchQuota: () => Promise<any[]> },
     ) => Promise<void>;
+    /** Helper function displaying auto-accept config interface. */
     sendAutoAcceptUI: (
         target: { editReply: (opts: any) => Promise<any> },
         autoAcceptService: AutoAcceptService,
     ) => Promise<void>;
+    /** Optional handler capture helper for screenshots. */
     handleScreenshot?: (...args: any[]) => Promise<void>;
+    /** Resolve active CdpService connection. */
     getCurrentCdp: (bridge: CdpBridge) => CdpService | null;
+    /** Parser for approval button identifiers. */
     parseApprovalCustomId: (customId: string) => { action: 'approve' | 'always_allow' | 'deny'; projectName: string | null; channelId: string | null } | null;
+    /** Parser for planning button identifiers. */
     parsePlanningCustomId: (customId: string) => { action: 'open' | 'proceed' | 'reject'; projectName: string | null; channelId: string | null } | null;
+    /** Parser for file change button identifiers. */
     parseFileChangeCustomId: (customId: string) => { action: 'accept' | 'reject'; projectName: string | null; channelId: string | null } | null;
+    /** Parser for error popup button identifiers. */
     parseErrorPopupCustomId: (customId: string) => { action: 'dismiss' | 'copy_debug' | 'retry'; projectName: string | null; channelId: string | null } | null;
+    /** Parser for run command button identifiers. */
     parseRunCommandCustomId: (customId: string) => { action: 'run' | 'reject'; projectName: string | null; channelId: string | null } | null;
+    /** Custom handler router execution function for slash commands. */
     handleSlashInteraction: (
         interaction: ChatInputCommandInteraction,
         handler: SlashCommandHandler,
@@ -114,23 +137,43 @@ export interface InteractionCreateHandlerDeps {
         scheduleService?: ScheduleService,
         heartbeatService?: HeartbeatService,
     ) => Promise<void>;
+    /** Optional button interaction handler trigger for template files. */
     handleTemplateUse?: (interaction: ButtonInteraction, templateId: number) => Promise<void>;
+    /** Join command handler helper. */
     joinHandler?: JoinCommandHandler;
+    /** User preferences repository database accessor. */
     userPrefRepo?: UserPreferenceRepository;
+    /** Account preferences repository database accessor. */
     accountPrefRepo?: AccountPreferenceRepository;
+    /** Channel preferences repository database accessor. */
     channelPrefRepo?: ChannelPreferenceRepository;
+    /** Artifact threads mappings store. */
     artifactThreadRepo?: ArtifactThreadRepository;
+    /** Configurations array of active accounts. */
     antigravityAccounts?: AntigravityAccountConfig[];
+    /** Chat sessions store. */
     chatSessionRepo?: ChatSessionRepository;
+    /** Chat sessions service manager. */
     chatSessionService?: ChatSessionService;
+    /** Artifacts list service loader. */
     artifactService?: ArtifactService;
+    /** Scheduling manager service context. */
     scheduleService?: ScheduleService;
+    /** Stream dispatcher service connection. */
     promptDispatcher?: import('../services/promptDispatcher').PromptDispatcher;
+    /** Bound channels tracker. */
     channelManager?: import('../services/channelManager').ChannelManager;
+    /** Channel titles AI generator helper. */
     titleGenerator?: import('../services/titleGeneratorService').TitleGeneratorService;
+    /** Heartbeat emitter tracker service. */
     heartbeatService?: HeartbeatService;
 }
 
+/**
+ * Factory creating Discord event listener callback on new interactions.
+ * @param deps Injected dependencies.
+ * @returns Event listener callback function.
+ */
 export function createInteractionCreateHandler(deps: InteractionCreateHandlerDeps) {
     const getParentChannelId = (interaction: Interaction): string | null => {
         const channelId = interaction.channelId;

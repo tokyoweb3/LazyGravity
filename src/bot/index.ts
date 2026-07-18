@@ -176,8 +176,18 @@ const RESPONSE_DELIVERY_MODE = resolveResponseDeliveryMode();
 
 /** Tracks channel IDs where /stop was explicitly invoked by the user */
 const userStopRequestedChannels = new Set<string>();
+/**
+ * Test helper to retrieve the response delivery mode.
+ * @returns Response delivery mode string.
+ */
 export const getResponseDeliveryModeForTest = (): string => RESPONSE_DELIVERY_MODE;
 
+/**
+ * Test helper to instantiate a serial task queue executor.
+ * @param queueName Target queue identifier label.
+ * @param traceId Diagnostic correlation trace ID.
+ * @returns Queue runner executor function.
+ */
 export function createSerialTaskQueueForTest(queueName: string, traceId: string): (task: () => Promise<void>, label?: string) => Promise<void> {
     let queue: Promise<void> = Promise.resolve();
     let queueDepth = 0;

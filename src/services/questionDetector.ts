@@ -2,25 +2,47 @@ import { EventEmitter } from 'events';
 import { CdpService } from './cdpService';
 import { logger } from '../utils/logger';
 
+/**
+ * Metadata representing a single selectable option in the IDE's question prompt.
+ */
 export interface QuestionOption {
+    /** Text content label of the option. */
     text: string;
+    /** Relative X coordinate of the option. */
     x: number;
+    /** Relative Y coordinate of the option. */
     y: number;
 }
 
+/**
+ * Structured details of a detected question modal/prompt.
+ */
 export interface QuestionInfo {
+    /** Header/title text of the question modal. */
     title: string;
+    /** Description or content of the question. */
     description: string;
+    /** List of selectable options. */
     options: QuestionOption[];
 }
 
+/**
+ * Options dictionary configuration for the QuestionDetector.
+ */
 export interface QuestionDetectorOptions {
+    /** Target CDP service client interface. */
     cdpService: CdpService;
+    /** Polling interval duration in ms. */
     pollIntervalMs?: number;
+    /** Callback triggered when a question modal is detected. */
     onQuestionRequired: (info: QuestionInfo) => void;
+    /** Callback triggered when the question modal disappears/resolves. */
     onResolved?: () => void;
 }
 
+/**
+ * CDP listener detector monitoring the browser for interactive multiple-choice question elements.
+ */
 export class QuestionDetector extends EventEmitter {
     private cdp: CdpService;
     private pollIntervalMs: number;
@@ -34,6 +56,9 @@ export class QuestionDetector extends EventEmitter {
     private onResolved?: () => void;
     private projectName: string = 'unknown';
 
+    /**
+     * @param options Detector configurations.
+     */
     constructor(options: QuestionDetectorOptions) {
         super();
         this.cdp = options.cdpService;
@@ -48,14 +73,25 @@ export class QuestionDetector extends EventEmitter {
         });
     }
     
+    /**
+     * Sets the active project name tag for logging context.
+     * @param name Active workspace project name.
+     */
     setProjectName(name: string) {
         this.projectName = name;
     }
 
+    /**
+     * Retrieves whether the detector is currently polling/running.
+     * @returns True if polling active.
+     */
     get isActive() {
         return this._isStarted;
     }
 
+    /**
+     * Starts active interval polling monitoring CDP DOM targets.
+     */
     start() {
         if (this._isStarted) return;
         this._isStarted = true;
@@ -67,6 +103,9 @@ export class QuestionDetector extends EventEmitter {
         this.poll();
     }
 
+    /**
+     * Stopes active interval polling.
+     */
     stop() {
         if (!this._isStarted) return;
         this._isStarted = false;
@@ -77,6 +116,11 @@ export class QuestionDetector extends EventEmitter {
         this.logger.debug(`[QuestionDetector:${this.projectName}] Stopped polling`);
     }
 
+    /**
+     * Simulates clicking/selecting the option at the given index in the browser.
+     * @param index Zero-based option list index.
+     * @returns True if submitted successfully.
+     */
     async submitOption(index: number): Promise<boolean> {
         this.logger.debug(`[QuestionDetector:${this.projectName}] Submitting option ${index}`);
         
@@ -180,6 +224,10 @@ export class QuestionDetector extends EventEmitter {
         }
     }
 
+    /**
+     * Simulates clicking the skip button on the question modal.
+     * @returns True if skipped successfully.
+     */
     async skipQuestion(): Promise<boolean> {
         this.logger.debug(`[QuestionDetector:${this.projectName}] Skipping question`);
         
@@ -264,6 +312,9 @@ export class QuestionDetector extends EventEmitter {
         }
     }
 
+    /**
+     * Poll evaluation handler query function.
+     */
     private async poll() {
         if (!this.cdp.isConnected()) return;
 

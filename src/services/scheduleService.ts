@@ -159,6 +159,12 @@ export class ScheduleService {
         return JSON.stringify(portable, null, 2);
     }
 
+    /**
+     * Restore schedules from JSON content.
+     * @param jsonContent Serialized JSON backup string.
+     * @param jobCallback Trigger callback function.
+     * @returns Number of successfully restored schedules.
+     */
     public restoreSchedules(jsonContent: string, jobCallback: JobCallback): number {
         if (!jobCallback) {
             throw new Error('Job callback is not initialized.');

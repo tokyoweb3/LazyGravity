@@ -13,11 +13,21 @@ import { resolveProjectName } from '../utils/projectResolver';
 import type { WorkspaceCommandHandler } from '../commands/workspaceCommandHandler';
 import { logger } from '../utils/logger';
 
+/**
+ * Dependencies injected into run command button action creator.
+ */
 export interface RunCommandButtonActionDeps {
+    /** Target CDP bridge manager instance. */
     readonly bridge: CdpBridge;
+    /** Workspace command handler instance. */
     readonly wsHandler: WorkspaceCommandHandler;
 }
 
+/**
+ * Factory creating ButtonAction for command execution/reject button clicks.
+ * @param deps Injected dependencies.
+ * @returns ButtonAction implementation.
+ */
 export function createRunCommandButtonAction(
     deps: RunCommandButtonActionDeps,
 ): ButtonAction {

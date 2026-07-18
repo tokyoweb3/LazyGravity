@@ -7,11 +7,18 @@ export type Language = 'en' | 'ja';
 let currentLanguage: Language = 'en';
 let translations: Record<string, Record<string, string>> = {};
 
+/**
+ * Initializes i18n configurations loading local translations directories.
+ * @param lang Target Language code.
+ */
 export function initI18n(lang: Language = 'en') {
     currentLanguage = lang;
     loadTranslations();
 }
 
+/**
+ * Internal sync file loader reading locales translation json files.
+ */
 function loadTranslations() {
     try {
         const enPath = path.join(__dirname, '../../locales/en.json');
@@ -33,6 +40,12 @@ function loadTranslations() {
     }
 }
 
+/**
+ * Translates a key string with optional template variable interpolations.
+ * @param key Key name string.
+ * @param variables Optional interpolation variables dictionary.
+ * @returns Translated text string.
+ */
 export function t(key: string, variables?: Record<string, any>): string {
     const langDict = translations[currentLanguage] || translations['en'];
     let text = langDict?.[key] || translations['en']?.[key] || key;
