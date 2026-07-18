@@ -39,7 +39,14 @@ export class HeartbeatService {
             return;
         }
 
-        const interval = config.heartbeatIntervalMs ?? 3600000;
+        let interval = config.heartbeatIntervalMs ?? 3600000;
+        if (interval < 10000) {
+            logger.warn(`[HeartbeatService] Interval ${interval}ms is too low. Clamping to 10000ms.`);
+            interval = 10000;
+        } else if (interval > 2147483647) {
+            logger.warn(`[HeartbeatService] Interval ${interval}ms is too high (max is 2147483647ms). Clamping to 2147483647ms.`);
+            interval = 2147483647;
+        }
         logger.info(`[HeartbeatService] Starting periodic heartbeat every ${interval}ms to channel ${channelId}`);
 
         // Run immediately on start
@@ -66,6 +73,19 @@ export class HeartbeatService {
         
         // If channel changed, clear the last message ID
         if (config.heartbeatChannelId !== channelId) {
+            if (config.heartbeatChannelId && config.heartbeatLastMessageId) {
+                try {
+                    const oldChannel = await this.client?.channels.fetch(config.heartbeatChannelId);
+                    if (oldChannel && oldChannel.isTextBased()) {
+                        const oldMsg = await (oldChannel as TextChannel).messages.fetch(config.heartbeatLastMessageId);
+                        if (oldMsg) {
+                            await oldMsg.delete().catch(() => {});
+                        }
+                    }
+                } catch (err) {
+                    logger.debug('[HeartbeatService] Failed to delete old heartbeat message from previous channel:', err);
+                }
+            }
             ConfigLoader.save({ heartbeatLastMessageId: undefined });
         }
 
@@ -83,8 +103,23 @@ export class HeartbeatService {
     }
 
     public async disable() {
+        const config = ConfigLoader.load();
+        if (config.heartbeatChannelId && config.heartbeatLastMessageId) {
+            try {
+                const oldChannel = await this.client?.channels.fetch(config.heartbeatChannelId);
+                if (oldChannel && oldChannel.isTextBased()) {
+                    const oldMsg = await (oldChannel as TextChannel).messages.fetch(config.heartbeatLastMessageId);
+                    if (oldMsg) {
+                        await oldMsg.delete().catch(() => {});
+                    }
+                }
+            } catch (err) {
+                logger.debug('[HeartbeatService] Failed to delete heartbeat message upon disabling:', err);
+            }
+        }
         ConfigLoader.save({
             heartbeatEnabled: false,
+            heartbeatLastMessageId: undefined,
         });
         this.stop();
         logger.info('[HeartbeatService] Heartbeat disabled.');
@@ -157,13 +192,14 @@ export class HeartbeatService {
 }
 
 /**
- * Parse a duration string like "1h", "6h", "30m", or pure numbers to milliseconds
+ * Parse a duration string like "1h", "6h", "30m", or "2d" to milliseconds.
+ * Requiring a unit prevents ambiguity with bare numbers.
  */
 export function parseInterval(str: string): number | null {
-    const match = str.trim().toLowerCase().match(/^(\d+)(ms|s|m|h|d)?$/);
+    const match = str.trim().toLowerCase().match(/^(\d+)(ms|s|m|h|d)$/);
     if (!match) return null;
     const value = parseInt(match[1], 10);
-    const unit = match[2] || 'h'; // default to hours
+    const unit = match[2];
 
     switch (unit) {
         case 'ms': return value;
@@ -171,7 +207,7 @@ export function parseInterval(str: string): number | null {
         case 'm': return value * 60 * 1000;
         case 'h': return value * 60 * 60 * 1000;
         case 'd': return value * 24 * 60 * 60 * 1000;
-        default: return value * 60 * 60 * 1000;
+        default: return null;
     }
 }
 

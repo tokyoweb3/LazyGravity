@@ -387,5 +387,60 @@ describe('Bot Startup', () => {
                 embeds: expect.any(Array),
             }));
         });
+
+        it('fails heartbeat on if interval is above 24.8 days', async () => {
+            const { parseInterval } = require('../src/services/heartbeatService');
+            parseInterval.mockReturnValueOnce(3000000000);
+
+            const editReplySpy = jest.fn().mockResolvedValue(true);
+            const mockInteraction = makeMockInteraction({
+                subcommand: 'on',
+                interval: '30d',
+                editReply: editReplySpy,
+            });
+
+            await interactionCallback(mockInteraction);
+
+            expect(editReplySpy).toHaveBeenCalledWith(expect.objectContaining({
+                content: expect.stringContaining('Interval cannot be greater than 24.8 days'),
+            }));
+        });
+
+        it('warns user of environment variables override if present', async () => {
+            const originalEnv = process.env.HEARTBEAT_ENABLED;
+            process.env.HEARTBEAT_ENABLED = 'false';
+
+            const editReplySpy = jest.fn().mockResolvedValue(true);
+            const mockInteraction = makeMockInteraction({
+                subcommand: 'on',
+                interval: '30m',
+                editReply: editReplySpy,
+            });
+
+            await interactionCallback(mockInteraction);
+
+            expect(editReplySpy).toHaveBeenCalledWith(expect.objectContaining({
+                content: expect.stringContaining('Environment override(s) active: HEARTBEAT_ENABLED'),
+            }));
+
+            if (originalEnv === undefined) {
+                delete process.env.HEARTBEAT_ENABLED;
+            } else {
+                process.env.HEARTBEAT_ENABLED = originalEnv;
+            }
+        });
+
+        it('excludes heartbeat commands from recording activity', async () => {
+            const mockServiceInstance = (HeartbeatService as jest.Mock).mock.results[0].value;
+            mockServiceInstance.recordActivity.mockClear();
+
+            const mockInteraction = makeMockInteraction({
+                subcommand: 'status',
+            });
+
+            await interactionCallback(mockInteraction);
+
+            expect(mockServiceInstance.recordActivity).not.toHaveBeenCalled();
+        });
     });
 });

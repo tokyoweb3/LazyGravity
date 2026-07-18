@@ -227,7 +227,8 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
     };
 
     return async (interaction: Interaction): Promise<void> => {
-        if (deps.heartbeatService && deps.config.allowedUserIds.includes(interaction.user.id)) {
+        const isHeartbeatCommand = 'commandName' in interaction && interaction.commandName === 'heartbeat';
+        if (deps.heartbeatService && deps.config.allowedUserIds.includes(interaction.user.id) && !isHeartbeatCommand) {
             deps.heartbeatService.recordActivity();
         }
 

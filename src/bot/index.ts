@@ -2726,6 +2726,16 @@ export async function handleSlashInteraction(
                 break;
             }
 
+            const envOverrides: string[] = [];
+            if (process.env.HEARTBEAT_ENABLED !== undefined) envOverrides.push('HEARTBEAT_ENABLED');
+            if (process.env.HEARTBEAT_INTERVAL_MS !== undefined) envOverrides.push('HEARTBEAT_INTERVAL_MS');
+            if (process.env.HEARTBEAT_CHANNEL_ID !== undefined) envOverrides.push('HEARTBEAT_CHANNEL_ID');
+
+            let warningPrefix = '';
+            if (envOverrides.length > 0) {
+                warningPrefix = `⚠️ **Warning**: Environment override(s) active: ${envOverrides.join(', ')}. Changes saved to config.json may not take effect until overrides are removed.\n\n`;
+            }
+
             if (subcommand === 'on') {
                 const intervalStr = interaction.options.getString('interval') || '1h';
                 const targetChannel = interaction.options.getChannel('channel') || interaction.channel;
@@ -2745,7 +2755,7 @@ export async function handleSlashInteraction(
 
                 const intervalMs = parseInterval(intervalStr);
                 if (intervalMs === null || intervalMs <= 0) {
-                    await interaction.editReply({ content: '⚠️ Invalid interval format. Use e.g. "1h", "6h", "30m".' });
+                    await interaction.editReply({ content: '⚠️ Invalid interval format. Use a value with a unit, e.g. "1h", "6h", "30m" (bare numbers are not allowed).' });
                     break;
                 }
 
@@ -2754,13 +2764,18 @@ export async function handleSlashInteraction(
                     break;
                 }
 
+                if (intervalMs > 2147483647) {
+                    await interaction.editReply({ content: '⚠️ Interval cannot be greater than 24.8 days (2147483647 ms).' });
+                    break;
+                }
+
                 await heartbeatService.updateConfig(true, intervalMs, targetChannel.id);
                 await interaction.editReply({ 
-                    content: `💓 Heartbeat enabled! Sending updates every **${intervalStr}** to channel <#${targetChannel.id}>.` 
+                    content: `${warningPrefix}💓 Heartbeat enabled! Sending updates every **${intervalStr}** to channel <#${targetChannel.id}>.` 
                 });
             } else if (subcommand === 'off') {
                 await heartbeatService.disable();
-                await interaction.editReply({ content: '💓 Heartbeat disabled.' });
+                await interaction.editReply({ content: `${warningPrefix}💓 Heartbeat disabled.` });
             } else if (subcommand === 'status') {
                 const config = loadConfig();
                 const uptimeMs = Date.now() - heartbeatService.botStartTime;

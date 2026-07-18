@@ -169,7 +169,7 @@ function mergeConfig(persisted: PersistedConfig): AppConfig {
     );
 
     const heartbeatChannelId = process.env.HEARTBEAT_CHANNEL_ID ?? persisted.heartbeatChannelId ?? undefined;
-    const heartbeatLastMessageId = process.env.HEARTBEAT_LAST_MESSAGE_ID ?? persisted.heartbeatLastMessageId ?? undefined;
+    const heartbeatLastMessageId = persisted.heartbeatLastMessageId ?? undefined;
 
     return {
         discordToken,

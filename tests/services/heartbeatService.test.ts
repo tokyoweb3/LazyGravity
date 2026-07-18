@@ -27,8 +27,8 @@ describe('Heartbeat Utility Functions', () => {
             expect(parseInterval('2d')).toBe(172800000);
         });
 
-        it('defaults to hours for pure numbers', () => {
-            expect(parseInterval('3')).toBe(10800000);
+        it('returns null for pure numbers (unit required)', () => {
+            expect(parseInterval('3')).toBeNull();
         });
 
         it('returns null for invalid format', () => {
@@ -133,7 +133,7 @@ describe('HeartbeatService', () => {
         (ConfigLoader.load as jest.Mock).mockReturnValue({
             heartbeatEnabled: true,
             heartbeatChannelId: 'channel-123',
-            heartbeatIntervalMs: 5000,
+            heartbeatIntervalMs: 15000,
         });
 
         service.init(mockClient, mockBridge);
@@ -144,11 +144,11 @@ describe('HeartbeatService', () => {
         expect(sendSpy).toHaveBeenCalledTimes(1); // Immediate call
         expect(jest.getTimerCount()).toBe(1);
 
-        jest.advanceTimersByTime(5000);
+        jest.advanceTimersByTime(15000);
         expect(sendSpy).toHaveBeenCalledTimes(2);
     });
 
-    it('uses configured interval of 0 if explicitly provided', () => {
+    it('clamps interval to 10000ms if configured interval is below 10000ms', () => {
         (ConfigLoader.load as jest.Mock).mockReturnValue({
             heartbeatEnabled: true,
             heartbeatChannelId: 'channel-123',
@@ -161,14 +161,30 @@ describe('HeartbeatService', () => {
         const logSpy = jest.spyOn(require('../../src/utils/logger').logger, 'info');
         service.start();
 
-        expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('every 0ms'));
+        expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('every 10000ms'));
+    });
+
+    it('clamps interval to 2147483647ms if configured interval is above 2147483647ms', () => {
+        (ConfigLoader.load as jest.Mock).mockReturnValue({
+            heartbeatEnabled: true,
+            heartbeatChannelId: 'channel-123',
+            heartbeatIntervalMs: 3000000000,
+        });
+
+        service.init(mockClient, mockBridge);
+        jest.spyOn(service, 'sendHeartbeat').mockResolvedValue(undefined);
+
+        const logSpy = jest.spyOn(require('../../src/utils/logger').logger, 'info');
+        service.start();
+
+        expect(logSpy).toHaveBeenCalledWith(expect.stringContaining('every 2147483647ms'));
     });
 
     it('stops interval on stop()', () => {
         (ConfigLoader.load as jest.Mock).mockReturnValue({
             heartbeatEnabled: true,
             heartbeatChannelId: 'channel-123',
-            heartbeatIntervalMs: 5000,
+            heartbeatIntervalMs: 15000,
         });
 
         service.init(mockClient, mockBridge);
@@ -181,14 +197,77 @@ describe('HeartbeatService', () => {
         expect(jest.getTimerCount()).toBe(0);
     });
 
-    it('disables heartbeat on disable()', async () => {
+    it('disables heartbeat on disable() and deletes old message', async () => {
+        const mockDelete = jest.fn().mockResolvedValue(true);
+        const mockMessage = {
+            id: 'msg-abc',
+            author: { id: 'bot-id' },
+            delete: mockDelete,
+        };
+        const mockChannel = {
+            isTextBased: () => true,
+            messages: {
+                fetch: jest.fn().mockResolvedValue(mockMessage),
+            },
+        };
+        mockClient.channels.fetch.mockResolvedValue(mockChannel);
+
+        (ConfigLoader.load as jest.Mock).mockReturnValue({
+            heartbeatEnabled: true,
+            heartbeatChannelId: 'channel-123',
+            heartbeatLastMessageId: 'msg-abc',
+        });
+
         service.init(mockClient, mockBridge);
         await service.disable();
 
+        expect(mockClient.channels.fetch).toHaveBeenCalledWith('channel-123');
+        expect(mockChannel.messages.fetch).toHaveBeenCalledWith('msg-abc');
+        expect(mockDelete).toHaveBeenCalled();
+
         expect(ConfigLoader.save).toHaveBeenCalledWith({
             heartbeatEnabled: false,
+            heartbeatLastMessageId: undefined,
         });
         expect(jest.getTimerCount()).toBe(0);
+    });
+
+    it('deletes old message when channel changes on updateConfig()', async () => {
+        const mockDelete = jest.fn().mockResolvedValue(true);
+        const mockMessage = {
+            id: 'msg-abc',
+            author: { id: 'bot-id' },
+            delete: mockDelete,
+        };
+        const mockChannel = {
+            isTextBased: () => true,
+            messages: {
+                fetch: jest.fn().mockResolvedValue(mockMessage),
+            },
+        };
+        mockClient.channels.fetch.mockResolvedValue(mockChannel);
+
+        (ConfigLoader.load as jest.Mock).mockReturnValue({
+            heartbeatEnabled: true,
+            heartbeatChannelId: 'channel-old',
+            heartbeatLastMessageId: 'msg-abc',
+        });
+
+        service.init(mockClient, mockBridge);
+        await service.updateConfig(true, 30000, 'channel-new');
+
+        expect(mockClient.channels.fetch).toHaveBeenCalledWith('channel-old');
+        expect(mockChannel.messages.fetch).toHaveBeenCalledWith('msg-abc');
+        expect(mockDelete).toHaveBeenCalled();
+
+        expect(ConfigLoader.save).toHaveBeenCalledWith({
+            heartbeatLastMessageId: undefined,
+        });
+        expect(ConfigLoader.save).toHaveBeenCalledWith({
+            heartbeatEnabled: true,
+            heartbeatIntervalMs: 30000,
+            heartbeatChannelId: 'channel-new',
+        });
     });
 
     describe('sendHeartbeat', () => {
