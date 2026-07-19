@@ -398,7 +398,7 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                         logger.info(
                             `[Queue:${projectLabel}] Enqueued (depth: ${newDepth}, channel: ${message.channelId})`,
                         );
-                        await message.react('⏳').catch(() => { });
+                        message.react('⏳').catch(() => { });
                     } else {
                         logger.info(
                             `[Queue:${projectLabel}] Processing immediately (depth: ${newDepth}, channel: ${message.channelId})`,

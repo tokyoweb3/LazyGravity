@@ -22,6 +22,8 @@ export class HeartbeatService {
     private generationToken: number = 0;
     /** Lock flag to prevent overlapping send requests. */
     private isSending: boolean = false;
+    /** Tracks whether a send request is queued to run after the active send completes. */
+    private nextSendQueued: boolean = false;
     
     /** Timestamp when the bot application started. */
     public botStartTime: number = Date.now();
@@ -111,26 +113,50 @@ export class HeartbeatService {
      */
     public async updateConfig(enabled: boolean, intervalMs: number, channelId: string) {
         this.generationToken++;
+        const gen = this.generationToken;
         const config = ConfigLoader.load();
         
         // If channel changed, clear the last message ID
         if (config.heartbeatChannelId !== channelId) {
+            let clearId = false;
             if (config.heartbeatChannelId && config.heartbeatLastMessageId) {
                 try {
                     const oldChannel = await this.client?.channels.fetch(config.heartbeatChannelId);
+                    if (gen !== this.generationToken) return;
                     if (oldChannel && oldChannel.isTextBased()) {
-                        const oldMsg = await (oldChannel as TextChannel).messages.fetch(config.heartbeatLastMessageId);
-                        if (oldMsg) {
-                            await oldMsg.delete().catch(() => {});
+                        try {
+                            const oldMsg = await (oldChannel as TextChannel).messages.fetch(config.heartbeatLastMessageId);
+                            if (gen !== this.generationToken) return;
+                            if (oldMsg) {
+                                await oldMsg.delete();
+                                clearId = true;
+                            }
+                        } catch (err: any) {
+                            if (err?.code === 10008 || err?.status === 404) {
+                                clearId = true;
+                            } else {
+                                throw err;
+                            }
                         }
+                    } else {
+                        clearId = true;
                     }
-                } catch (err) {
+                } catch (err: any) {
                     logger.debug('[HeartbeatService] Failed to delete old heartbeat message from previous channel:', err);
+                    if (err?.code === 10008 || err?.code === 10003 || err?.status === 404) {
+                        clearId = true;
+                    }
                 }
+            } else {
+                clearId = true;
             }
-            ConfigLoader.save({ heartbeatLastMessageId: undefined });
+            if (gen !== this.generationToken) return;
+            if (clearId) {
+                ConfigLoader.save({ heartbeatLastMessageId: undefined });
+            }
         }
 
+        if (gen !== this.generationToken) return;
         // Save to config.json
         ConfigLoader.save({
             heartbeatEnabled: enabled,
@@ -149,23 +175,44 @@ export class HeartbeatService {
      */
     public async disable() {
         this.generationToken++;
+        const gen = this.generationToken;
         const config = ConfigLoader.load();
+        let clearId = false;
         if (config.heartbeatChannelId && config.heartbeatLastMessageId) {
             try {
                 const oldChannel = await this.client?.channels.fetch(config.heartbeatChannelId);
+                if (gen !== this.generationToken) return;
                 if (oldChannel && oldChannel.isTextBased()) {
-                    const oldMsg = await (oldChannel as TextChannel).messages.fetch(config.heartbeatLastMessageId);
-                    if (oldMsg) {
-                        await oldMsg.delete().catch(() => {});
+                    try {
+                        const oldMsg = await (oldChannel as TextChannel).messages.fetch(config.heartbeatLastMessageId);
+                        if (gen !== this.generationToken) return;
+                        if (oldMsg) {
+                            await oldMsg.delete();
+                            clearId = true;
+                        }
+                    } catch (err: any) {
+                        if (err?.code === 10008 || err?.status === 404) {
+                            clearId = true;
+                        } else {
+                            throw err;
+                        }
                     }
+                } else {
+                    clearId = true;
                 }
-            } catch (err) {
+            } catch (err: any) {
                 logger.debug('[HeartbeatService] Failed to delete heartbeat message upon disabling:', err);
+                if (err?.code === 10008 || err?.code === 10003 || err?.status === 404) {
+                    clearId = true;
+                }
             }
+        } else {
+            clearId = true;
         }
+        if (gen !== this.generationToken) return;
         ConfigLoader.save({
             heartbeatEnabled: false,
-            heartbeatLastMessageId: undefined,
+            heartbeatLastMessageId: clearId ? undefined : config.heartbeatLastMessageId,
         });
         this.stop();
         logger.info('[HeartbeatService] Heartbeat disabled.');
@@ -181,21 +228,21 @@ export class HeartbeatService {
         }
 
         if (this.isSending) {
-            logger.debug('[HeartbeatService] Heartbeat send already in flight. Skipping overlapping execution.');
+            logger.debug('[HeartbeatService] Heartbeat send already in flight. Queueing follow-up send.');
+            this.nextSendQueued = true;
             return;
         }
 
         const gen = this.generationToken;
         this.isSending = true;
 
-        const config = ConfigLoader.load();
-        const channelId = config.heartbeatChannelId;
-        if (!channelId) {
-            this.isSending = false;
-            return;
-        }
-
         try {
+            const config = ConfigLoader.load();
+            const channelId = config.heartbeatChannelId;
+            if (!channelId) {
+                return;
+            }
+
             const channel = await this.client.channels.fetch(channelId);
             if (gen !== this.generationToken) {
                 logger.debug(`[HeartbeatService] Aborting heartbeat send: stale generation (expected ${gen}, current ${this.generationToken})`);
@@ -247,6 +294,12 @@ export class HeartbeatService {
             logger.error('[HeartbeatService] Error in sendHeartbeat:', error);
         } finally {
             this.isSending = false;
+            if (this.nextSendQueued) {
+                this.nextSendQueued = false;
+                this.sendHeartbeat().catch(err => {
+                    logger.error('[HeartbeatService] Failed to send queued heartbeat:', err);
+                });
+            }
         }
     }
 

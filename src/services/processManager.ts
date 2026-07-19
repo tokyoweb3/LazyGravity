@@ -100,7 +100,6 @@ export class ProcessManager {
         const child = this.runningProcesses.get(taskId);
         if (child) {
             child.kill();
-            this.runningProcesses.delete(taskId);
             return true;
         }
         // Check if queued

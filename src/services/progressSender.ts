@@ -38,6 +38,8 @@ export class ProgressSender {
 
     /** Handler logic for executing message deliveries. */
     private sendContent: (content: string) => Promise<unknown>;
+    /** Sequential promise chain to ensure ordered delivery of message chunks. */
+    private promiseChain: Promise<any> = Promise.resolve();
 
     /**
      * Initializes the ProgressSender instance.
@@ -91,7 +93,9 @@ export class ProgressSender {
         const chunks = this.splitByLength(payload, this.maxLength);
         for (const chunk of chunks) {
             const content = this.wrapInCodeBlock ? `\`\`\`\n${chunk}\n\`\`\`` : chunk;
-            this.sendContent(content).catch(() => { });
+            this.promiseChain = this.promiseChain
+                .then(() => this.sendContent(content))
+                .catch(() => { });
         }
     }
 

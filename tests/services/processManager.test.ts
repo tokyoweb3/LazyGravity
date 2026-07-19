@@ -148,4 +148,42 @@ describe('ProcessManager', () => {
         expect(result).toBe(true);
         expect(mockKill).toHaveBeenCalled();
     });
+
+    it('should keep the task in runningProcesses on stopTask until close event fires', async () => {
+        const mockKill = jest.fn();
+        let closeCallback: any;
+        mockSpawn.mockReturnValue({
+            pid: 123,
+            stdout: { on: jest.fn() },
+            stderr: { on: jest.fn() },
+            on: jest.fn((event, cb) => {
+                if (event === 'close') {
+                    closeCallback = cb;
+                }
+            }),
+            kill: mockKill,
+        });
+
+        processManager.submitTask({ id: 'task-to-kill-delayed', command: 'sleep', args: ['10'], cwd: '/' });
+
+        await new Promise(process.nextTick);
+
+        // Verify it is in runningProcesses
+        expect((processManager as any).runningProcesses.has('task-to-kill-delayed')).toBe(true);
+
+        const result = processManager.stopTask('task-to-kill-delayed');
+
+        expect(result).toBe(true);
+        expect(mockKill).toHaveBeenCalled();
+        // It should still be in runningProcesses immediately after stopTask (before close fires)
+        expect((processManager as any).runningProcesses.has('task-to-kill-delayed')).toBe(true);
+
+        // Now trigger the close event callback
+        if (closeCallback) {
+            closeCallback(0);
+        }
+
+        // Now it should be removed from runningProcesses
+        expect((processManager as any).runningProcesses.has('task-to-kill-delayed')).toBe(false);
+    });
 });

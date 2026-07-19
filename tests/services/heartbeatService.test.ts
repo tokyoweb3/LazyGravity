@@ -359,5 +359,53 @@ describe('HeartbeatService', () => {
                 heartbeatLastMessageId: expect.any(String),
             });
         });
+
+        it('queues a follow-up send and executes it immediately when reconfigured while channels.fetch is pending', async () => {
+            (ConfigLoader.load as jest.Mock).mockReturnValue({
+                heartbeatEnabled: true,
+                heartbeatChannelId: 'channel-123',
+                heartbeatIntervalMs: 15000,
+            });
+
+            // Simulate delayed fetch
+            let resolveFetch: (value: any) => void = () => {};
+            const fetchPromise = new Promise((resolve) => {
+                resolveFetch = resolve;
+            });
+            mockClient.channels.fetch.mockReturnValue(fetchPromise);
+
+            service.init(mockClient, mockBridge);
+            
+            // Start the first heartbeat (this sets isSending to true and calls fetch)
+            const firstSendPromise = service.sendHeartbeat();
+
+            expect((service as any).isSending).toBe(true);
+
+            // Reconfigure/restart while first fetch is pending
+            const updatePromise = service.updateConfig(true, 15000, 'channel-123');
+
+            // Wait a tiny bit to let promises resolve/tick
+            await Promise.resolve();
+
+            // Next send should be queued
+            expect((service as any).nextSendQueued).toBe(true);
+
+            // Now resolve the first fetch
+            resolveFetch(mockChannel);
+
+            // Let the first call finish
+            await firstSendPromise;
+
+            // Wait for updateConfig to finish
+            await updatePromise;
+
+            // By now, the first send should have aborted due to stale generation,
+            // and the queued send should have started and resolved.
+            // Since mockChannel is returned, the new/queued heartbeat send should have called channel.send!
+            expect(mockChannel.send).toHaveBeenCalled();
+            expect(ConfigLoader.save).toHaveBeenCalledWith({
+                heartbeatLastMessageId: 'msg-abc',
+            });
+        });
     });
 });
