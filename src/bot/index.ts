@@ -2853,10 +2853,8 @@ export async function handleSlashInteraction(
                     break;
                 }
 
-                // Check permissions
-                const botUser = interaction.client.user;
-                const permissions = (targetChannel as any).permissionsFor?.(botUser);
-                if (!permissions || !permissions.has('SendMessages') || !permissions.has('EmbedLinks')) {
+                const permissions = (targetChannel as any).permissionsFor?.(interaction.client.user);
+                if (permissions && (!permissions.has('SendMessages') || !permissions.has('EmbedLinks'))) {
                     await interaction.editReply({ content: '⚠️ Bot does not have permission to send messages and embed links in that channel.' });
                     break;
                 }
@@ -3085,22 +3083,28 @@ export async function handleSlashInteraction(
                     break;
                 }
 
+                let timeoutId: NodeJS.Timeout | undefined;
                 try {
                     const controller = new AbortController();
-                    const timeoutId = setTimeout(() => controller.abort(), 10000);
+                    timeoutId = setTimeout(() => controller.abort(), 10000);
 
-                    // Download file content using global fetch (available in Node 18+)
-                    const response = await fetch(attachment.url, { signal: controller.signal });
-                    clearTimeout(timeoutId);
+                    let jsonText: string;
+                    try {
+                        // Download file content using global fetch (available in Node 18+)
+                        const response = await fetch(attachment.url, { signal: controller.signal });
+                        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
-                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                        const contentLength = response.headers.get('content-length');
+                        if (contentLength && parseInt(contentLength, 10) > 1024 * 1024) {
+                            throw new Error('Response body exceeds maximum size limit of 1MB.');
+                        }
 
-                    const contentLength = response.headers.get('content-length');
-                    if (contentLength && parseInt(contentLength, 10) > 1024 * 1024) {
-                        throw new Error('Response body exceeds maximum size limit of 1MB.');
+                        jsonText = await response.text();
+                    } finally {
+                        if (timeoutId) {
+                            clearTimeout(timeoutId);
+                        }
                     }
-
-                    const jsonText = await response.text();
 
                     const jobCb = scheduleService.getJobCallback();
                     if (!jobCb) {

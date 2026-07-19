@@ -3,6 +3,7 @@
  */
 
 import { Message } from 'discord.js';
+import { logger } from '../utils/logger';
 
 /**
  * Options configuring the ProgressSender behavior.
@@ -95,7 +96,9 @@ export class ProgressSender {
             const content = this.wrapInCodeBlock ? `\`\`\`\n${chunk}\n\`\`\`` : chunk;
             this.promiseChain = this.promiseChain
                 .then(() => this.sendContent(content))
-                .catch(() => { });
+                .catch((err) => {
+                    logger.error('[ProgressSender] Failed to send progress chunk:', err);
+                });
         }
     }
 

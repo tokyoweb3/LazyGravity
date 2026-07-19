@@ -355,9 +355,7 @@ describe('HeartbeatService', () => {
 
             // Expected: should abort and NOT call channel.send or ConfigLoader.save
             expect(mockChannel.send).not.toHaveBeenCalled();
-            expect(ConfigLoader.save).not.toHaveBeenCalledWith({
-                heartbeatLastMessageId: expect.any(String),
-            });
+            expect(ConfigLoader.save).not.toHaveBeenCalled();
         });
 
         it('queues a follow-up send and executes it immediately when reconfigured while channels.fetch is pending', async () => {

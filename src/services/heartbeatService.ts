@@ -99,6 +99,7 @@ export class HeartbeatService {
      */
     public stop() {
         this.generationToken++;
+        this.nextSendQueued = false;
         if (this.intervalId) {
             clearInterval(this.intervalId);
             this.intervalId = null;
@@ -112,7 +113,7 @@ export class HeartbeatService {
      * @param channelId Destination Discord channel ID.
      */
     public async updateConfig(enabled: boolean, intervalMs: number, channelId: string) {
-        this.generationToken++;
+        this.stop();
         const gen = this.generationToken;
         const config = ConfigLoader.load();
         
@@ -174,7 +175,7 @@ export class HeartbeatService {
      * Deletes the active message, updates configuration state to disabled, and stops the loop.
      */
     public async disable() {
-        this.generationToken++;
+        this.stop();
         const gen = this.generationToken;
         const config = ConfigLoader.load();
         let clearId = false;
@@ -214,7 +215,6 @@ export class HeartbeatService {
             heartbeatEnabled: false,
             heartbeatLastMessageId: clearId ? undefined : config.heartbeatLastMessageId,
         });
-        this.stop();
         logger.info('[HeartbeatService] Heartbeat disabled.');
     }
 
