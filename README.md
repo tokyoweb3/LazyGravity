@@ -14,6 +14,10 @@
 
 # LazyGravity
 
+<!-- hy-mt2-i18n:start -->
+**English** · [中文](./README_zh-CN.md) · [日本語](./README_ja.md) · [Español](./README_es.md)
+<!-- hy-mt2-i18n:end -->
+
 **LazyGravity** is a local, secure bot that lets you remotely operate [Antigravity](https://antigravity.dev) on your home PC — from your smartphone, anywhere. Supports **Discord** and **Telegram** (optional).
 
 Send natural language instructions like "fix that bug" or "start designing the new feature" from your phone. Antigravity executes them locally on your home PC using its full resources, and reports results back to your chat platform.
