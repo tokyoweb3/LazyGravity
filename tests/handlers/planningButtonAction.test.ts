@@ -42,6 +42,7 @@ function makeInteraction(overrides: Partial<PlatformButtonInteraction> = {}): Pl
             id: 'sent-1', platform: 'telegram', channelId: 'ch-1',
             edit: jest.fn(), delete: jest.fn(),
         } as PlatformSentMessage),
+        showModal: jest.fn().mockResolvedValue(undefined),
         ...overrides,
     };
 }
@@ -72,7 +73,7 @@ describe('createPlanningButtonAction', () => {
     describe('match', () => {
         it('matches planning_open_action customId', () => {
             const bridge = makeBridge();
-            const action = createPlanningButtonAction({ bridge });
+            const action = createPlanningButtonAction({ bridge, wsHandler: { getWorkspaceForChannel: jest.fn() } as any });
             const result = action.match('planning_open_action:proj:ch-1');
             expect(result).toEqual({
                 action: 'open',
@@ -83,7 +84,7 @@ describe('createPlanningButtonAction', () => {
 
         it('matches planning_proceed_action customId', () => {
             const bridge = makeBridge();
-            const action = createPlanningButtonAction({ bridge });
+            const action = createPlanningButtonAction({ bridge, wsHandler: { getWorkspaceForChannel: jest.fn() } as any });
             const result = action.match('planning_proceed_action:proj');
             expect(result).toEqual({
                 action: 'proceed',
@@ -94,7 +95,7 @@ describe('createPlanningButtonAction', () => {
 
         it('returns null for unrelated customId', () => {
             const bridge = makeBridge();
-            const action = createPlanningButtonAction({ bridge });
+            const action = createPlanningButtonAction({ bridge, wsHandler: { getWorkspaceForChannel: jest.fn() } as any });
             expect(action.match('approve_action:proj')).toBeNull();
             expect(action.match('random')).toBeNull();
         });
@@ -105,11 +106,12 @@ describe('createPlanningButtonAction', () => {
             const mockDetector = {
                 clickOpenButton: jest.fn().mockResolvedValue(true),
                 extractPlanContent: jest.fn().mockResolvedValue('Plan details here'),
+                getLastDetectedInfo: jest.fn().mockReturnValue({ hasOpenButton: true }),
             };
             const bridge = makeBridge();
             (bridge.pool.getPlanningDetector as jest.Mock).mockReturnValue(mockDetector);
 
-            const action = createPlanningButtonAction({ bridge });
+            const action = createPlanningButtonAction({ bridge, wsHandler: { getWorkspaceForChannel: jest.fn() } as any });
             const interaction = makeInteraction();
 
             await action.execute(interaction, {
@@ -120,7 +122,7 @@ describe('createPlanningButtonAction', () => {
 
             expect(interaction.deferUpdate).toHaveBeenCalled();
             expect(mockDetector.clickOpenButton).toHaveBeenCalled();
-            expect(interaction.update).toHaveBeenCalledWith({
+            expect(interaction.editReply).toHaveBeenCalledWith({
                 text: '📋 Plan opened',
                 components: [],
             });
@@ -134,11 +136,12 @@ describe('createPlanningButtonAction', () => {
             const mockDetector = {
                 clickOpenButton: jest.fn().mockResolvedValue(true),
                 extractPlanContent: jest.fn().mockResolvedValue(longContent),
+                getLastDetectedInfo: jest.fn().mockReturnValue({ hasOpenButton: true }),
             };
             const bridge = makeBridge();
             (bridge.pool.getPlanningDetector as jest.Mock).mockReturnValue(mockDetector);
 
-            const action = createPlanningButtonAction({ bridge });
+            const action = createPlanningButtonAction({ bridge, wsHandler: { getWorkspaceForChannel: jest.fn() } as any });
             const interaction = makeInteraction();
 
             await action.execute(interaction, {
@@ -155,33 +158,13 @@ describe('createPlanningButtonAction', () => {
         it('replies with error when open button not found', async () => {
             const mockDetector = {
                 clickOpenButton: jest.fn().mockResolvedValue(false),
-            };
-            const bridge = makeBridge();
-            (bridge.pool.getPlanningDetector as jest.Mock).mockReturnValue(mockDetector);
-
-            const action = createPlanningButtonAction({ bridge });
-            const interaction = makeInteraction();
-
-            await action.execute(interaction, {
-                action: 'open',
-                projectName: 'proj',
-                channelId: '',
-            });
-
-            expect(interaction.reply).toHaveBeenCalledWith({
-                text: 'Open button not found.',
-            });
-        });
-
-        it('sends fallback message when plan content is null', async () => {
-            const mockDetector = {
-                clickOpenButton: jest.fn().mockResolvedValue(true),
                 extractPlanContent: jest.fn().mockResolvedValue(null),
+                getLastDetectedInfo: jest.fn().mockReturnValue({ hasOpenButton: true }),
             };
             const bridge = makeBridge();
             (bridge.pool.getPlanningDetector as jest.Mock).mockReturnValue(mockDetector);
 
-            const action = createPlanningButtonAction({ bridge });
+            const action = createPlanningButtonAction({ bridge, wsHandler: { getWorkspaceForChannel: jest.fn() } as any });
             const interaction = makeInteraction();
 
             await action.execute(interaction, {
@@ -191,7 +174,78 @@ describe('createPlanningButtonAction', () => {
             });
 
             expect(interaction.followUp).toHaveBeenCalledWith({
-                text: 'Could not extract plan content from the editor.',
+                text: 'Plan content could not be extracted from the IDE or workspace.',
+            });
+        });
+
+        it('sends fallback message when plan content is null', async () => {
+            const mockDetector = {
+                clickOpenButton: jest.fn().mockResolvedValue(true),
+                extractPlanContent: jest.fn().mockResolvedValue(null),
+                getLastDetectedInfo: jest.fn().mockReturnValue({ hasOpenButton: true }),
+            };
+            const bridge = makeBridge();
+            (bridge.pool.getPlanningDetector as jest.Mock).mockReturnValue(mockDetector);
+
+            const action = createPlanningButtonAction({ bridge, wsHandler: { getWorkspaceForChannel: jest.fn() } as any });
+            const interaction = makeInteraction();
+
+            await action.execute(interaction, {
+                action: 'open',
+                projectName: 'proj',
+                channelId: '',
+            });
+
+            expect(interaction.followUp).toHaveBeenCalledWith({
+                text: 'Plan opened in IDE, but content could not be extracted.',
+            });
+        });
+
+        it('shows comment modal if isReview is true and showModal is supported', async () => {
+            const mockDetector = {
+                clickOpenButton: jest.fn().mockResolvedValue(true),
+                getLastDetectedInfo: jest.fn().mockReturnValue({ hasOpenButton: true, openText: 'Review plan' }),
+            };
+            const bridge = makeBridge();
+            (bridge.pool.getPlanningDetector as jest.Mock).mockReturnValue(mockDetector);
+
+            const action = createPlanningButtonAction({ bridge, wsHandler: { getWorkspaceForChannel: jest.fn() } as any });
+            const interaction = makeInteraction();
+
+            await action.execute(interaction, {
+                action: 'open',
+                projectName: 'proj',
+                channelId: '',
+            });
+
+            expect(interaction.showModal).toHaveBeenCalled();
+            expect(mockDetector.clickOpenButton).not.toHaveBeenCalled();
+        });
+
+        it('falls back to normal open flow if showModal throws/fails', async () => {
+            const mockDetector = {
+                clickOpenButton: jest.fn().mockResolvedValue(true),
+                extractPlanContent: jest.fn().mockResolvedValue('Plan details here'),
+                getLastDetectedInfo: jest.fn().mockReturnValue({ hasOpenButton: true, openText: 'Review plan' }),
+            };
+            const bridge = makeBridge();
+            (bridge.pool.getPlanningDetector as jest.Mock).mockReturnValue(mockDetector);
+
+            const action = createPlanningButtonAction({ bridge, wsHandler: { getWorkspaceForChannel: jest.fn() } as any });
+            const interaction = makeInteraction({
+                showModal: jest.fn().mockRejectedValue(new Error('Modal display rejected')),
+            });
+
+            await action.execute(interaction, {
+                action: 'open',
+                projectName: 'proj',
+                channelId: '',
+            });
+
+            expect(interaction.showModal).toHaveBeenCalled();
+            expect(mockDetector.clickOpenButton).toHaveBeenCalled();
+            expect(interaction.followUp).toHaveBeenCalledWith({
+                text: 'Plan details here',
             });
         });
     });
@@ -204,7 +258,7 @@ describe('createPlanningButtonAction', () => {
             const bridge = makeBridge();
             (bridge.pool.getPlanningDetector as jest.Mock).mockReturnValue(mockDetector);
 
-            const action = createPlanningButtonAction({ bridge });
+            const action = createPlanningButtonAction({ bridge, wsHandler: { getWorkspaceForChannel: jest.fn() } as any });
             const interaction = makeInteraction();
 
             await action.execute(interaction, {
@@ -214,8 +268,8 @@ describe('createPlanningButtonAction', () => {
             });
 
             expect(mockDetector.clickProceedButton).toHaveBeenCalled();
-            expect(interaction.update).toHaveBeenCalledWith({
-                text: '▶️ Proceed started',
+            expect(interaction.editReply).toHaveBeenCalledWith({
+                text: '▶️ Proceed started.\n\n⏳ IDE is working on the response...',
                 components: [],
             });
         });
@@ -227,7 +281,7 @@ describe('createPlanningButtonAction', () => {
             const bridge = makeBridge();
             (bridge.pool.getPlanningDetector as jest.Mock).mockReturnValue(mockDetector);
 
-            const action = createPlanningButtonAction({ bridge });
+            const action = createPlanningButtonAction({ bridge, wsHandler: { getWorkspaceForChannel: jest.fn() } as any });
             const interaction = makeInteraction();
 
             await action.execute(interaction, {
@@ -236,8 +290,34 @@ describe('createPlanningButtonAction', () => {
                 channelId: '',
             });
 
-            expect(interaction.reply).toHaveBeenCalledWith({
+            expect(interaction.followUp).toHaveBeenCalledWith({
                 text: 'Proceed button not found.',
+                ephemeral: true,
+            });
+        });
+    });
+
+    describe('execute - reject', () => {
+        it('does not allow plan rejection and replies with error message', async () => {
+            const mockDetector = {
+                clickRejectButton: jest.fn().mockResolvedValue(true),
+            };
+            const bridge = makeBridge();
+            (bridge.pool.getPlanningDetector as jest.Mock).mockReturnValue(mockDetector);
+
+            const action = createPlanningButtonAction({ bridge, wsHandler: { getWorkspaceForChannel: jest.fn() } as any });
+            const interaction = makeInteraction();
+
+            await action.execute(interaction, {
+                action: 'reject',
+                projectName: 'proj',
+                channelId: '',
+            });
+
+            expect(mockDetector.clickRejectButton).not.toHaveBeenCalled();
+            expect(interaction.followUp).toHaveBeenCalledWith({
+                text: 'Rejection of the plan is not allowed.',
+                ephemeral: true,
             });
         });
     });
@@ -247,7 +327,7 @@ describe('createPlanningButtonAction', () => {
             const bridge = makeBridge();
             (bridge.pool.getPlanningDetector as jest.Mock).mockReturnValue(undefined);
 
-            const action = createPlanningButtonAction({ bridge });
+            const action = createPlanningButtonAction({ bridge, wsHandler: { getWorkspaceForChannel: jest.fn() } as any });
             const interaction = makeInteraction();
 
             await action.execute(interaction, {
@@ -256,14 +336,15 @@ describe('createPlanningButtonAction', () => {
                 channelId: '',
             });
 
-            expect(interaction.reply).toHaveBeenCalledWith({
+            expect(interaction.followUp).toHaveBeenCalledWith({
                 text: 'Planning detector not found.',
+                ephemeral: true,
             });
         });
 
         it('rejects interaction from wrong channel', async () => {
             const bridge = makeBridge();
-            const action = createPlanningButtonAction({ bridge });
+            const action = createPlanningButtonAction({ bridge, wsHandler: { getWorkspaceForChannel: jest.fn() } as any });
             const interaction = makeInteraction({
                 channel: makeChannel({ id: 'ch-other' }),
             });
@@ -274,19 +355,21 @@ describe('createPlanningButtonAction', () => {
                 channelId: 'ch-1',
             });
 
-            expect(interaction.reply).toHaveBeenCalledWith({
+            expect(interaction.followUp).toHaveBeenCalledWith({
                 text: 'This planning action is linked to a different session channel.',
+                ephemeral: true,
             });
         });
 
-        it('falls back to lastActiveWorkspace when projectName is empty', async () => {
+        it('falls back to wsHandler when projectName is empty', async () => {
             const mockDetector = {
                 clickProceedButton: jest.fn().mockResolvedValue(true),
             };
-            const bridge = makeBridge({ lastActiveWorkspace: 'fallbackWs' });
+            const bridge = makeBridge();
             (bridge.pool.getPlanningDetector as jest.Mock).mockReturnValue(mockDetector);
+            bridge.pool.extractProjectName = jest.fn().mockReturnValue('fallbackWs');
 
-            const action = createPlanningButtonAction({ bridge });
+            const action = createPlanningButtonAction({ bridge, wsHandler: { getWorkspaceForChannel: jest.fn().mockReturnValue('/path/to/ws') } as any });
             const interaction = makeInteraction();
 
             await action.execute(interaction, {

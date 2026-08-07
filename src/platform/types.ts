@@ -138,6 +138,29 @@ export interface ComponentRow {
 }
 
 // ---------------------------------------------------------------------------
+// Modals (Dialog boxes)
+// ---------------------------------------------------------------------------
+
+export interface ModalTextInput {
+    readonly type: 'textInput';
+    readonly customId: string;
+    readonly label: string;
+    readonly style: 'short' | 'paragraph';
+    readonly placeholder?: string;
+    readonly required?: boolean;
+}
+
+export interface ModalRow {
+    readonly components: readonly ModalTextInput[];
+}
+
+export interface ModalDef {
+    readonly title: string;
+    readonly customId: string;
+    readonly components: readonly ModalRow[];
+}
+
+// ---------------------------------------------------------------------------
 // Message payload (what gets sent)
 // ---------------------------------------------------------------------------
 
@@ -191,6 +214,8 @@ export interface PlatformButtonInteraction {
     editReply(payload: MessagePayload): Promise<void>;
     /** Send a follow-up message. */
     followUp(payload: MessagePayload): Promise<PlatformSentMessage>;
+    /** Show a modal dialog box. Must be the first response. */
+    showModal?(modal: ModalDef): Promise<void>;
 }
 
 export interface PlatformSelectInteraction {
@@ -217,6 +242,21 @@ export interface PlatformCommandInteraction {
     readonly options: ReadonlyMap<string, string | number | boolean>;
     deferReply(opts?: { ephemeral?: boolean }): Promise<void>;
     reply(payload: MessagePayload): Promise<void>;
+    editReply(payload: MessagePayload): Promise<void>;
+    followUp(payload: MessagePayload): Promise<PlatformSentMessage>;
+}
+
+export interface PlatformModalSubmitInteraction {
+    readonly id: string;
+    readonly platform: PlatformType;
+    readonly customId: string;
+    readonly user: PlatformUser;
+    readonly channel: PlatformChannel;
+    readonly messageId: string | null;
+    readonly fields: ReadonlyMap<string, string>;
+    deferUpdate(): Promise<void>;
+    reply(payload: MessagePayload): Promise<void>;
+    update(payload: MessagePayload): Promise<void>;
     editReply(payload: MessagePayload): Promise<void>;
     followUp(payload: MessagePayload): Promise<PlatformSentMessage>;
 }

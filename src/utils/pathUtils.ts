@@ -55,3 +55,15 @@ export function getAntigravityCdpHint(port: number = 9222): string {
             return `${APP_NAME.toLowerCase()} --remote-debugging-port=${port}`;
     }
 }
+
+/**
+ * Extracts the workspace directory name from a chat session.
+ * @param session The chat session object
+ * @returns The base directory name, or undefined
+ */
+export function getWorkspaceDirName(session: { workspacePath?: string | null } | null | undefined): string | undefined {
+    if (session && session.workspacePath) {
+        return extractProjectNameFromPath(session.workspacePath);
+    }
+    return undefined;
+}

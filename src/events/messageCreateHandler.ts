@@ -16,6 +16,7 @@ import {
     ensureErrorPopupDetector as ensureErrorPopupDetectorFn,
     ensurePlanningDetector as ensurePlanningDetectorFn,
     ensureRunCommandDetector as ensureRunCommandDetectorFn,
+    ensureQuestionDetector as ensureQuestionDetectorFn,
     getCurrentCdp as getCurrentCdpFn,
     registerApprovalSessionChannel as registerApprovalSessionChannelFn,
     registerApprovalWorkspaceChannel as registerApprovalWorkspaceChannelFn,
@@ -35,6 +36,8 @@ import {
 } from '../utils/imageHandler';
 import { listAccountNames, resolveScopedAccountName } from '../utils/accountUtils';
 import { logger } from '../utils/logger';
+import { HeartbeatService } from '../services/heartbeatService';
+import { WorkspaceQueue } from '../bot/workspaceQueue';
 
 export interface MessageCreateHandlerDeps {
     config: { allowedUserIds: string[]; extractionMode?: import('../utils/config').ExtractionMode; responseTimeoutMs?: number };
@@ -72,6 +75,7 @@ export interface MessageCreateHandlerDeps {
     ensureErrorPopupDetector?: (bridge: CdpBridge, cdp: CdpService, projectName: string) => void;
     ensurePlanningDetector?: (bridge: CdpBridge, cdp: CdpService, projectName: string) => void;
     ensureRunCommandDetector?: (bridge: CdpBridge, cdp: CdpService, projectName: string) => void;
+    ensureQuestionDetector?: (bridge: CdpBridge, cdp: CdpService, projectName: string, accountName?: string) => void;
     registerApprovalWorkspaceChannel?: (bridge: CdpBridge, projectName: string, channel: PlatformChannel) => void;
     registerApprovalSessionChannel?: (bridge: CdpBridge, projectName: string, sessionTitle: string, channel: PlatformChannel) => void;
     downloadInboundImageAttachments?: (message: Message) => Promise<InboundImageAttachment[]>;
@@ -81,14 +85,18 @@ export interface MessageCreateHandlerDeps {
     accountPrefRepo?: AccountPreferenceRepository;
     channelPrefRepo?: ChannelPreferenceRepository;
     antigravityAccounts?: { name: string; cdpPort: number }[];
+    heartbeatService?: HeartbeatService;
+    workspaceQueue?: WorkspaceQueue;
 }
 
 export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
+    const workspaceQueue = deps.workspaceQueue ?? new WorkspaceQueue();
     const getCurrentCdp = deps.getCurrentCdp ?? getCurrentCdpFn;
     const ensureApprovalDetector = deps.ensureApprovalDetector ?? ensureApprovalDetectorFn;
     const ensureErrorPopupDetector = deps.ensureErrorPopupDetector ?? ensureErrorPopupDetectorFn;
     const ensurePlanningDetector = deps.ensurePlanningDetector ?? ensurePlanningDetectorFn;
     const ensureRunCommandDetector = deps.ensureRunCommandDetector ?? ensureRunCommandDetectorFn;
+    const ensureQuestionDetector = deps.ensureQuestionDetector ?? ensureQuestionDetectorFn;
     const registerApprovalWorkspaceChannel = deps.registerApprovalWorkspaceChannel ?? registerApprovalWorkspaceChannelFn;
     const registerApprovalSessionChannel = deps.registerApprovalSessionChannel ?? registerApprovalSessionChannelFn;
     const downloadInboundImageAttachments = deps.downloadInboundImageAttachments ?? downloadInboundImageAttachmentsFn;
@@ -106,32 +114,15 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
     const getSessionAccountName = (channelId: string): string | null =>
         deps.chatSessionRepo.findByChannelId(channelId)?.activeAccountName ?? null;
 
-    // Per-workspace prompt queue: serializes send→response cycles
-    const workspaceQueues = new Map<string, Promise<void>>();
-    const workspaceQueueDepths = new Map<string, number>();
-
-    function enqueueForWorkspace(
-        workspacePath: string,
-        task: () => Promise<void>,
-    ): Promise<void> {
-        // .catch: ensure a prior rejection never stalls the chain
-        const current = (workspaceQueues.get(workspacePath) ?? Promise.resolve()).catch(() => { });
-        const next = current.then(async () => {
-            try {
-                await task();
-            } catch (err: any) {
-                logger.error('[WorkspaceQueue] task error:', err?.message || err);
-            }
-        });
-        workspaceQueues.set(workspacePath, next);
-        return next;
-    }
-
     return async (message: Message): Promise<void> => {
         if (message.author.bot) return;
 
         if (!deps.config.allowedUserIds.includes(message.author.id)) {
             return;
+        }
+
+        if (deps.heartbeatService) {
+            deps.heartbeatService.recordActivity();
         }
 
         const parsed = parseMessageContent(message.content);
@@ -256,7 +247,7 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                 return;
             }
 
-            const slashOnlyCommands = ['help', 'stop', 'model', 'mode', 'project', 'chat', 'new', 'cleanup', 'join', 'mirror', 'output'];
+            const slashOnlyCommands = ['help', 'stop', 'model', 'mode', 'project', 'chat', 'new', 'cleanup', 'join', 'mirror', 'output', 'heartbeat'];
             if (slashOnlyCommands.includes(parsed.commandName)) {
                 await message.reply({
                     content: `💡 Please use \`/${parsed.commandName}\` as a slash command.\nType \`/${parsed.commandName}\` in the Discord input field to see suggestions.`,
@@ -290,10 +281,62 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
             return;
         }
 
-        const hasImageAttachments = Array.from(message.attachments.values())
-            .some((attachment) => isImageAttachment(attachment.contentType, attachment.name));
-        if (message.content.trim() || hasImageAttachments) {
-            const promptText = message.content.trim() || 'Please review the attached images and respond accordingly.';
+        const allAttachments = Array.from(message.attachments.values());
+        const hasImageAttachments = allAttachments.some((attachment) => isImageAttachment(attachment.contentType, attachment.name));
+        
+        const MAX_TEXT_ATTACHMENT_SIZE = 50 * 1024; // 50KB
+        const textAttachments = allAttachments.filter((a) => {
+            if (isImageAttachment(a.contentType, a.name)) return false;
+            if (a.size > MAX_TEXT_ATTACHMENT_SIZE) return false;
+            const isTextType = a.contentType?.startsWith('text/') || a.contentType?.startsWith('application/json') || a.contentType?.startsWith('application/javascript');
+            const hasTextExt = a.name?.match(/\.(txt|md|js|ts|py|json|html|css|csv|log|sh|yml|yaml|xml)$/i);
+            return isTextType || hasTextExt;
+        });
+
+        if (message.content.trim() || hasImageAttachments || textAttachments.length > 0) {
+            let promptText = message.content.trim() || 'Please review the attached content and respond accordingly.';
+
+            // Prepend reply context if replying to a message
+            if (message.reference && message.reference.messageId) {
+                try {
+                    const repliedTo = await message.channel.messages.fetch(message.reference.messageId);
+                    if (repliedTo) {
+                        const cleanContent = (repliedTo.content || '(Attachment/Embed)').trim();
+                        const truncated = cleanContent.length > 500 ? cleanContent.substring(0, 500) + '...' : cleanContent;
+                        promptText = `[Replying to context: "${truncated}"]\n\n${promptText}`;
+                    }
+                } catch (e) {
+                    logger.warn('[MessageCreate] Failed to fetch replied-to message context:', e);
+                }
+            }
+
+            // Fetch and append text attachments in parallel with a small concurrency cap
+            const CONCURRENCY_LIMIT = 3;
+            for (let i = 0; i < textAttachments.length; i += CONCURRENCY_LIMIT) {
+                const chunk = textAttachments.slice(i, i + CONCURRENCY_LIMIT);
+                const results = await Promise.all(chunk.map(async (textAtt) => {
+                    try {
+                        const controller = new AbortController();
+                        const timeoutId = setTimeout(() => controller.abort(), 10000);
+                        
+                        const res = await fetch(textAtt.url, { signal: controller.signal as any });
+                        clearTimeout(timeoutId);
+                        
+                        if (res.ok) {
+                            const content = await res.text();
+                            return `\n\n[Attached File: ${textAtt.name}]\n\`\`\`\n${content}\n\`\`\``;
+                        } else {
+                            logger.warn(`[MessageCreate] Non-ok status fetching text attachment ${textAtt.name}: ${res.status}`);
+                            return '';
+                        }
+                    } catch (e) {
+                        logger.warn(`[MessageCreate] Failed to fetch text attachment ${textAtt.name}:`, e);
+                        return '';
+                    }
+                }));
+                promptText += results.join('');
+            }
+
             const inboundImages = await downloadInboundImageAttachments(message);
 
             if (hasImageAttachments && inboundImages.length === 0) {
@@ -308,9 +351,8 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                     const projectLabel = deps.bridge.pool.extractProjectName(workspacePath);
 
                     // Track queue depth for hourglass reactions
-                    const currentDepth = workspaceQueueDepths.get(workspacePath) ?? 0;
-                    workspaceQueueDepths.set(workspacePath, currentDepth + 1);
-                    const newDepth = currentDepth + 1;
+                    const currentDepth = workspaceQueue.getDepth(workspacePath);
+                    const newDepth = workspaceQueue.incrementDepth(workspacePath);
 
                     if (currentDepth > 0) {
                         logger.info(
@@ -324,7 +366,7 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                     }
 
                     const queueStartTime = Date.now();
-                    await enqueueForWorkspace(workspacePath, async () => {
+                    await workspaceQueue.enqueue(workspacePath, async () => {
                         const waitMs = Date.now() - queueStartTime;
                         if (waitMs > 100) {
                             logger.info(
@@ -372,6 +414,7 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                             ensureErrorPopupDetector(deps.bridge, cdp, projectName, selectedAccount);
                             ensurePlanningDetector(deps.bridge, cdp, projectName, selectedAccount);
                             ensureRunCommandDetector(deps.bridge, cdp, projectName, selectedAccount);
+                            ensureQuestionDetector(deps.bridge, cdp, projectName, selectedAccount);
 
                             let session = deps.chatSessionRepo.findByChannelId(message.channelId);
                             const staleSessionAccount = session?.isRenamed
@@ -434,11 +477,17 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                                     }
 
                                     if (!activationResult.ok) {
-                                        const reason = activationResult.error ? ` (${activationResult.error})` : '';
-                                        await message.reply(
-                                            `⚠️ Could not route this message to the bound session (${session.displayName}). ` +
-                                            `Please open /chat and verify the session${reason}.`,
-                                        ).catch(() => { });
+                                        const isDeleted = activationResult.error?.includes('Conversation not found in Past Conversations');
+                                        let replyText = `⚠️ Could not route this message to the bound session (${session.displayName}).\n*Reason: ${activationResult.error}*`;
+                                        
+                                        if (isDeleted) {
+                                            deps.chatSessionRepo.deleteByChannelId(message.channelId);
+                                            replyText += `\n\n💡 **Tip**: This session appears to have been deleted in the IDE. I have unbound this channel so your next message will start a fresh chat. You can also type \`/new\` anytime.`;
+                                        } else {
+                                            replyText += `\n\n💡 If this session is broken, type \`/new\` to force a new chat.`;
+                                        }
+
+                                        await message.reply(replyText).catch(() => { });
                                         return;
                                     }
                                 }
@@ -522,8 +571,7 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                             );
                             await message.reply(`Failed to connect to workspace: ${e.message}`);
                         } finally {
-                            const remainingDepth = (workspaceQueueDepths.get(workspacePath) ?? 1) - 1;
-                            workspaceQueueDepths.set(workspacePath, remainingDepth);
+                            const remainingDepth = workspaceQueue.decrementDepth(workspacePath);
                             if (remainingDepth > 0) {
                                 logger.info(
                                     `[Queue:${projectLabel}] Task done, ${remainingDepth} remaining`,

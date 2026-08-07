@@ -90,12 +90,19 @@ Just type in any bound channel:
 - `📝 /template list` — Display registered templates with execute buttons
 - `📝 /template add <name> <prompt>` — Register a new prompt template
 - `📝 /template delete <name>` — Delete a template
+- `📅 /schedule list` — Show all scheduled tasks with next localized run times
+- `📅 /schedule add <cron> <prompt>` — Register a recurring task for the current channel's bound project
+- `📅 /schedule remove <id>` — Delete a scheduled task by ID
+- `📅 /schedule clear` — Remove all scheduled tasks and reset the task ID counter
+- `📅 /schedule backup` — Export all scheduled tasks as a JSON file attachment
+- `📅 /schedule restore <file>` — Restore scheduled tasks from a JSON file attachment
 - `🔗 /join` — Join an existing Antigravity session (shows up to 20 recent sessions)
 - `🔗 /mirror` — Toggle PC→Discord message mirroring for the current session
 - `🛑 /stop` — Force-stop a running Antigravity task
 - `🛑 /shutdown` — Shut down the IDE while keeping the active CDP project connections and session bindings
 - `📸 /screenshot` — Capture and send Antigravity's current screen
 - `🔧 /status` — Show bot connection status, current mode, and active project
+- `💓 /heartbeat [on|off|status]` — Configure periodic bot heartbeat notifications
 - `✅ /autoaccept [on|off|status]` — Toggle auto-approval of file edit dialogs
 - `📝 /output [embed|plain]` — Toggle output format between Embed and Plain Text (plain text is easier to copy on mobile)
 - `📋 /logs [lines] [level]` — View recent bot logs (ephemeral)

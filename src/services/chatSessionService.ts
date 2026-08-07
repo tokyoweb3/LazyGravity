@@ -28,11 +28,30 @@ interface SessionViewState extends ChatSessionInfo {
     }>;
 }
 
+/** Shared fuzzy-matching logic for in-page scripts */
+const FUZZY_MATCH_HELPERS_SCRIPT = `
+    const getWords = (str) => {
+        return (str || '').toLowerCase()
+            .replace(/[^a-z0-9\\u3040-\\u30ff\\u4e00-\\u9faf\\s]/g, '')
+            .split(/\\s+/)
+            .filter(w => w.length > 1 && !/^(ago|wks?|days?|mins?|hours?|hrs?|secs?|weeks?|months?|years?)$/i.test(w));
+    };
+    const wordsMatch = (t, p) => {
+        const tWords = getWords(t);
+        const pWords = getWords(p);
+        if (pWords.length === 0) return false;
+        return pWords.every(pw => tWords.some(tw => tw === pw));
+    };
+`;
+
 /** Script to get the state of the new chat button */
 const GET_NEW_CHAT_BUTTON_SCRIPT = `(() => {
     const btn = document.querySelector('[data-tooltip-id="new-conversation-tooltip"]');
     if (!btn) return { found: false };
     const cursor = window.getComputedStyle(btn).cursor;
+    if (typeof btn.scrollIntoView === 'function') {
+        btn.scrollIntoView({ block: 'center', inline: 'nearest' });
+    }
     const rect = btn.getBoundingClientRect();
     return {
         found: true,
@@ -48,7 +67,7 @@ const GET_NEW_CHAT_BUTTON_SCRIPT = `(() => {
  * The title element is a div with the text-ellipsis class inside the header.
  */
 const GET_CHAT_TITLE_SCRIPT = `(() => {
-    const panel = document.querySelector('.antigravity-agent-side-panel');
+    const panel = document.querySelector('.antigravity-agent-side-panel') || document.body;
     if (!panel) return { title: '', hasActiveChat: false };
     const header = panel.querySelector('div[class*="border-b"]');
     if (!header) return { title: '', hasActiveChat: false };
@@ -67,7 +86,7 @@ const GET_CHAT_TITLE_SCRIPT = `(() => {
 })()`;
 
 const GET_SESSION_VIEW_STATE_SCRIPT = `(() => {
-    const panel = document.querySelector('.antigravity-agent-side-panel');
+    const panel = document.querySelector('.antigravity-agent-side-panel') || document.body;
     if (!panel) {
         return {
             panelFound: false,
@@ -134,6 +153,9 @@ const GET_SESSION_VIEW_STATE_SCRIPT = `(() => {
 const FIND_PAST_CONVERSATIONS_BUTTON_SCRIPT = `(() => {
     const isVisible = (el) => !!el && el instanceof HTMLElement && el.offsetParent !== null;
     const getRect = (el) => {
+        if (typeof el.scrollIntoView === 'function') {
+            el.scrollIntoView({ block: 'center', inline: 'nearest' });
+        }
         const rect = el.getBoundingClientRect();
         return { found: true, x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
     };
@@ -177,7 +199,8 @@ const SCRAPE_PAST_CONVERSATIONS_SCRIPT = `(() => {
     // Try the visible QuickInput dialog first, then fall back to the side panel.
     const quickInputPanels = Array.from(document.querySelectorAll('div[class*="bg-quickinput-background"]'));
     const panel = quickInputPanels.find((el) => isVisible(el))
-        || document.querySelector('.antigravity-agent-side-panel');
+        || document.querySelector('.antigravity-agent-side-panel')
+        || document.body;
     if (!panel) return null;
 
     const items = [];
@@ -244,6 +267,9 @@ const FIND_SHOW_MORE_BUTTON_SCRIPT = `(() => {
         if (!isVisible(el)) continue;
         const text = (el.textContent || '').trim();
         if (/^Show\\s+\\d+\\s+more/i.test(text)) {
+            if (typeof el.scrollIntoView === 'function') {
+                el.scrollIntoView({ block: 'center', inline: 'nearest' });
+            }
             const rect = el.getBoundingClientRect();
             return { found: true, x: Math.round(rect.x + rect.width / 2), y: Math.round(rect.y + rect.height / 2) };
         }
@@ -272,18 +298,25 @@ function buildActivateChatByTitleScript(title: string): string {
             return true;
         };
 
+        ${FUZZY_MATCH_HELPERS_SCRIPT}
+
         const nodes = Array.from(panel.querySelectorAll('button, [role="button"], a, li, div, span'))
             .filter(isVisible);
 
         const exact = [];
         const includes = [];
+        const fuzzy = [];
         for (const node of nodes) {
             const text = normalize(node.textContent || '');
             if (!text) continue;
+            
+            const isShort = wanted.length < 5;
             if (text === wanted) {
                 exact.push({ node, textLength: text.length });
-            } else if (text.includes(wanted)) {
+            } else if (!isShort && text.includes(wanted)) {
                 includes.push({ node, textLength: text.length });
+            } else if (wordsMatch(text, wantedRaw)) {
+                fuzzy.push({ node, textLength: text.length });
             }
         }
 
@@ -293,10 +326,18 @@ function buildActivateChatByTitleScript(title: string): string {
             return list[0].node;
         };
 
-        const target = pick(exact) || pick(includes);
+        const target = pick(exact) || pick(includes) || pick(fuzzy);
         if (!target) return { ok: false, error: 'Chat title not found in side panel' };
-        if (!clickTarget(target)) return { ok: false, error: 'Matched element is not clickable' };
-        return { ok: true };
+        const clickable = target.closest('button, [role="button"], a, li, [data-testid*="conversation"]') || target;
+        if (typeof clickable.scrollIntoView === 'function') {
+            clickable.scrollIntoView({ block: 'center', inline: 'nearest' });
+        }
+        const rect = clickable.getBoundingClientRect();
+        return {
+            ok: true,
+            x: Math.round(rect.x + rect.width / 2),
+            y: Math.round(rect.y + rect.height / 2)
+        };
     })()`;
 }
 
@@ -335,14 +376,6 @@ export function buildActivateViaPastConversationsScript(title: string): string {
             ];
         };
         const getLabelText = (el) => getLabelParts(el).filter(Boolean).join(' ');
-        // Verify the option that was actually selected really is the requested
-        // title. getLabelText concatenates several attributes, so a naive
-        // whole-string comparison can fail even for a correct pick (e.g. when
-        // textContent and aria-label duplicate the same value). Instead, check
-        // each label component individually for an exact (or loose-exact) match.
-        // If any component matches, report the requested title; otherwise report
-        // the actual visible text so the acceptance gate rejects a mere
-        // substring/loose selection.
         const resolveMatchedTitle = (el) => {
             const parts = getLabelParts(el);
             for (const part of parts) {
@@ -359,6 +392,8 @@ export function buildActivateViaPastConversationsScript(title: string): string {
             const clickable = el.closest('button, [role="button"], a, li, [role="option"], [data-testid*="conversation"]');
             return clickable instanceof HTMLElement ? clickable : (el instanceof HTMLElement ? el : null);
         };
+        ${FUZZY_MATCH_HELPERS_SCRIPT}
+
         const pickBest = (elements, patterns) => {
             const matched = [];
             for (const el of elements) {
@@ -370,12 +405,17 @@ export function buildActivateViaPastConversationsScript(title: string): string {
                     if (!pattern) continue;
                     const p = normalize(pattern);
                     const pLoose = normalizeLoose(pattern);
+                    const isShort = p.length < 5;
+                    
                     if (
                         text === p ||
-                        text.includes(p) ||
-                        (pLoose && (textLoose === pLoose || textLoose.includes(pLoose)))
+                        (pLoose && textLoose === pLoose) ||
+                        (!isShort && (text.includes(p) || (pLoose && textLoose.includes(pLoose))))
                     ) {
                         matched.push({ el, score: Math.abs(text.length - pattern.length) });
+                        break;
+                    } else if (wordsMatch(text, pattern)) {
+                        matched.push({ el, score: Math.abs(text.length - pattern.length) + 1000 });
                         break;
                     }
                 }
@@ -398,7 +438,13 @@ export function buildActivateViaPastConversationsScript(title: string): string {
             if (!el) return false;
             if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
                 el.focus();
-                el.value = value;
+                const proto = el instanceof HTMLInputElement ? window.HTMLInputElement.prototype : window.HTMLTextAreaElement.prototype;
+                const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+                if (nativeSetter) {
+                    nativeSetter.call(el, value);
+                } else {
+                    el.value = value;
+                }
                 el.dispatchEvent(new Event('input', { bubbles: true }));
                 el.dispatchEvent(new Event('change', { bubbles: true }));
                 return true;
@@ -521,29 +567,41 @@ export function buildActivateViaPastConversationsScript(title: string): string {
             clickByPatterns(['select a conversation', 'select conversation', 'conversation'], '[role="button"], button, [aria-haspopup], [data-testid*="conversation"]');
             await wait(220);
 
-            const input = findSearchInput();
-            if (input) {
-                setInputValue(input, wantedRaw);
-                await wait(260);
+            // First, try to find it in the default visible list (works for recent chats)
+            let selectedOption = pickBest(
+                asArray(document.querySelectorAll('[role="option"], li, button, [data-testid*="conversation"]')),
+                [wanted, wantedLoose],
+            );
+            
+            // If not found, fall back to the search input but use a shorter prefix to avoid strict-match bugs
+            if (!selectedOption) {
+                const input = findSearchInput();
+                if (input) {
+                    // Use first 2 words to bypass IDE renaming/truncation issues
+                    const searchPrefix = (wantedRaw || '').split(/\\s+/).slice(0, 2).join(' ');
+                    setInputValue(input, searchPrefix.length > 3 ? searchPrefix : wantedRaw);
+                    await wait(350);
+                    selectedOption = pickBest(
+                        asArray(document.querySelectorAll('[role="option"], li, button, [data-testid*="conversation"]')),
+                        [wanted, wantedLoose],
+                    );
+                }
             }
-
-            // Resolve the exact option element, then click + focus + press Enter
-            // on that same element so the click target and the verification
-            // target can never drift apart. Mirror clickByPatterns' scoped
-            // selector -> broad fallback behaviour.
-            const optionSelector = '[role="option"], li, button, [data-testid*="conversation"]';
-            const scopedOptions = asArray(document.querySelectorAll(optionSelector));
-            const broadOptions = asArray(document.querySelectorAll('button, [role="button"], a, li, div, span'));
-            const optionSource = scopedOptions.length > 0 ? scopedOptions : broadOptions;
-            const selectedOption = pickBest(optionSource, [wanted, wantedLoose]);
-            const selectedClickable = getClickable(selectedOption);
-            if (!selectedClickable) {
+            
+            if (!selectedOption) {
                 return { ok: false, error: 'Conversation not found in Past Conversations' };
             }
-            selectedClickable.click();
-            selectedClickable.focus();
-            pressEnter(selectedClickable);
-            return { ok: true, matchedTitle: resolveMatchedTitle(selectedOption) };
+            const clickable = getClickable(selectedOption) || selectedOption;
+            if (typeof clickable.scrollIntoView === 'function') {
+                clickable.scrollIntoView({ block: 'center', inline: 'nearest' });
+            }
+            const rect = clickable.getBoundingClientRect();
+            return {
+                ok: true,
+                x: Math.round(rect.x + rect.width / 2),
+                y: Math.round(rect.y + rect.height / 2),
+                matchedTitle: resolveMatchedTitle(selectedOption)
+            };
         })();
     })()`;
 }
@@ -597,7 +655,8 @@ export class ChatSessionService {
                 const isVisible = (el) => !!el && el instanceof HTMLElement && el.offsetParent !== null;
                 const quickInputPanels = Array.from(document.querySelectorAll('div[class*="bg-quickinput-background"]'));
                 const panel = quickInputPanels.find((el) => isVisible(el))
-                    || document.querySelector('.antigravity-agent-side-panel');
+                    || document.querySelector('.antigravity-agent-side-panel')
+                    || document.body;
                 if (!panel) return false;
                 const containers = Array.from(
                     panel.querySelectorAll('div[class*="overflow-auto"], div[class*="overflow-y-scroll"]')
@@ -993,7 +1052,13 @@ export class ChatSessionService {
             if (!clicked) {
                 pastResult = await this.tryActivateByPastConversations(cdpService, title);
                 clicked = pastResult.ok;
-                usedPastConversations = pastResult.ok;
+                // If we attempted past conversations, the panel is open (unless it clicked something)
+                usedPastConversations = true;
+                
+                // If it failed to click anything, the panel is still open and blocking the UI.
+                if (!clicked) {
+                    await this.closePanelWithEscape(cdpService);
+                }
             }
 
             if (clicked) {
@@ -1080,6 +1145,7 @@ export class ChatSessionService {
                     error: `Past Conversations selected a different chat (expected="${title}", actual="${afterPast.title}")`,
                 };
             }
+            await this.closePanelWithEscape(cdpService);
             return {
                 ok: false,
                 error:
@@ -1125,6 +1191,9 @@ export class ChatSessionService {
                 });
                 const value = result?.result?.value;
                 if (value?.ok) {
+                    if (typeof value.x === 'number' && typeof value.y === 'number') {
+                        await this.cdpMouseClick(cdpService, value.x, value.y);
+                    }
                     return {
                         ok: true,
                         ...(typeof value.matchedTitle === 'string'
@@ -1163,5 +1232,48 @@ export class ChatSessionService {
             } catch (_) { /* try next context */ }
         }
         return { found: false, enabled: false, x: 0, y: 0 };
+    }
+
+    /**
+     * Rename the current chat in the Antigravity UI directly by updating the DOM.
+     * Note: This is a cosmetic change until Antigravity persists a rename.
+     * IDE syncing for chat renaming is strictly "best-effort".
+     */
+    async renameCurrentChatInUI(cdpService: CdpService, newTitle: string): Promise<{ ok: boolean; error?: string }> {
+        try {
+            const contextId = cdpService.getPrimaryContextId();
+            
+            const RENAME_SCRIPT = `(() => {
+                const panel = document.querySelector('.antigravity-agent-side-panel') || document.body;
+                if (!panel) return { ok: false, error: 'Panel not found' };
+                const header = panel.querySelector('div[class*="border-b"]');
+                const titleEl = header?.querySelector('div[class*="text-ellipsis"]');
+                if (titleEl) {
+                    titleEl.textContent = ${JSON.stringify(newTitle)};
+                    return { ok: true };
+                }
+                
+                const activeRow = Array.from(panel.querySelectorAll('div[class*="focusBackground"]'))
+                    .find((el) => el instanceof HTMLElement && el.offsetParent !== null);
+                const activeTitle = activeRow?.querySelector('span.text-sm span, span.text-sm');
+                if (activeTitle) {
+                    activeTitle.textContent = ${JSON.stringify(newTitle)};
+                    return { ok: true };
+                }
+                
+                return { ok: false, error: 'Title element not found' };
+            })()`;
+            
+            const result = await cdpService.call('Runtime.evaluate', {
+                expression: RENAME_SCRIPT,
+                returnByValue: true,
+                ...(contextId !== null ? { contextId } : {}),
+                awaitPromise: true,
+            });
+            
+            return result?.result?.value || { ok: false, error: 'Eval failed' };
+        } catch (e: any) {
+            return { ok: false, error: e.message };
+        }
     }
 }

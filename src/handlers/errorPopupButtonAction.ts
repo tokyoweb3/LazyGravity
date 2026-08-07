@@ -8,11 +8,14 @@
 import type { PlatformButtonInteraction } from '../platform/types';
 import type { ButtonAction } from './buttonHandler';
 import type { CdpBridge } from '../services/cdpBridgeManager';
+import { resolveProjectName } from '../utils/projectResolver';
 import { parseErrorPopupCustomId } from '../services/cdpBridgeManager';
+import type { WorkspaceCommandHandler } from '../commands/workspaceCommandHandler';
 import { logger } from '../utils/logger';
 
 export interface ErrorPopupButtonActionDeps {
     readonly bridge: CdpBridge;
+    readonly wsHandler: WorkspaceCommandHandler;
 }
 
 const MAX_DEBUG_CONTENT = 4096;
@@ -44,7 +47,7 @@ export function createErrorPopupButtonAction(
                 return;
             }
 
-            const projectName = params.projectName || deps.bridge.lastActiveWorkspace;
+            const projectName = resolveProjectName(deps, interaction.channel.id, params.projectName);
             const detector = projectName
                 ? deps.bridge.pool.getErrorPopupDetector(projectName)
                 : undefined;

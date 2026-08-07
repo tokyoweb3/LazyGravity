@@ -23,6 +23,7 @@ jest.mock('../../src/services/cdpBridgeManager', () => ({
     ensureErrorPopupDetector: jest.fn(),
     ensurePlanningDetector: jest.fn(),
     ensureRunCommandDetector: jest.fn(),
+    ensureQuestionDetector: jest.fn(),
     getCurrentCdp: jest.fn().mockReturnValue(null),
 }));
 
@@ -377,6 +378,7 @@ describe('createTelegramMessageHandler', () => {
             ensureErrorPopupDetector,
             ensurePlanningDetector,
             ensureRunCommandDetector,
+            ensureQuestionDetector,
         } = jest.requireMock('../../src/services/cdpBridgeManager');
 
         const mockCdp = createMockCdp();
@@ -398,6 +400,7 @@ describe('createTelegramMessageHandler', () => {
         expect(ensureErrorPopupDetector).toHaveBeenCalledWith(bridge, mockCdp, 'test-project', 'default');
         expect(ensurePlanningDetector).toHaveBeenCalledWith(bridge, mockCdp, 'test-project', 'default');
         expect(ensureRunCommandDetector).toHaveBeenCalledWith(bridge, mockCdp, 'test-project', 'default');
+        expect(ensureQuestionDetector).toHaveBeenCalledWith(bridge, mockCdp, 'test-project', 'default');
     });
 
     it('sets lastActiveWorkspace and lastActiveChannel on bridge', async () => {

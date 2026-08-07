@@ -102,6 +102,7 @@ function createMockButtonInteraction(
         update: jest.fn(),
         editReply: jest.fn(),
         followUp: jest.fn(),
+        showModal: jest.fn().mockResolvedValue(undefined),
         ...overrides,
     };
 }

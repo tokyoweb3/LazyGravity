@@ -118,6 +118,12 @@ const WORKSPACE_STATE_SCRIPT = `(() => {
             if (isGenerating) break;
         }
     }
+    if (!isGenerating && panel) {
+        const panelText = (panel.textContent || '').trim();
+        if (/Working\.\s*$/i.test(panelText)) {
+            isGenerating = true;
+        }
+    }
 
     if (!panel) {
         return { isGenerating, sessionTitle: '', hasActiveChat: false };
@@ -451,6 +457,10 @@ export class CdpService extends EventEmitter {
         return this.currentWorkspaceName;
     }
 
+    getCurrentWorkspacePath(): string | null {
+        return this.currentWorkspacePath;
+    }
+
     /**
      * Discover and connect to the workbench page for the specified workspace.
      * Does nothing if already connected to the correct page.
@@ -511,7 +521,8 @@ export class CdpService extends EventEmitter {
                 returnByValue: true,
             });
             const liveTitle = String(titleResult?.result?.value || '');
-            if (liveTitle.toLowerCase().includes(projectName.toLowerCase())) {
+            const titleParts = liveTitle.split(' - ');
+            if (titleParts[0].trim().toLowerCase() === projectName.toLowerCase()) {
                 this.currentWorkspaceName = projectName;
                 return true;
             }
@@ -570,7 +581,11 @@ export class CdpService extends EventEmitter {
         }
 
         // 1. Title match (fast path)
-        const titleMatch = workbenchPages.find((t: any) => t.title?.includes(projectName));
+        const titleMatch = workbenchPages.find((t: any) => {
+            if (!t.title) return false;
+            const parts = t.title.split(' - ');
+            return parts[0].trim().toLowerCase() === projectName.toLowerCase();
+        });
         if (titleMatch) {
             return this.connectToPage(titleMatch, projectName);
         }
@@ -634,10 +649,8 @@ export class CdpService extends EventEmitter {
                     returnByValue: true,
                 });
                 const liveTitle = String(result?.result?.value || '');
-                const normalizedLiveTitle = liveTitle.toLowerCase();
-                const normalizedProject = projectName.toLowerCase();
-
-                if (normalizedLiveTitle.includes(normalizedProject)) {
+                const liveParts = liveTitle.split(' - ');
+                if (liveParts[0].trim().toLowerCase() === projectName.toLowerCase()) {
                     this.currentWorkspaceName = projectName;
                     logger.debug(`[CdpService] Probe success: detected "${projectName}"`);
                     return true;
@@ -712,11 +725,14 @@ export class CdpService extends EventEmitter {
 
                 const normalizedDetected = detectedValue.toLowerCase();
                 const normalizedProject = projectName.toLowerCase();
-                const normalizedWorkspace = workspacePath.toLowerCase();
+                const normalizedWorkspace = workspacePath.toLowerCase().replace(/\\/g, '/');
+                
+                const detectedParts = normalizedDetected.split(',').map((s) => s.trim());
 
                 if (
-                    normalizedDetected.includes(normalizedProject) ||
-                    normalizedDetected.includes(normalizedWorkspace)
+                    detectedParts.includes(normalizedProject) ||
+                    normalizedDetected.includes(normalizedWorkspace) ||
+                    normalizedDetected.replace(/\\/g, '/').includes(normalizedWorkspace)
                 ) {
                     this.currentWorkspaceName = projectName;
                     logger.debug(`[CdpService] Folder path match success: "${projectName}"`);
@@ -729,11 +745,22 @@ export class CdpService extends EventEmitter {
                 expression: 'window.location.href',
                 returnByValue: true,
             });
-            const pageUrl = (urlResult?.result?.value || '').toLowerCase();
-            const normalizedWorkspaceUri = encodeURIComponent(workspacePath).toLowerCase();
-            if (pageUrl.includes(normalizedWorkspaceUri) || pageUrl.includes(projectName.toLowerCase())) {
+            const pageUrl = decodeURIComponent(urlResult?.result?.value || '').toLowerCase().replace(/\\/g, '/');
+            const normalizedWorkspaceUri = workspacePath.toLowerCase().replace(/\\/g, '/');
+            
+            if (pageUrl.includes(normalizedWorkspaceUri)) {
                 this.currentWorkspaceName = projectName;
-                logger.debug(`[CdpService] URL parameter match success: "${projectName}"`);
+                logger.debug(`[CdpService] URL parameter match success: "${projectName}" (workspace URI)`);
+                return true;
+            }
+
+            // If we only have the project name to go on, make sure it's a discrete boundary in the URL path
+            // e.g. "folder=.../test" or "workspace=.../test". We prevent false positives like "latest" matching "test".
+            const safeProjectName = projectName.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const projectBoundaryRegex = new RegExp(`[=/]${safeProjectName}(?:$|&|\\?)`);
+            if (projectBoundaryRegex.test(pageUrl)) {
+                this.currentWorkspaceName = projectName;
+                logger.debug(`[CdpService] URL parameter match success: "${projectName}" (boundary regex)`);
                 return true;
             }
 
@@ -857,7 +884,11 @@ export class CdpService extends EventEmitter {
             );
 
             // Title match
-            const titleMatch = workbenchPages.find((t: any) => t.title?.toLowerCase().includes(projectName.toLowerCase()));
+            const titleMatch = workbenchPages.find((t: any) => {
+                if (!t.title) return false;
+                const parts = t.title.split(' - ');
+                return parts[0].trim().toLowerCase() === projectName.toLowerCase();
+            });
             if (titleMatch) {
                 return this.connectToPage(titleMatch, projectName);
             }
@@ -1456,9 +1487,15 @@ export class CdpService extends EventEmitter {
     }
 
     private async injectMessageCore(text: string, imageFilePaths?: string[]): Promise<InjectResult> {
-        const focusResult = await this.waitForChatInputReady();
+        // Check if chat input is already available
+        let focusResult = await this.waitForChatInputReady(500);
         if (!focusResult.ok) {
-            return { ok: false, error: focusResult.error || 'Chat input field not found' };
+            // Send Cmd+L / Ctrl+L to guarantee application-level focus on the chat panel (and open it if closed)
+            await this.focusChatPanelViaShortcut();
+            focusResult = await this.waitForChatInputReady();
+            if (!focusResult.ok) {
+                return { ok: false, error: focusResult.error || 'Chat input field not found' };
+            }
         }
 
         // Clear any existing text in the input field before injecting.
@@ -1571,6 +1608,92 @@ export class CdpService extends EventEmitter {
             windowsVirtualKeyCode: 13,
             nativeVirtualKeyCode: 13,
         });
+    }
+
+    /**
+     * Opens the chat panel and waits for the UI to be ready.
+     * Can be called right after the IDE launches to ensure the panel is visible.
+     */
+    public async openChatPanel(): Promise<void> {
+        if (!await this.isConnected()) return;
+
+        // Ensure IDE UI is fully loaded before sending shortcut
+        const deadline = Date.now() + 15000;
+        let workbenchReady = false;
+        while (Date.now() < deadline) {
+            try {
+                const res = await this.call('Runtime.evaluate', {
+                    expression: '!!document.querySelector(".monaco-workbench")',
+                    returnByValue: true
+                });
+                if (res?.result?.value) {
+                    workbenchReady = true;
+                    break;
+                }
+            } catch {
+                // ignore
+            }
+            await new Promise(r => setTimeout(r, 500));
+        }
+
+        if (workbenchReady) {
+            // Check if chat panel is already open to avoid toggling it closed
+            const focusResult = await this.waitForChatInputReady(1000);
+            if (!focusResult.ok) {
+                await this.focusChatPanelViaShortcut();
+            }
+        }
+    }
+
+    /**
+     * Send Cmd+L / Ctrl+L to focus the chat panel via shortcut.
+     */
+    public async focusChatPanelViaShortcut(): Promise<void> {
+        const modifiers = process.platform === 'darwin' ? 4 : 2; // Meta : Ctrl
+        await this.call('Input.dispatchKeyEvent', {
+            type: 'keyDown',
+            key: 'l',
+            code: 'KeyL',
+            modifiers,
+            windowsVirtualKeyCode: 76,
+            nativeVirtualKeyCode: 76,
+        });
+        await this.call('Input.dispatchKeyEvent', {
+            type: 'keyUp',
+            key: 'l',
+            code: 'KeyL',
+            modifiers,
+            windowsVirtualKeyCode: 76,
+            nativeVirtualKeyCode: 76,
+        });
+        await new Promise(r => setTimeout(r, 100)); // wait for focus to shift
+    }
+
+    /**
+     * Send Cmd+W / Ctrl+W to close the active editor.
+     */
+    async closeActiveEditor(): Promise<void> {
+        if (!this.isConnectedFlag || !this.ws) {
+            throw new Error('Not connected to CDP. Call connect() first.');
+        }
+        const modifiers = process.platform === 'darwin' ? 4 : 2; // Meta : Ctrl
+        await this.call('Input.dispatchKeyEvent', {
+            type: 'keyDown',
+            key: 'w',
+            code: 'KeyW',
+            modifiers,
+            windowsVirtualKeyCode: 87,
+            nativeVirtualKeyCode: 87,
+        });
+        await this.call('Input.dispatchKeyEvent', {
+            type: 'keyUp',
+            key: 'w',
+            code: 'KeyW',
+            modifiers,
+            windowsVirtualKeyCode: 87,
+            nativeVirtualKeyCode: 87,
+        });
+        await new Promise(r => setTimeout(r, 100));
     }
 
     /**

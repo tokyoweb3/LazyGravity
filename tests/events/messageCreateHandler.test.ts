@@ -42,6 +42,7 @@ function buildDeps(overrides: Record<string, any> = {}) {
         ensureErrorPopupDetector: jest.fn(),
         ensurePlanningDetector: jest.fn(),
         ensureRunCommandDetector: jest.fn(),
+        ensureQuestionDetector: jest.fn(),
         registerApprovalWorkspaceChannel: jest.fn(),
         registerApprovalSessionChannel: jest.fn(),
         downloadInboundImageAttachments: jest.fn().mockResolvedValue([]),
@@ -371,6 +372,35 @@ describe('messageCreateHandler', () => {
         expect(updateDisplayName).not.toHaveBeenCalled();
         expect(sendPromptToAntigravity).not.toHaveBeenCalled();
         expect(reply).toHaveBeenCalled();
+    });
+
+    it('prepends replied-to message context', async () => {
+        const sendPromptToAntigravity = mockSendPromptImmediate();
+        const handler = createMessageCreateHandler(buildDeps({ sendPromptToAntigravity }));
+
+        const repliedToMsg = {
+            author: { username: 'someone' },
+            content: 'Original message text',
+        };
+        const fetch = jest.fn().mockResolvedValue(repliedToMsg);
+        
+        await handler(buildMessage({
+            content: 'My reply',
+            reference: { messageId: '123' },
+            channel: { messages: { fetch } },
+        }));
+
+        expect(fetch).toHaveBeenCalledWith('123');
+        expect(sendPromptToAntigravity).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.anything(),
+            '[Replying to context: "Original message text"]\n\nMy reply',
+            expect.anything(),
+            expect.anything(),
+            expect.anything(),
+            expect.anything(),
+            expect.anything(),
+        );
     });
 
     describe('workspace prompt queue', () => {

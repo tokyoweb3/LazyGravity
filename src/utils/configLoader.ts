@@ -37,6 +37,10 @@ export interface PersistedConfig {
     responseTimeoutMs?: number;
     antigravityAccounts?: string | AntigravityAccountConfig[];
     cdpHost?: string;
+    heartbeatEnabled?: boolean;
+    heartbeatIntervalMs?: number;
+    heartbeatChannelId?: string;
+    heartbeatLastMessageId?: string;
 }
 
 export interface AntigravityAccountConfig {
@@ -152,6 +156,21 @@ function mergeConfig(persisted: PersistedConfig): AppConfig {
         );
     }
 
+    const heartbeatEnabled = resolveBoolean(
+        process.env.HEARTBEAT_ENABLED,
+        persisted.heartbeatEnabled,
+        false,
+    );
+
+    const heartbeatIntervalMs = resolvePositiveInt(
+        process.env.HEARTBEAT_INTERVAL_MS,
+        persisted.heartbeatIntervalMs,
+        3600000,
+    );
+
+    const heartbeatChannelId = process.env.HEARTBEAT_CHANNEL_ID ?? persisted.heartbeatChannelId ?? undefined;
+    const heartbeatLastMessageId = persisted.heartbeatLastMessageId ?? undefined;
+
     return {
         discordToken,
         clientId,
@@ -167,6 +186,10 @@ function mergeConfig(persisted: PersistedConfig): AppConfig {
         telegramAllowedUserIds,
         platforms,
         cdpHost,
+        heartbeatEnabled,
+        heartbeatIntervalMs,
+        heartbeatChannelId,
+        heartbeatLastMessageId,
     };
 }
 

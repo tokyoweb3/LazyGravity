@@ -1,3 +1,4 @@
+import { ConsecutiveEmptyPollGate } from '../utils/consecutiveEmptyPollGate';
 import { logger } from '../utils/logger';
 import { buildClickScript } from './approvalDetector';
 import { CdpService } from './cdpService';
@@ -125,13 +126,15 @@ export class ErrorPopupDetector {
     private pollTimer: NodeJS.Timeout | null = null;
     private isRunning: boolean = false;
     /** Key of the last detected error popup (for duplicate notification prevention) */
-    private lastDetectedKey: string | null = null;
+    public lastDetectedKey: string | null = null;
     /** Full ErrorPopupInfo from the last detection */
-    private lastDetectedInfo: ErrorPopupInfo | null = null;
+    public lastDetectedInfo: ErrorPopupInfo | null = null;
     /** Timestamp of last notification (for cooldown-based dedup) */
     private lastNotifiedAt: number = 0;
-    /** Cooldown period in ms to suppress duplicate notifications (10s for error popups) */
-    private static readonly COOLDOWN_MS = 10000;
+    /** Cooldown period in ms to suppress duplicate notifications */
+    private static readonly COOLDOWN_MS = 5000;
+    /** Gate for empty polls before reset */
+    private emptyPollGate = new ConsecutiveEmptyPollGate(3);
 
     constructor(options: ErrorPopupDetectorOptions) {
         this.cdpService = options.cdpService;
@@ -147,6 +150,7 @@ export class ErrorPopupDetector {
         this.lastDetectedKey = null;
         this.lastDetectedInfo = null;
         this.lastNotifiedAt = 0;
+        this.emptyPollGate.reset();
         this.schedulePoll();
     }
 
@@ -241,26 +245,34 @@ export class ErrorPopupDetector {
             const info: ErrorPopupInfo | null = result?.result?.value ?? null;
 
             if (info) {
+                this.emptyPollGate.recordDetection();
                 // Duplicate prevention: use title + body snippet as key
                 const key = `${info.title}::${info.body.slice(0, 100)}`;
                 const now = Date.now();
                 const withinCooldown = (now - this.lastNotifiedAt) < ErrorPopupDetector.COOLDOWN_MS;
-                if (key !== this.lastDetectedKey && !withinCooldown) {
+                
+                if (key !== this.lastDetectedKey) {
+                    this.lastNotifiedAt = now;
                     this.lastDetectedKey = key;
                     this.lastDetectedInfo = info;
-                    this.lastNotifiedAt = now;
                     this.onErrorPopup(info);
-                } else if (key === this.lastDetectedKey) {
-                    // Same key -- update stored info silently
+                } else if (!withinCooldown) {
+                    this.lastNotifiedAt = now;
+                    this.lastDetectedInfo = info;
+                    this.onErrorPopup(info);
+                } else {
+                    // Same key, within cooldown -- update stored info silently
                     this.lastDetectedInfo = info;
                 }
             } else {
-                // Reset when popup disappears (prepare for next detection)
-                const wasDetected = this.lastDetectedKey !== null;
-                this.lastDetectedKey = null;
-                this.lastDetectedInfo = null;
-                if (wasDetected && this.onResolved) {
-                    this.onResolved();
+                if (this.emptyPollGate.recordEmptyPoll()) {
+                    // Reset when popup disappears (prepare for next detection)
+                    const wasDetected = this.lastDetectedKey !== null;
+                    this.lastDetectedKey = null;
+                    this.lastDetectedInfo = null;
+                    if (wasDetected && this.onResolved) {
+                        this.onResolved();
+                    }
                 }
             }
         } catch (error) {

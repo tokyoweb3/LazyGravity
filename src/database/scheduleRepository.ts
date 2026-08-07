@@ -12,6 +12,8 @@ export interface ScheduleRecord {
     prompt: string;
     /** Target workspace path */
     workspacePath: string;
+    /** Target channel ID */
+    channelId?: string;
     /** Enabled/disabled */
     enabled: boolean;
     /** Creation timestamp (ISO string) */
@@ -25,6 +27,7 @@ export interface CreateScheduleInput {
     cronExpression: string;
     prompt: string;
     workspacePath: string;
+    channelId?: string;
     enabled: boolean;
 }
 
@@ -35,6 +38,7 @@ export interface UpdateScheduleInput {
     cronExpression?: string;
     prompt?: string;
     workspacePath?: string;
+    channelId?: string;
     enabled?: boolean;
 }
 
@@ -50,9 +54,6 @@ export class ScheduleRepository {
         this.initialize();
     }
 
-    /**
-     * Initialize table (create if not exists)
-     */
     private initialize(): void {
         this.db.exec(`
             CREATE TABLE IF NOT EXISTS schedules (
@@ -60,10 +61,18 @@ export class ScheduleRepository {
                 cron_expression TEXT NOT NULL,
                 prompt TEXT NOT NULL,
                 workspace_path TEXT NOT NULL,
+                channel_id TEXT,
                 enabled INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
         `);
+
+        // Perform schema migration if channel_id doesn't exist (fallback for old databases)
+        const tableInfo = this.db.pragma("table_info(schedules)") as any[];
+        const hasChannelId = tableInfo.some((col: any) => col.name === 'channel_id');
+        if (!hasChannelId) {
+            this.db.exec('ALTER TABLE schedules ADD COLUMN channel_id TEXT');
+        }
     }
 
     /**
@@ -71,14 +80,15 @@ export class ScheduleRepository {
      */
     public create(input: CreateScheduleInput): ScheduleRecord {
         const stmt = this.db.prepare(`
-            INSERT INTO schedules (cron_expression, prompt, workspace_path, enabled)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO schedules (cron_expression, prompt, workspace_path, channel_id, enabled)
+            VALUES (?, ?, ?, ?, ?)
         `);
 
         const result = stmt.run(
             input.cronExpression,
             input.prompt,
             input.workspacePath,
+            input.channelId || '',
             input.enabled ? 1 : 0
         );
 
@@ -87,6 +97,7 @@ export class ScheduleRepository {
             cronExpression: input.cronExpression,
             prompt: input.prompt,
             workspacePath: input.workspacePath,
+            channelId: input.channelId,
             enabled: input.enabled,
         };
     }
@@ -127,6 +138,48 @@ export class ScheduleRepository {
     }
 
     /**
+     * Clear all schedules and reset the autoincrement ID back to 0
+     */
+    public reset(): void {
+        this.db.transaction(() => {
+            this.db.exec('DELETE FROM schedules');
+            this.db.exec("DELETE FROM sqlite_sequence WHERE name = 'schedules'");
+        })();
+    }
+
+    /**
+     * Bulk restore schedules. Clears the table and inserts all provided records.
+     */
+    public bulkRestore(records: CreateScheduleInput[]): ScheduleRecord[] {
+        const result: ScheduleRecord[] = [];
+        this.db.transaction(() => {
+            this.reset();
+            const stmt = this.db.prepare(`
+                INSERT INTO schedules (cron_expression, prompt, workspace_path, channel_id, enabled)
+                VALUES (?, ?, ?, ?, ?)
+            `);
+            for (const record of records) {
+                const insertResult = stmt.run(
+                    record.cronExpression,
+                    record.prompt,
+                    record.workspacePath,
+                    record.channelId || '',
+                    record.enabled ? 1 : 0
+                );
+                result.push({
+                    id: insertResult.lastInsertRowid as number,
+                    cronExpression: record.cronExpression,
+                    prompt: record.prompt,
+                    workspacePath: record.workspacePath,
+                    channelId: record.channelId,
+                    enabled: record.enabled,
+                });
+            }
+        })();
+        return result;
+    }
+
+    /**
      * Partially update a schedule
      */
     public update(id: number, input: UpdateScheduleInput): boolean {
@@ -144,6 +197,10 @@ export class ScheduleRepository {
         if (input.workspacePath !== undefined) {
             sets.push('workspace_path = ?');
             values.push(input.workspacePath);
+        }
+        if (input.channelId !== undefined) {
+            sets.push('channel_id = ?');
+            values.push(input.channelId);
         }
         if (input.enabled !== undefined) {
             sets.push('enabled = ?');
@@ -167,6 +224,7 @@ export class ScheduleRepository {
             cronExpression: row.cron_expression,
             prompt: row.prompt,
             workspacePath: row.workspace_path,
+            channelId: row.channel_id || undefined,
             enabled: row.enabled === 1,
             createdAt: row.created_at,
         };

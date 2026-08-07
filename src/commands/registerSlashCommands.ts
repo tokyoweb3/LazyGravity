@@ -4,6 +4,7 @@ import {
     PermissionFlagsBits,
     REST,
     Routes,
+    ChannelType,
 } from 'discord.js';
 import { t } from "../utils/i18n";
 
@@ -133,7 +134,12 @@ const projectCommand = new SlashCommandBuilder()
 /** /new command definition (formerly /chat new, made into a standalone command) */
 const newCommand = new SlashCommandBuilder()
     .setName('new')
-    .setDescription(t('Start a new chat session in the current project'));
+    .setDescription(t('Start a new chat session in the current project'))
+    .addStringOption(option =>
+        option.setName('name')
+            .setDescription(t('Name of the new chat session'))
+            .setRequired(false)
+    );
 
 /** /chat command definition (merged status + list) */
 const chatCommand = new SlashCommandBuilder()
@@ -219,6 +225,109 @@ const artifactsCommand = new SlashCommandBuilder()
     .setName('artifacts')
     .setDescription(t('Browse and view generated artifacts from the active session'));
 
+/** /open command definition */
+const openCommand = new SlashCommandBuilder()
+    .setName('open')
+    .setDescription(t('Open and read a file from the workspace'))
+    .addStringOption((option) =>
+        option
+            .setName('filepath')
+            .setDescription(t('Absolute or relative path to the file'))
+            .setRequired(true)
+    );
+
+/** /heartbeat command definition */
+const heartbeatCommand = new SlashCommandBuilder()
+    .setName('heartbeat')
+    .setDescription(t('Configure periodic bot heartbeat notifications'))
+    .addSubcommand((sub) =>
+        sub
+            .setName('on')
+            .setDescription(t('Enable periodic heartbeats'))
+            .addStringOption((option) =>
+                option
+                    .setName('interval')
+                    .setDescription(t('Interval (e.g., 1d, 1h, 30m - unit required)'))
+                    .setRequired(false)
+            )
+            .addChannelOption((option) =>
+                option
+                    .setName('channel')
+                    .setDescription(t('Target channel for heartbeat (defaults to current)'))
+                    .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement)
+                    .setRequired(false)
+            )
+    )
+    .addSubcommand((sub) =>
+        sub
+            .setName('off')
+            .setDescription(t('Disable periodic heartbeats'))
+    )
+    .addSubcommand((sub) =>
+        sub
+            .setName('status')
+            .setDescription(t('Display current heartbeat config and status'))
+    );
+
+/** /schedule command definition */
+const scheduleCommand = new SlashCommandBuilder()
+    .setName('schedule')
+    .setDescription(t('Manage scheduled tasks'))
+    .addSubcommand((sub) =>
+        sub
+            .setName('list')
+            .setDescription(t('Show all scheduled tasks with next-run times'))
+    )
+    .addSubcommand((sub) =>
+        sub
+            .setName('add')
+            .setDescription(t('Register a recurring task'))
+            .addStringOption((option) =>
+                option
+                    .setName('cron')
+                    .setDescription(t('Cron expression (e.g. "0 * * * *")'))
+                    .setRequired(true)
+            )
+            .addStringOption((option) =>
+                option
+                    .setName('prompt')
+                    .setDescription(t('Prompt content to execute'))
+                    .setRequired(true)
+            )
+    )
+    .addSubcommand((sub) =>
+        sub
+            .setName('remove')
+            .setDescription(t('Delete a scheduled task'))
+            .addIntegerOption((option) =>
+                option
+                    .setName('id')
+                    .setDescription(t('ID of the task to delete'))
+                    .setRequired(true)
+            )
+    )
+    .addSubcommand((sub) =>
+        sub
+            .setName('clear')
+            .setDescription(t('Remove all scheduled tasks and reset task IDs'))
+    )
+    .addSubcommand((sub) =>
+        sub
+            .setName('backup')
+            .setDescription(t('Export all scheduled tasks as a JSON file attachment'))
+    )
+    .addSubcommand((sub) =>
+        sub
+            .setName('restore')
+            .setDescription(t('Restore scheduled tasks from a JSON file attachment'))
+            .addAttachmentOption((option) =>
+                option
+                    .setName('file')
+                    .setDescription(t('The schedules_backup.json file to import'))
+                    .setRequired(true)
+            )
+    );
+
 /** Array of commands to register */
 export const slashCommands = [
     helpCommand,
@@ -241,6 +350,9 @@ export const slashCommands = [
     pingCommand,
     logsCommand,
     artifactsCommand,
+    openCommand,
+    heartbeatCommand,
+    scheduleCommand,
 ];
 
 /**

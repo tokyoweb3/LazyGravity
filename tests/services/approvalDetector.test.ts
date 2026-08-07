@@ -340,7 +340,7 @@ describe('ApprovalDetector - approval button detection and remote execution', ()
         await jest.advanceTimersByTimeAsync(500); // detection
         expect(detector.getLastDetectedInfo()).not.toBeNull();
 
-        await jest.advanceTimersByTimeAsync(500); // disappearance
+        await jest.advanceTimersByTimeAsync(1500); // disappearance
         expect(detector.getLastDetectedInfo()).toBeNull();
     });
 
@@ -452,7 +452,7 @@ describe('ApprovalDetector - approval button detection and remote execution', ()
         await jest.advanceTimersByTimeAsync(500); // detection
         expect(onResolved).not.toHaveBeenCalled();
 
-        await jest.advanceTimersByTimeAsync(500); // disappearance
+        await jest.advanceTimersByTimeAsync(1500); // disappearance
         expect(onResolved).toHaveBeenCalledTimes(1);
     });
 

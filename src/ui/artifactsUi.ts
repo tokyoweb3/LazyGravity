@@ -14,11 +14,13 @@ import {
     StringSelectMenuBuilder,
     MessageFlags,
 } from 'discord.js';
+import * as path from 'path';
 import { UserPreferenceRepository } from '../database/userPreferenceRepository';
 import { ChatSessionRepository } from '../database/chatSessionRepository';
 
 import type { ArtifactInfo } from '../services/artifactService';
 import { ArtifactService, artifactTypeLabel } from '../services/artifactService';
+import { getWorkspaceDirName } from '../utils/pathUtils';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -197,14 +199,14 @@ export async function sendArtifactPickerUI(
             // Fallback to title matching if ID is not in DB or doesn't match a real folder
             if (!conversationId || !artifactService.listArtifacts(conversationId).length) {
                 const sessionTitle = session.displayName?.trim() ?? '';
-                const matchedId = sessionTitle ? artifactService.findConversationByTitle(sessionTitle) : null;
+                const workspaceDirName = getWorkspaceDirName(session);
+                const matchedId = sessionTitle ? artifactService.findConversationByTitle(sessionTitle, workspaceDirName) : null;
                 if (matchedId) conversationId = matchedId;
             }
             // Note: We do NOT fallback to getLatestConversationWithArtifacts() for managed sessions
             // to avoid showing artifacts from other projects/chats.
         } else {
-            // Final fallback: latest overall (only for non-session channels)
-            conversationId = artifactService.getLatestConversationWithArtifacts();
+            conversationId = null;
         }
     }
 

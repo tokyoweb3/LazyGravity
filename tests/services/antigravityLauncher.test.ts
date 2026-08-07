@@ -163,7 +163,6 @@ describe('Antigravity lifecycle', () => {
             }
         );
     }
-
     it('reports already stopped when the requested CDP port is unavailable', async () => {
         mockHttpErrorAlways();
 
@@ -208,7 +207,6 @@ describe('Antigravity lifecycle', () => {
         await expect(stopAntigravity(9222)).rejects.toThrow('Refusing to stop non-Antigravity');
         expect(execFile).not.toHaveBeenCalled();
     });
-
     it('stops the process when only User-Agent contains Antigravity', async () => {
         mockHttpSuccessOnce(9222);
         mockHttpSuccessOnce(9222, { Browser: 'Chrome/142.0.0.0', 'User-Agent': 'Mozilla/5.0 (...) Chrome/142.0.0.0 AntigravityIDE/2.0' });

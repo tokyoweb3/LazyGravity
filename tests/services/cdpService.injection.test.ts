@@ -162,9 +162,9 @@ describe('CdpService - Message Injection (Step 5)', () => {
     }, 15000);
 
     // ---------------------------------------------------------
-    // Test 4: Verify the injected script contains correct content
+    // Test 4a: Verify the injected script contains correct content and skips Cmd+L when open
     // ---------------------------------------------------------
-    it('calls Runtime.evaluate with the correct parameters during injectMessage', async () => {
+    it('skips Cmd+L when chat input is already open', async () => {
         await service.connect();
         await new Promise(r => setTimeout(r, 100));
         receivedMessages = []; // Reset
@@ -192,9 +192,7 @@ describe('CdpService - Message Injection (Step 5)', () => {
         expect(insertTextCalls).toHaveLength(1);
         expect(insertTextCalls[0].params.text).toBe(targetText);
 
-        // Verify that key events are dispatched:
-        //   clearInputField: Meta+A (keyDown/keyUp) + Backspace (keyDown/keyUp) = 4 events
-        //   pressEnterToSend: Enter (keyDown/keyUp) = 2 events
+        // Verify that key events are dispatched (expecting 6 since Cmd+L is skipped):
         const keyCalls = receivedMessages.filter(m => m.method === 'Input.dispatchKeyEvent');
         expect(keyCalls).toHaveLength(6);
         // clearInputField: Meta+A select all
@@ -210,6 +208,38 @@ describe('CdpService - Message Injection (Step 5)', () => {
         expect(keyCalls[5].params.key).toBe('Enter');
         expect(keyCalls[5].params.type).toBe('keyUp');
     });
+
+    // ---------------------------------------------------------
+    // Test 4b: Verify Cmd+L is sent when chat input is initially closed
+    // ---------------------------------------------------------
+    it('dispatches Cmd+L when chat input is initially closed', async () => {
+        await service.connect();
+        await new Promise(r => setTimeout(r, 100));
+        receivedMessages = []; // Reset
+
+        const targetText = 'closed panel test';
+        evaluateResponder = (req) => {
+            const contextId = req.params.contextId;
+            // Return ok:true ONLY AFTER Cmd+L has been sent
+            const hasCmdL = receivedMessages.some(m => m.method === 'Input.dispatchKeyEvent' && m.params.key === 'l');
+            if (hasCmdL && contextId === 2) return { ok: true, method: 'focus' };
+            return { ok: false, error: 'No editor found' };
+        };
+
+        await service.injectMessage(targetText);
+
+        // Verify that key events are dispatched (expecting 8 since Cmd+L is included):
+        const keyCalls = receivedMessages.filter(m => m.method === 'Input.dispatchKeyEvent');
+        expect(keyCalls).toHaveLength(8);
+        
+        // focusChatPanelViaShortcut: L
+        expect(keyCalls[0].params.key).toBe('l');
+        expect(keyCalls[1].params.key).toBe('l');
+        // clearInputField: Meta+A select all
+        expect(keyCalls[2].params.key).toBe('a');
+        expect(keyCalls[2].params.modifiers).toBe(4);
+        expect(keyCalls[3].params.key).toBe('a');
+    }, 15000);
 
     // ---------------------------------------------------------
     // Test 5: Throws exception when called while not connected

@@ -28,6 +28,7 @@ describe('interactionCreateHandler', () => {
             parseApprovalCustomId: jest.fn(),
             parseErrorPopupCustomId: jest.fn().mockReturnValue(null),
             parsePlanningCustomId: jest.fn().mockReturnValue(null),
+            parseFileChangeCustomId: jest.fn().mockReturnValue(null),
             parseRunCommandCustomId: jest.fn().mockReturnValue(null),
             handleSlashInteraction: jest.fn(),
         });
@@ -82,6 +83,7 @@ describe('interactionCreateHandler', () => {
             }),
             parseErrorPopupCustomId: jest.fn().mockReturnValue(null),
             parsePlanningCustomId: jest.fn().mockReturnValue(null),
+            parseFileChangeCustomId: jest.fn().mockReturnValue(null),
             parseRunCommandCustomId: jest.fn().mockReturnValue(null),
             handleSlashInteraction: jest.fn(),
         });
@@ -132,6 +134,7 @@ describe('interactionCreateHandler', () => {
             parseApprovalCustomId: jest.fn().mockReturnValue(null),
             parseErrorPopupCustomId: jest.fn().mockReturnValue(null),
             parsePlanningCustomId: jest.fn().mockReturnValue(null),
+            parseFileChangeCustomId: jest.fn().mockReturnValue(null),
             parseRunCommandCustomId: jest.fn().mockReturnValue(null),
             handleSlashInteraction: jest.fn(),
         });
@@ -144,6 +147,57 @@ describe('interactionCreateHandler', () => {
         expect(followUp).toHaveBeenCalledWith(
             expect.objectContaining({ content: 'ok', flags: 64 }),
         );
+    });
+
+    it('handles generic action_btn_ by injecting into CDP', async () => {
+        const deferUpdate = jest.fn().mockResolvedValue(undefined);
+        const cdp = {
+            call: jest.fn().mockResolvedValue({ result: { value: { ok: true } } }),
+        };
+        const interaction = {
+            isAutocomplete: () => false,
+            isButton: () => true,
+            isStringSelectMenu: () => false,
+            isChatInputCommand: () => false,
+            user: { id: 'allowed' },
+            customId: 'action_btn_proceed',
+            channelId: 'channel-x',
+            deferUpdate,
+        } as any;
+
+        const handler = createInteractionCreateHandler({
+            config: { allowedUserIds: ['allowed'] },
+            bridge: {
+                pool: {
+                    getConnected: jest.fn().mockReturnValue(cdp),
+                },
+            } as any,
+            cleanupHandler: {} as any,
+            modeService: {} as any,
+            modelService: {} as any,
+            slashCommandHandler: {} as any,
+            wsHandler: { getWorkspaceForChannel: jest.fn() } as any,
+            chatHandler: {} as any,
+            client: {} as any,
+            sendModeUI: jest.fn(),
+            sendModelsUI: jest.fn(),
+            sendAutoAcceptUI: jest.fn(),
+            handleScreenshot: jest.fn(),
+            getCurrentCdp: jest.fn().mockResolvedValue(cdp),
+            parseApprovalCustomId: jest.fn().mockReturnValue(null),
+            parseErrorPopupCustomId: jest.fn().mockReturnValue(null),
+            parsePlanningCustomId: jest.fn().mockReturnValue(null),
+            parseFileChangeCustomId: jest.fn().mockReturnValue(null),
+            parseRunCommandCustomId: jest.fn().mockReturnValue(null),
+            handleSlashInteraction: jest.fn(),
+        });
+
+        await handler(interaction);
+
+        expect(deferUpdate).toHaveBeenCalled();
+        expect(cdp.call).toHaveBeenCalledWith('Runtime.evaluate', expect.objectContaining({
+            expression: expect.stringContaining('Proceed')
+        }));
     });
 
     it('handles account dropdown selection and persists global/channel account choice for non-session channels', async () => {
@@ -189,6 +243,7 @@ describe('interactionCreateHandler', () => {
             parseApprovalCustomId: jest.fn().mockReturnValue(null),
             parseErrorPopupCustomId: jest.fn().mockReturnValue(null),
             parsePlanningCustomId: jest.fn().mockReturnValue(null),
+            parseFileChangeCustomId: jest.fn().mockReturnValue(null),
             parseRunCommandCustomId: jest.fn().mockReturnValue(null),
             handleSlashInteraction: jest.fn(),
             accountPrefRepo: accountPrefRepo as any,
@@ -256,6 +311,7 @@ describe('interactionCreateHandler', () => {
             parseApprovalCustomId: jest.fn().mockReturnValue(null),
             parseErrorPopupCustomId: jest.fn().mockReturnValue(null),
             parsePlanningCustomId: jest.fn().mockReturnValue(null),
+            parseFileChangeCustomId: jest.fn().mockReturnValue(null),
             parseRunCommandCustomId: jest.fn().mockReturnValue(null),
             handleSlashInteraction: jest.fn(),
             accountPrefRepo: accountPrefRepo as any,
@@ -272,5 +328,59 @@ describe('interactionCreateHandler', () => {
         expect(chatSessionRepo.setActiveAccountName).toHaveBeenCalledWith('channel-a', 'work1');
         expect(accountPrefRepo.setAccountName).not.toHaveBeenCalled();
         expect(channelPrefRepo.setAccountName).not.toHaveBeenCalled();
+    });
+
+    it('rejects file_open for files outside the workspace root using resolved path', async () => {
+        const { fileOpenCache } = require('../../src/utils/fileOpenCache');
+        fileOpenCache.set('testhash', 'file:////etc/passwd');
+
+        const deferUpdate = jest.fn().mockResolvedValue(undefined);
+        const followUp = jest.fn().mockResolvedValue(undefined);
+        const wsHandler = { getWorkspaceForChannel: jest.fn().mockReturnValue('/home/user/project') };
+
+        const interaction = {
+            isAutocomplete: () => false,
+            isButton: () => true,
+            isStringSelectMenu: () => false,
+            isChatInputCommand: () => false,
+            customId: 'file_open:testhash',
+            channelId: 'channel-a',
+            user: { id: 'allowed' },
+            deferUpdate,
+            followUp,
+        } as any;
+
+        const handler = createInteractionCreateHandler({
+            config: { allowedUserIds: ['allowed'] },
+            bridge: {} as any,
+            cleanupHandler: {} as any,
+            modeService: {} as any,
+            modelService: {} as any,
+            slashCommandHandler: {} as any,
+            wsHandler: wsHandler as any,
+            chatHandler: {} as any,
+            client: {} as any,
+            sendModeUI: jest.fn(),
+            sendModelsUI: jest.fn(),
+            sendAutoAcceptUI: jest.fn(),
+            handleScreenshot: jest.fn(),
+            getCurrentCdp: jest.fn(),
+            parseApprovalCustomId: jest.fn().mockReturnValue(null),
+            parseErrorPopupCustomId: jest.fn().mockReturnValue(null),
+            parsePlanningCustomId: jest.fn().mockReturnValue(null),
+            parseFileChangeCustomId: jest.fn().mockReturnValue(null),
+            parseRunCommandCustomId: jest.fn().mockReturnValue(null),
+            handleSlashInteraction: jest.fn(),
+        });
+
+        await handler(interaction);
+
+        expect(deferUpdate).toHaveBeenCalled();
+        expect(wsHandler.getWorkspaceForChannel).toHaveBeenCalledWith('channel-a');
+        expect(followUp).toHaveBeenCalledWith(
+            expect.objectContaining({
+                content: expect.stringContaining('Cannot open files outside the workspace root'),
+            })
+        );
     });
 });

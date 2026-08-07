@@ -9,10 +9,13 @@ import type { PlatformButtonInteraction } from '../platform/types';
 import type { ButtonAction } from './buttonHandler';
 import type { CdpBridge } from '../services/cdpBridgeManager';
 import { parseApprovalCustomId } from '../services/cdpBridgeManager';
+import { resolveProjectName } from '../utils/projectResolver';
+import type { WorkspaceCommandHandler } from '../commands/workspaceCommandHandler';
 import { logger } from '../utils/logger';
 
 export interface ApprovalButtonActionDeps {
     readonly bridge: CdpBridge;
+    readonly wsHandler: WorkspaceCommandHandler;
 }
 
 export function createApprovalButtonAction(
@@ -46,7 +49,7 @@ export function createApprovalButtonAction(
                 return;
             }
 
-            const projectName = params.projectName || deps.bridge.lastActiveWorkspace;
+            const projectName = resolveProjectName(deps, interaction.channel.id, params.projectName);
             logger.debug(`[ApprovalAction] action=${action} project=${projectName ?? 'null'} channel=${interaction.channel.id}`);
 
             const detector = projectName

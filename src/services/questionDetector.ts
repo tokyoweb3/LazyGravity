@@ -1,0 +1,461 @@
+import { EventEmitter } from 'events';
+import { CdpService } from './cdpService';
+import { logger } from '../utils/logger';
+
+export interface QuestionOption {
+    text: string;
+    x: number;
+    y: number;
+}
+
+export interface QuestionInfo {
+    title: string;
+    description: string;
+    options: QuestionOption[];
+}
+
+export interface QuestionDetectorOptions {
+    cdpService: CdpService;
+    pollIntervalMs?: number;
+    onQuestionRequired: (info: QuestionInfo) => void;
+    onResolved?: () => void;
+}
+
+export class QuestionDetector extends EventEmitter {
+    private cdp: CdpService;
+    private pollIntervalMs: number;
+    private intervalId: NodeJS.Timeout | null = null;
+    private logger = logger;
+    private lastQuestionDetected: boolean = false;
+    private emptyPollCount: number = 0;
+    private static readonly REQUIRED_EMPTY_POLLS = 3;
+    private _isStarted: boolean = false;
+    private onQuestionRequired: (info: QuestionInfo) => void;
+    private onResolved?: () => void;
+    private projectName: string = 'unknown';
+
+    constructor(options: QuestionDetectorOptions) {
+        super();
+        this.cdp = options.cdpService;
+        this.pollIntervalMs = options.pollIntervalMs || 2000;
+        this.onQuestionRequired = options.onQuestionRequired;
+        this.onResolved = options.onResolved;
+        
+        // Listen to own events to call options callbacks (for compat)
+        this.on('question', (info) => this.onQuestionRequired(info));
+        this.on('resolved', () => {
+            if (this.onResolved) this.onResolved();
+        });
+    }
+    
+    setProjectName(name: string) {
+        this.projectName = name;
+    }
+
+    get isActive() {
+        return this._isStarted;
+    }
+
+    start() {
+        if (this._isStarted) return;
+        this._isStarted = true;
+        this.logger.debug(`[QuestionDetector:${this.projectName}] Starting polling`);
+        this.lastQuestionDetected = false;
+        this.emptyPollCount = 0;
+        
+        this.intervalId = setInterval(() => this.poll(), this.pollIntervalMs);
+        this.poll();
+    }
+
+    stop() {
+        if (!this._isStarted) return;
+        this._isStarted = false;
+        if (this.intervalId) {
+            clearInterval(this.intervalId);
+            this.intervalId = null;
+        }
+        this.logger.debug(`[QuestionDetector:${this.projectName}] Stopped polling`);
+    }
+
+    async submitOption(index: number): Promise<boolean> {
+        this.logger.debug(`[QuestionDetector:${this.projectName}] Submitting option ${index}`);
+        
+        try {
+            const contextId = this.cdp.getPrimaryContextId();
+            const callParams: any = {
+                expression: `
+                (() => {
+                    const getInteractiveItems = (elContainer) => {
+                        return Array.from(elContainer.querySelectorAll('li, label, a, [role="radio"], [role="option"], [class*="cursor-pointer"]'))
+                            .filter(el => {
+                                if (el.tagName === 'BUTTON' || el.closest('button')) return false;
+                                const role = el.getAttribute('role');
+                                if (['radio', 'option', 'checkbox', 'button', 'menuitem'].includes(role)) return true;
+                                if (el.tagName === 'A' || el.tagName === 'LABEL') return true;
+                                const style = window.getComputedStyle(el);
+                                return style.cursor === 'pointer';
+                            });
+                    };
+                    const containers = Array.from(document.querySelectorAll('div, form, dialog')).reverse();
+                    let targetList = null;
+                    let submitBtn = null;
+                    
+                    for (const container of containers) {
+                        const hasTextInput = container.querySelector('textarea, input:not([type="hidden"]):not([type="radio"]):not([type="checkbox"]), [contenteditable], [role="textbox"], .monaco-editor, .editor-container, .inputarea, vscode-text-field, vscode-text-area');
+                        const hasExplicitQuestionItems = container.querySelector('[role="radio"], input[type="radio"], input[type="checkbox"], [role="option"], [role="checkbox"]');
+                        if (hasTextInput && !hasExplicitQuestionItems) continue;
+                        const buttons = Array.from(container.querySelectorAll('button'));
+                        let possibleSubmitBtn = null;
+                        for (const btn of buttons) {
+                            const text = btn.textContent?.toLowerCase() || '';
+                            if (text.includes('submit') || text.includes('continue')) {
+                                possibleSubmitBtn = btn;
+                                break;
+                            }
+                        }
+                        
+                        if (possibleSubmitBtn) {
+                            const items = getInteractiveItems(container);
+                            
+                            if (items.length > 1) {
+                                targetList = container;
+                                submitBtn = possibleSubmitBtn;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (!targetList || !submitBtn) return { found: false };
+
+                    const items = getInteractiveItems(targetList);
+                    if (items.length <= ${index}) return { found: false };
+                    
+                    const targetOption = items[${index}];
+                    
+                    const clickElement = (el) => {
+                        const rect = el.getBoundingClientRect();
+                        const clickX = rect.left + rect.width / 2;
+                        const clickY = rect.top + rect.height / 2;
+                        const events = ['pointerdown', 'mousedown', 'mouseup', 'click'];
+                        for (const type of events) {
+                            el.dispatchEvent(new MouseEvent(type, {
+                                bubbles: true,
+                                cancelable: true,
+                                view: window,
+                                clientX: clickX,
+                                clientY: clickY,
+                            }));
+                        }
+                    };
+                    
+                    return new Promise(resolve => {
+                        clickElement(targetOption);
+                        setTimeout(() => {
+                            clickElement(submitBtn);
+                            resolve({ found: true });
+                        }, 50);
+                    });
+                })()
+                `,
+                returnByValue: true,
+                awaitPromise: true,
+            };
+            if (contextId !== null) {
+                callParams.contextId = contextId;
+            }
+
+            const response = await this.cdp.call('Runtime.evaluate', callParams);
+            const result = response?.result?.value;
+
+            if (!result || !result.found) {
+                this.logger.warn(`[QuestionDetector:${this.projectName}] Could not find question modal elements during submission.`);
+                return false;
+            }
+
+            this.lastQuestionDetected = false;
+            return true;
+        } catch (e: any) {
+            this.logger.error(`[QuestionDetector:${this.projectName}] submitOption error:`, e.message);
+            return false;
+        }
+    }
+
+    async skipQuestion(): Promise<boolean> {
+        this.logger.debug(`[QuestionDetector:${this.projectName}] Skipping question`);
+        
+        try {
+            const contextId = this.cdp.getPrimaryContextId();
+            const callParams: any = {
+                expression: `
+                (() => {
+                    const getInteractiveItems = (elContainer) => {
+                        return Array.from(elContainer.querySelectorAll('li, label, a, [role="radio"], [role="option"], [class*="cursor-pointer"]'))
+                            .filter(el => {
+                                if (el.tagName === 'BUTTON' || el.closest('button')) return false;
+                                const role = el.getAttribute('role');
+                                if (['radio', 'option', 'checkbox', 'button', 'menuitem'].includes(role)) return true;
+                                if (el.tagName === 'A' || el.tagName === 'LABEL') return true;
+                                const style = window.getComputedStyle(el);
+                                return style.cursor === 'pointer';
+                            });
+                    };
+
+                    const containers = Array.from(document.querySelectorAll('div, form, dialog')).reverse();
+                    let skipBtn = null;
+                    
+                    for (const container of containers) {
+                        const hasTextInput = container.querySelector('textarea, input:not([type="hidden"]):not([type="radio"]):not([type="checkbox"]), [contenteditable="true"], [contenteditable=""], [role="textbox"]');
+                        const hasExplicitQuestionItems = container.querySelector('[role="radio"], input[type="radio"], input[type="checkbox"], [role="option"], [role="checkbox"]');
+                        if (hasTextInput && !hasExplicitQuestionItems) continue;
+                        const items = getInteractiveItems(container);
+                        const hasList = items.length > 1;
+                        
+                        const buttons = Array.from(container.querySelectorAll('button'));
+                        for (const btn of buttons) {
+                            const text = btn.textContent?.toLowerCase() || '';
+                            if (text.includes('skip') && hasList) {
+                                skipBtn = btn;
+                                break;
+                            }
+                        }
+                        if (skipBtn) break;
+                    }
+
+                    if (!skipBtn) return { found: false };
+                    
+                    const clickElement = (el) => {
+                        const rect = el.getBoundingClientRect();
+                        const clickX = rect.left + rect.width / 2;
+                        const clickY = rect.top + rect.height / 2;
+                        const events = ['pointerdown', 'mousedown', 'mouseup', 'click'];
+                        for (const type of events) {
+                            el.dispatchEvent(new MouseEvent(type, {
+                                bubbles: true,
+                                cancelable: true,
+                                view: window,
+                                clientX: clickX,
+                                clientY: clickY,
+                            }));
+                        }
+                    };
+                    
+                    clickElement(skipBtn);
+                    return { found: true };
+                })()
+                `,
+                returnByValue: true,
+                awaitPromise: false,
+            };
+            if (contextId !== null) callParams.contextId = contextId;
+
+            const response = await this.cdp.call('Runtime.evaluate', callParams);
+            const result = response?.result?.value;
+
+            if (!result || !result.found) {
+                this.logger.warn(`[QuestionDetector:${this.projectName}] Could not find skip button.`);
+                return false;
+            }
+
+            this.lastQuestionDetected = false;
+            return true;
+        } catch (e: any) {
+            this.logger.error(`[QuestionDetector:${this.projectName}] skipQuestion error:`, e.message);
+            return false;
+        }
+    }
+
+    private async poll() {
+        if (!this.cdp.isConnected()) return;
+
+        try {
+            const callParams: any = {
+                expression: `
+                (() => {
+                    const STOP_PATTERNS = [
+                        /^stop$/,
+                        /^stop generating$/,
+                        /^stop response$/,
+                        /^停止$/,
+                        /^生成を停止$/,
+                        /^応答を停止$/,
+                    ];
+                    const normalize = (value) => (value || '').toLowerCase().replace(/\\s+/g, ' ').trim();
+                    const isStopLabel = (value) => {
+                        const normalized = normalize(value);
+                        if (!normalized) return false;
+                        return STOP_PATTERNS.some((re) => re.test(normalized));
+                    };
+                    const isGenerating = Array.from(document.querySelectorAll('button, [role="button"]')).some(btn => {
+                        const labels = [
+                            btn.textContent || '',
+                            btn.getAttribute('aria-label') || '',
+                            btn.getAttribute('title') || '',
+                        ];
+                        return labels.some(isStopLabel);
+                    }) || (() => {
+                        const panel = document.querySelector('.antigravity-agent-side-panel');
+                        if (panel) {
+                            const panelText = (panel.textContent || '').trim();
+                            return /Working\.\s*$/i.test(panelText);
+                        }
+                        return false;
+                    })();
+                    if (isGenerating) {
+                        return { detected: false, reason: "IDE is generating" };
+                    }
+
+                    const getInteractiveItems = (elContainer) => {
+                        return Array.from(elContainer.querySelectorAll('li, label, a, [role="radio"], [role="option"], [class*="cursor-pointer"]'))
+                            .filter(el => {
+                                if (el.tagName === 'BUTTON' || el.closest('button')) return false;
+                                const text = (el.innerText || el.textContent || '').trim();
+                                if (!text) return false;
+                                const role = el.getAttribute('role');
+                                if (['radio', 'option', 'checkbox', 'button', 'menuitem'].includes(role)) return true;
+                                if (el.tagName === 'A' || el.tagName === 'LABEL') return true;
+                                const style = window.getComputedStyle(el);
+                                return style.cursor === 'pointer';
+                            });
+                    };
+
+                    const containers = Array.from(document.querySelectorAll('div, form, dialog')).reverse();
+                    let targetList = null;
+                    let submitBtn = null;
+                    
+                    for (const container of containers) {
+                        const hasTextInput = container.querySelector('textarea, input:not([type="hidden"]):not([type="radio"]):not([type="checkbox"]), [contenteditable], [role="textbox"], .monaco-editor, .editor-container, .inputarea, vscode-text-field, vscode-text-area');
+                        const hasExplicitQuestionItems = container.querySelector('[role="radio"], input[type="radio"], input[type="checkbox"], [role="option"], [role="checkbox"]');
+                        if (hasTextInput && !hasExplicitQuestionItems) continue;
+                        const buttons = Array.from(container.querySelectorAll('button'));
+                        let possibleSubmitBtn = null;
+                        for (const btn of buttons) {
+                            const text = btn.textContent?.toLowerCase() || '';
+                            if (text.includes('submit') || text.includes('continue')) {
+                                possibleSubmitBtn = btn;
+                                break;
+                            }
+                        }
+                        
+                        if (possibleSubmitBtn) {
+                            const items = getInteractiveItems(container);
+                            
+                            if (items.length > 1) {
+                                targetList = container;
+                                submitBtn = possibleSubmitBtn;
+                                break;
+                            }
+                        }
+                    }
+                    if (!targetList || !submitBtn) return { detected: false, reason: "No targetList or submitBtn found" };
+
+                    let titleEl = targetList.querySelector('h1, h2, h3, [role="heading"], .text-lg');
+                    if (!titleEl) {
+                        let p = targetList;
+                        while (p && p.tagName !== 'BODY') {
+                            titleEl = p.querySelector('h1, h2, h3, [role="heading"], .text-lg, p');
+                            if (titleEl && titleEl !== p && (titleEl.innerText || titleEl.textContent || '').trim().length > 0) break;
+                            p = p.parentElement;
+                        }
+                    }
+                    const title = titleEl ? (titleEl.innerText || titleEl.textContent || '').trim() : 'Question';
+                    
+                    const items = getInteractiveItems(targetList);
+                    const options = items.map(n => {
+                        const rect = n.getBoundingClientRect();
+                        const finalLabel = n.innerText || n.textContent || 'Option';
+
+                        return {
+                            text: finalLabel.replace(/\\n/g, ' ').replace(/\\s+/g, ' ').trim().substring(0, 100),
+                            x: Math.round(rect.left + rect.width / 2),
+                            y: Math.round(rect.top + rect.height / 2)
+                        };
+                    });
+
+                    if (options.length === 0) return { detected: false, reason: "options length 0" };
+
+                    return {
+                        detected: true,
+                        title,
+                        options
+                    };
+                })()
+                `,
+                returnByValue: true,
+                awaitPromise: false,
+            };
+
+            const contexts = this.cdp.getContexts();
+            const contextIds = [
+                this.cdp.getPrimaryContextId(),
+                ...contexts.map((ctx) => ctx.id),
+            ].filter((value, index, arr): value is number => typeof value === 'number' && arr.indexOf(value) === index);
+            const targets: Array<number | null> = contextIds.length > 0 ? contextIds : [null];
+
+            let detectedResult = null;
+            let lastReason = null;
+
+            for (const contextId of targets) {
+                if (contextId !== null) {
+                    callParams.contextId = contextId;
+                }
+                const response = await this.cdp.call('Runtime.evaluate', callParams).catch(e => {
+                    this.logger.debug(`[QuestionDetector] Error evaluating on ctx ${contextId}: ${e.message}`);
+                    return null;
+                });
+                
+                if (!this._isStarted) return;
+                
+                if (response?.exceptionDetails) {
+                    this.logger.debug(`[QuestionDetector] Exception on ctx ${contextId}: ${response.exceptionDetails.exception?.description || response.exceptionDetails.text}`);
+                }
+
+                const result = response?.result?.value;
+                if (result) {
+                    this.logger.debug(`[QuestionDetector] Context ${contextId} evaluated successfully, detected: ${result.detected}, reason: ${result.reason}`);
+                }
+
+                if (result && result.detected) {
+                    detectedResult = result;
+                    break;
+                } else if (result && result.reason) {
+                    lastReason = result.reason;
+                }
+            }
+
+            if (!this._isStarted) return;
+
+            const result = detectedResult;
+
+            if (result && result.detected) {
+                this.emptyPollCount = 0;
+                if (!this.lastQuestionDetected) {
+                    this.lastQuestionDetected = true;
+                    this.logger.debug(`[QuestionDetector:${this.projectName}] Question modal detected`);
+                    this.emit('question', {
+                        title: result.title || 'Question',
+                        description: 'Please answer the question below.',
+                        options: result.options,
+                    });
+                }
+            } else {
+                if (!result && lastReason) {
+                    this.logger.debug(`[QuestionDetector:${this.projectName}] Evaluate returned false: ${lastReason}`);
+                }
+                this.emptyPollCount++;
+                if (this.emptyPollCount >= QuestionDetector.REQUIRED_EMPTY_POLLS) {
+                    if (this.lastQuestionDetected) {
+                        this.logger.debug(`[QuestionDetector:${this.projectName}] Question modal disappeared`);
+                        this.lastQuestionDetected = false;
+                        this.emit('resolved');
+                    }
+                }
+            }
+        } catch (e: any) {
+            if (e.message?.includes('Target closed') || e.message?.includes('Session closed')) {
+                // Ignore disconnect errors
+            } else {
+                this.logger.error(`[QuestionDetector:${this.projectName}] Error:`, e.message);
+            }
+        }
+    }
+}

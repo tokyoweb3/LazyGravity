@@ -19,6 +19,10 @@ import {
     AttachmentBuilder,
     MessageFlags,
     User,
+    ModalBuilder,
+    TextInputBuilder,
+    TextInputStyle,
+    ModalSubmitInteraction,
 } from 'discord.js';
 import type {
     PlatformMessage,
@@ -33,6 +37,8 @@ import type {
     ComponentRow,
     RichContent,
     PlatformAttachment,
+    ModalDef,
+    PlatformModalSubmitInteraction,
 } from '../types';
 
 // ---------------------------------------------------------------------------
@@ -144,6 +150,35 @@ function toDiscordComponents(
 
         return actionRow;
     });
+}
+
+/**
+ * Convert a platform ModalDef to a discord.js ModalBuilder.
+ */
+function toDiscordModal(modal: ModalDef): ModalBuilder {
+    const builder = new ModalBuilder()
+        .setCustomId(modal.customId)
+        .setTitle(modal.title);
+
+    for (const row of modal.components) {
+        const actionRow = new ActionRowBuilder<TextInputBuilder>();
+        for (const comp of row.components) {
+            const input = new TextInputBuilder()
+                .setCustomId(comp.customId)
+                .setLabel(comp.label)
+                .setStyle(comp.style === 'paragraph' ? TextInputStyle.Paragraph : TextInputStyle.Short);
+            
+            if (comp.placeholder !== undefined) {
+                input.setPlaceholder(comp.placeholder);
+            }
+            if (comp.required !== undefined) {
+                input.setRequired(comp.required);
+            }
+            actionRow.addComponents(input);
+        }
+        builder.addComponents(actionRow);
+    }
+    return builder;
 }
 
 /** Options controlling platform-specific behaviour of payload conversion. */
@@ -331,6 +366,9 @@ export function wrapDiscordButton(interaction: ButtonInteraction): PlatformButto
             const sent = await interaction.followUp(toDiscordPayload(payload, EPHEMERAL_ALLOWED) as Parameters<ButtonInteraction['followUp']>[0]);
             return wrapDiscordSentMessage(sent as Message);
         },
+        async showModal(modal: ModalDef): Promise<void> {
+            await interaction.showModal(toDiscordModal(modal));
+        },
     };
 }
 
@@ -413,3 +451,51 @@ export function wrapDiscordCommand(interaction: ChatInputCommandInteraction): Pl
         },
     };
 }
+
+/** Wrap a discord.js ModalSubmitInteraction as a PlatformModalSubmitInteraction. */
+export function wrapDiscordModalSubmit(interaction: ModalSubmitInteraction): PlatformModalSubmitInteraction {
+    const user = wrapDiscordUser(interaction.user);
+    const channel = interaction.channel
+        ? wrapDiscordChannel(interaction.channel as TextChannel)
+        : buildFallbackChannel(interaction.channelId ?? 'unknown');
+
+    const fields = new Map<string, string>();
+    for (const [key, field] of interaction.fields.fields.entries()) {
+        fields.set(key, interaction.fields.getTextInputValue(key));
+    }
+
+    return {
+        id: interaction.id,
+        platform: 'discord',
+        customId: interaction.customId,
+        user,
+        channel,
+        messageId: interaction.message?.id ?? null,
+        fields,
+        async deferUpdate(): Promise<void> {
+            if (interaction.isFromMessage()) {
+                await interaction.deferUpdate();
+            } else {
+                await interaction.deferReply({ ephemeral: true });
+            }
+        },
+        async reply(payload: MessagePayload): Promise<void> {
+            await interaction.reply(toDiscordPayload(payload, EPHEMERAL_ALLOWED) as Parameters<ModalSubmitInteraction['reply']>[0]);
+        },
+        async update(payload: MessagePayload): Promise<void> {
+            if (interaction.isFromMessage()) {
+                await interaction.update(toDiscordPayload(payload, EPHEMERAL_ALLOWED) as Parameters<typeof interaction.update>[0]);
+            } else {
+                await interaction.reply(toDiscordPayload(payload, EPHEMERAL_ALLOWED) as Parameters<ModalSubmitInteraction['reply']>[0]);
+            }
+        },
+        async editReply(payload: MessagePayload): Promise<void> {
+            await interaction.editReply(toDiscordPayload(payload, EPHEMERAL_ALLOWED) as Parameters<ModalSubmitInteraction['editReply']>[0]);
+        },
+        async followUp(payload: MessagePayload): Promise<PlatformSentMessage> {
+            const sent = await interaction.followUp(toDiscordPayload(payload, EPHEMERAL_ALLOWED) as Parameters<ModalSubmitInteraction['followUp']>[0]);
+            return wrapDiscordSentMessage(sent as Message);
+        },
+    };
+}
+

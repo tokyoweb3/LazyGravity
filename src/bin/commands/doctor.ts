@@ -6,13 +6,19 @@ import { ConfigLoader } from '../../utils/configLoader';
 import { getAntigravityCdpHint } from '../../utils/pathUtils';
 import { COLORS } from '../../utils/logger';
 import type { PlatformType } from '../../platform/types';
+import { ArtifactService } from '../../services/artifactService';
 
 const ok = (msg: string) => console.log(`  ${COLORS.green}[OK]${COLORS.reset} ${msg}`);
 const warn = (msg: string) => console.log(`  ${COLORS.yellow}[--]${COLORS.reset} ${msg}`);
 const fail = (msg: string) => console.log(`  ${COLORS.red}[!!]${COLORS.reset} ${msg}`);
 const hint = (msg: string) => console.log(`       ${COLORS.dim}${msg}${COLORS.reset}`);
 
-function checkPort(port: number): Promise<boolean> {
+interface PortCheckResult {
+    alive: boolean;
+    targets?: any[];
+}
+
+function checkPort(port: number): Promise<PortCheckResult> {
     return new Promise((resolve) => {
         const req = http.get(`http://127.0.0.1:${port}/json/list`, (res) => {
             let data = '';
@@ -20,16 +26,20 @@ function checkPort(port: number): Promise<boolean> {
             res.on('end', () => {
                 try {
                     const parsed = JSON.parse(data);
-                    resolve(Array.isArray(parsed));
+                    if (Array.isArray(parsed)) {
+                        resolve({ alive: true, targets: parsed });
+                    } else {
+                        resolve({ alive: false });
+                    }
                 } catch {
-                    resolve(false);
+                    resolve({ alive: false });
                 }
             });
         });
-        req.on('error', () => resolve(false));
+        req.on('error', () => resolve({ alive: false }));
         req.setTimeout(2000, () => {
             req.destroy();
-            resolve(false);
+            resolve({ alive: false });
         });
     });
 }
@@ -118,11 +128,15 @@ export async function doctorAction(): Promise<void> {
     // 5. CDP port check
     console.log(`\n  ${COLORS.dim}Checking CDP ports...${COLORS.reset}`);
     let cdpOk = false;
+    const portResults = new Map<number, any[]>();
     for (const port of CDP_PORTS) {
-        const alive = await checkPort(port);
-        if (alive) {
+        const result = await checkPort(port);
+        if (result.alive) {
             ok(`CDP port ${port} is responding`);
             cdpOk = true;
+            if (result.targets) {
+                portResults.set(port, result.targets);
+            }
         }
     }
     if (!cdpOk) {
@@ -131,7 +145,35 @@ export async function doctorAction(): Promise<void> {
         allOk = false;
     }
 
-    // 6. Node.js version check
+    // 6. Path alignment check
+    console.log(`\n  ${COLORS.dim}Checking brain path alignment...${COLORS.reset}`);
+    const artifactService = new ArtifactService();
+    const resolvedPath = artifactService.getBrainBasePath();
+    ok(`Resolved brainBasePath: ${resolvedPath}`);
+
+    for (const port of CDP_PORTS) {
+        const targets = portResults.get(port);
+        if (targets && Array.isArray(targets)) {
+            for (const t of targets) {
+                if (t.url?.includes('workbench')) {
+                    const pathLower = t.url.toLowerCase();
+                    const isIDE = pathLower.includes('antigravity%20ide') || pathLower.includes('antigravity-ide');
+                    const resolvedLower = resolvedPath.toLowerCase();
+                    if (isIDE && !resolvedLower.includes('antigravity-ide')) {
+                        fail(`Path mismatch: Active IDE target is "Antigravity IDE" but brain basePath is resolved to: ${resolvedPath}`);
+                        hint('Make sure to use .gemini/antigravity-ide/brain path.');
+                        allOk = false;
+                    } else if (!isIDE && resolvedLower.includes('antigravity-ide')) {
+                        warn(`Active IDE target does not appear to be "Antigravity IDE" but brain basePath is: ${resolvedPath}`);
+                    } else {
+                        ok(`Target "${t.title}" aligns correctly with brain basePath`);
+                    }
+                }
+            }
+        }
+    }
+
+    // 7. Node.js version check
     const nodeVersion = process.versions.node;
     const major = parseInt(nodeVersion.split('.')[0], 10);
     if (major >= 18) {

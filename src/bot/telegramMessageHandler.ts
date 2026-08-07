@@ -12,7 +12,7 @@
 import type { PlatformMessage, PlatformChannel, PlatformSentMessage } from '../platform/types';
 import type { TelegramBindingRepository } from '../database/telegramBindingRepository';
 import type { WorkspaceService } from '../services/workspaceService';
-import { CdpBridge, registerApprovalWorkspaceChannel, ensureApprovalDetector, ensureErrorPopupDetector, ensurePlanningDetector, ensureRunCommandDetector } from '../services/cdpBridgeManager';
+import { CdpBridge, registerApprovalWorkspaceChannel, ensureApprovalDetector, ensureErrorPopupDetector, ensurePlanningDetector, ensureRunCommandDetector, ensureQuestionDetector } from '../services/cdpBridgeManager';
 import { CdpService } from '../services/cdpService';
 import { ResponseMonitor, captureResponseMonitorBaseline } from '../services/responseMonitor';
 import { ProcessLogBuffer } from '../utils/processLogBuffer';
@@ -209,6 +209,7 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
             ensureErrorPopupDetector(deps.bridge, cdp, projectName, selectedAccount);
             ensurePlanningDetector(deps.bridge, cdp, projectName, selectedAccount);
             ensureRunCommandDetector(deps.bridge, cdp, projectName, selectedAccount);
+            ensureQuestionDetector(deps.bridge, cdp, projectName, selectedAccount);
 
             // Acknowledge receipt
             await message.react('\u{1F440}').catch(() => {});

@@ -8,6 +8,8 @@ import {
     type AssistantDomSegmentPayload,
     type AssistantDomSegment,
 } from '../../src/services/assistantDomExtractor';
+import * as fs from 'fs';
+import * as path from 'path';
 
 describe('assistantDomExtractor', () => {
     const buildPayload = (segments: AssistantDomSegment[]): AssistantDomSegmentPayload => ({
@@ -209,22 +211,18 @@ describe('assistantDomExtractor', () => {
             }
         });
 
-        it('skips mode description inside role="dialog" container', () => {
+        it('skips text inside role="dialog" container for interactive tools', () => {
             const panel = document.createElement('div');
             panel.className = 'antigravity-agent-side-panel';
-
-            // AG mode selector popup: role="dialog" container
             const dialog = document.createElement('div');
             dialog.setAttribute('role', 'dialog');
             const modeOption = document.createElement('div');
-            modeOption.className = 'flex flex-col';
-            const modeName = document.createElement('div');
-            modeName.className = 'font-medium';
+            modeOption.className = 'mode-select-option';
+            const modeName = document.createElement('span');
             modeName.textContent = 'Planning';
-            const modeDesc = document.createElement('div');
-            modeDesc.className = 'text-xs opacity-50';
-            modeDesc.textContent =
-                'Agent can plan before executing tasks. Use for deep research, complex tasks, or collaborative work';
+            const modeDesc = document.createElement('span');
+            modeDesc.textContent = 'Configure planning mode options';
+            
             modeOption.appendChild(modeName);
             modeOption.appendChild(modeDesc);
             dialog.appendChild(modeOption);
@@ -239,8 +237,39 @@ describe('assistantDomExtractor', () => {
             const payload = (window as any).__pass25DialogPayload;
             const result = classifyAssistantSegments(payload);
 
-            // Neither "Planning" nor the description should appear in activity
             expect(result.activityLines).toEqual([]);
+        });
+
+        it('skips dialogs and elements with role="dialog"', () => {
+            const panel = document.createElement('div');
+            panel.className = 'antigravity-agent-side-panel';
+            
+            const dialog = document.createElement('dialog');
+            dialog.textContent = 'This is a modal dialog';
+            panel.appendChild(dialog);
+
+            const roleDialog = document.createElement('div');
+            roleDialog.setAttribute('role', 'dialog');
+            roleDialog.textContent = 'This is an ARIA dialog';
+            panel.appendChild(roleDialog);
+            
+            const message = document.createElement('div');
+            message.className = 'rendered-markdown';
+            message.textContent = 'This should be extracted';
+            panel.appendChild(message);
+
+            document.body.appendChild(panel);
+
+            const script = extractAssistantSegmentsPayloadScript();
+            const scriptEl = document.createElement('script');
+            scriptEl.textContent = `window.__dialogPayload = ${script};`;
+            document.body.appendChild(scriptEl);
+            const payload = (window as any).__dialogPayload;
+            const result = classifyAssistantSegments(payload);
+
+            expect(result.finalOutputText).toContain('This should be extracted');
+            expect(result.finalOutputText).not.toContain('This is a modal dialog');
+            expect(result.finalOutputText).not.toContain('This is an ARIA dialog');
         });
 
         it('skips container elements with more than 3 children', () => {
@@ -344,6 +373,120 @@ describe('assistantDomExtractor', () => {
 
             // Expected: file path is restored from title attribute to "src/bot/index.ts:54"
             expect(output).toContain('src/bot/index.ts:54');
+        });
+    });
+
+    describe('Antigravity 2.0 DOM Fixtures', () => {
+        beforeEach(() => {
+            document.body.innerHTML = '';
+        });
+
+        it('extracts plan cards, actions, file edits, and final output', () => {
+            const fixturePath = path.join(__dirname, '../fixtures/antigravity-2/plan_approval_flow.html');
+            const html = fs.readFileSync(fixturePath, 'utf8');
+            document.body.innerHTML = html;
+
+            const script = extractAssistantSegmentsPayloadScript();
+            
+            const scriptEl = document.createElement('script');
+            scriptEl.textContent = `window.__fixturePayload = ${script};`;
+            document.body.appendChild(scriptEl);
+            const payload = (window as any).__fixturePayload;
+
+            const result = classifyAssistantSegments(payload);
+
+            expect(result.finalOutputText).toContain('The implementation plan is ready for review.');
+            expect(result.planCards[0]).toContain('Implementation Plan');
+            expect(result.planCards[0]).toContain('We will extract the DOM nodes...');
+            expect(result.actionButtons).toEqual(['Open', 'Proceed']);
+            expect(result.fileChanges).toEqual([{ path: 'src/services/assistantDomExtractor.ts', type: 'Modified' }]);
+        });
+
+        it('extracts file changes toolbar without tooltip ID and prefers absolute path for citations', () => {
+            const html = `
+                <div class="message" data-message-role="assistant">
+                    <p>Done!</p>
+                    <a href="file:///C:/Workspace/test.py" class="citation">test.py</a>
+                    
+                    <div class="toolbar">
+                        <span>2 Files With Changes</span>
+                        <button>Reject all</button>
+                        <button>Accept all</button>
+                    </div>
+                </div>
+            `;
+            document.body.innerHTML = html;
+
+            const script = extractAssistantSegmentsPayloadScript();
+            const scriptEl = document.createElement('script');
+            scriptEl.textContent = `window.__testPayload = ${script};`;
+            document.body.appendChild(scriptEl);
+            const payload = (window as any).__testPayload;
+
+            const result = classifyAssistantSegments(payload);
+            
+            // Should extract the absolute file path because of href
+            expect(result.citations).toEqual(['file:///C:/Workspace/test.py']);
+            
+            // Should not extract toolbar buttons as actionButtons
+            expect(result.actionButtons).not.toContain('Reject all');
+            expect(result.actionButtons).not.toContain('Accept all');
+            
+            // Should not extract fileChanges just from the toolbar
+            expect(result.fileChanges).toEqual([]);
+        });
+
+        it('extracts fileChangesTexts correctly from a file-changes block', () => {
+            const html = `
+                <div class="message" data-message-role="assistant">
+                    <div class="file-changes-block">
+                        <pre><code>Some file changes text</code></pre>
+                    </div>
+                </div>
+            `;
+            document.body.innerHTML = html;
+
+            const script = extractAssistantSegmentsPayloadScript();
+            const scriptEl = document.createElement('script');
+            scriptEl.textContent = `window.__testPayload = ${script};`;
+            document.body.appendChild(scriptEl);
+            const payload = (window as any).__testPayload;
+
+            const result = classifyAssistantSegments(payload);
+            
+            expect(result.fileChangesTexts).toEqual(['Some file changes text']);
+        });
+
+        it('extracts file names from the sticky footer .bottom-full .cursor-pointer', () => {
+            const html = `
+                <div class="antigravity-agent-side-panel">
+                    <div class="bottom-full">
+                        <div class="cursor-pointer">
+                            <span>src/components/MyComponent.tsx</span>
+                        </div>
+                        <div class="cursor-pointer">
+                            <span>src/utils/helpers.ts</span>
+                        </div>
+                        <div>
+                            <span>Not a file edit</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.body.innerHTML = html;
+
+            const script = extractAssistantSegmentsPayloadScript();
+            const scriptEl = document.createElement('script');
+            scriptEl.textContent = `window.__testPayload = ${script};`;
+            document.body.appendChild(scriptEl);
+            const payload = (window as any).__testPayload;
+
+            const result = classifyAssistantSegments(payload);
+            
+            expect(result.fileChanges).toEqual([
+                { path: 'src/components/MyComponent.tsx', type: 'Modified' },
+                { path: 'src/utils/helpers.ts', type: 'Modified' }
+            ]);
         });
     });
 });

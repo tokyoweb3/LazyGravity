@@ -54,6 +54,34 @@ jest.mock('discord.js', () => {
                     optFn(option);
                     return sub;
                 }),
+                addChannelOption: jest.fn().mockImplementation((optFn: (option: any) => void) => {
+                    const option = {
+                        setName: jest.fn().mockReturnThis(),
+                        setDescription: jest.fn().mockReturnThis(),
+                        setRequired: jest.fn().mockReturnThis(),
+                        addChannelTypes: jest.fn().mockReturnThis(),
+                    };
+                    optFn(option);
+                    return sub;
+                }),
+                addIntegerOption: jest.fn().mockImplementation((optFn: (option: any) => void) => {
+                    const option = {
+                        setName: jest.fn().mockReturnThis(),
+                        setDescription: jest.fn().mockReturnThis(),
+                        setRequired: jest.fn().mockReturnThis(),
+                    };
+                    optFn(option);
+                    return sub;
+                }),
+                addAttachmentOption: jest.fn().mockImplementation((optFn: (option: any) => void) => {
+                    const option = {
+                        setName: jest.fn().mockReturnThis(),
+                        setDescription: jest.fn().mockReturnThis(),
+                        setRequired: jest.fn().mockReturnThis(),
+                    };
+                    optFn(option);
+                    return sub;
+                }),
             };
             fn(sub);
             return this;
@@ -75,6 +103,10 @@ jest.mock('discord.js', () => {
             applicationGuildCommands: jest.fn().mockReturnValue('/guild-commands'),
         },
         PermissionFlagsBits: { Administrator: 8n },
+        ChannelType: {
+            GuildText: 0,
+            GuildAnnouncement: 5,
+        },
     };
 });
 

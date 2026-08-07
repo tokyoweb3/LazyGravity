@@ -443,6 +443,7 @@ export function wrapTelegramCallbackQuery(
             const { text, ...rest } = opts;
             await api.sendMessage(chatId, text, rest);
         },
+
         async update(payload: MessagePayload): Promise<void> {
             if (!query.message) return;
             assertValidChatId(chatId);

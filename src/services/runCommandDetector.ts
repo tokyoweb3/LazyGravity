@@ -1,3 +1,4 @@
+import { ConsecutiveEmptyPollGate } from '../utils/consecutiveEmptyPollGate';
 import { logger } from '../utils/logger';
 import { CdpService } from './cdpService';
 import { buildClickScript } from './approvalDetector';
@@ -47,7 +48,7 @@ export interface RunCommandDetectorOptions {
  */
 const DETECT_RUN_COMMAND_SCRIPT = `(() => {
     const RUN_COMMAND_HEADER_PATTERNS = [
-        'run command?', 'run command', 'execute command',
+        'run command?', 'run command', 'execute command', 'command execution',
         'コマンドを実行', 'コマンド実行'
     ];
     const RUN_PATTERNS = ['run', 'accept', '実行', 'execute'];
@@ -135,8 +136,10 @@ export class RunCommandDetector {
     private isRunning: boolean = false;
     /** Key of the last detected dialog (for duplicate notification prevention) */
     private lastDetectedKey: string | null = null;
-    /** Full RunCommandInfo from the last detection (used for clicking) */
+    /** Full RunCommandInfo from the last detection */
     private lastDetectedInfo: RunCommandInfo | null = null;
+    /** Gate for empty polls before reset */
+    private emptyPollGate = new ConsecutiveEmptyPollGate(3);
 
     constructor(options: RunCommandDetectorOptions) {
         this.cdpService = options.cdpService;
@@ -151,6 +154,7 @@ export class RunCommandDetector {
         this.isRunning = true;
         this.lastDetectedKey = null;
         this.lastDetectedInfo = null;
+        this.emptyPollGate.reset();
         this.schedulePoll();
     }
 
@@ -201,6 +205,7 @@ export class RunCommandDetector {
             const info: RunCommandInfo | null = result?.result?.value ?? null;
 
             if (info) {
+                this.emptyPollGate.recordDetection();
                 // Duplicate prevention: use commandText as key
                 const key = `${info.commandText}::${info.workingDirectory}`;
                 if (key !== this.lastDetectedKey) {
@@ -209,11 +214,13 @@ export class RunCommandDetector {
                     this.onRunCommandRequired(info);
                 }
             } else {
-                const wasDetected = this.lastDetectedKey !== null;
-                this.lastDetectedKey = null;
-                this.lastDetectedInfo = null;
-                if (wasDetected && this.onResolved) {
-                    this.onResolved();
+                if (this.emptyPollGate.recordEmptyPoll()) {
+                    const wasDetected = this.lastDetectedKey !== null;
+                    this.lastDetectedKey = null;
+                    this.lastDetectedInfo = null;
+                    if (wasDetected && this.onResolved) {
+                        this.onResolved();
+                    }
                 }
             }
         } catch (error) {

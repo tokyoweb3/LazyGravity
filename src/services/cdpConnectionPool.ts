@@ -6,6 +6,7 @@ import { ErrorPopupDetector } from './errorPopupDetector';
 import { PlanningDetector } from './planningDetector';
 import { RunCommandDetector } from './runCommandDetector';
 import { UserMessageDetector } from './userMessageDetector';
+import { QuestionDetector } from './questionDetector';
 
 export interface AccountSelection {
     name?: string;
@@ -19,6 +20,7 @@ function buildConnectionKey(projectName: string, accountName: string): string {
  * Pool that manages independent CdpService instances per workspace/account pair.
  */
 export class CdpConnectionPool {
+    public lastActiveWorkspace: string | null = null;
     private readonly connections = new Map<string, CdpService>();
     private readonly workspaceToAccount = new Map<string, string>();
     private readonly approvalDetectors = new Map<string, ApprovalDetector>();
@@ -26,6 +28,7 @@ export class CdpConnectionPool {
     private readonly planningDetectors = new Map<string, PlanningDetector>();
     private readonly runCommandDetectors = new Map<string, RunCommandDetector>();
     private readonly userMessageDetectors = new Map<string, UserMessageDetector>();
+    private readonly questionDetectors = new Map<string, QuestionDetector>();
     private readonly connectingPromises = new Map<string, Promise<CdpService>>();
     private readonly cdpOptions: CdpServiceOptions;
 
@@ -50,6 +53,7 @@ export class CdpConnectionPool {
 
         const existing = this.connections.get(key);
         if (existing && existing.isConnected()) {
+            this.lastActiveWorkspace = projectName;
             await existing.discoverAndConnectForWorkspace(workspacePath);
             return existing;
         }
@@ -63,7 +67,9 @@ export class CdpConnectionPool {
         this.connectingPromises.set(key, connectPromise);
 
         try {
-            return await connectPromise;
+            const result = await connectPromise;
+            this.lastActiveWorkspace = projectName;
+            return result;
         } finally {
             this.connectingPromises.delete(key);
             this.workspaceToAccount.set(projectName, effectiveAccount);
@@ -72,8 +78,9 @@ export class CdpConnectionPool {
 
     getConnected(projectName: string, accountName: string = 'default'): CdpService | null {
         const effectiveAccount = this.resolveAccountName(projectName, accountName);
-        const cdp = this.connections.get(buildConnectionKey(projectName, effectiveAccount));
+        const cdp = this.connections.get(buildConnectionKey(projectName, effectiveAccount)) || null;
         if (cdp && cdp.isConnected()) {
+            this.lastActiveWorkspace = projectName;
             return cdp;
         }
         return null;
@@ -96,6 +103,9 @@ export class CdpConnectionPool {
 
         this.errorPopupDetectors.get(key)?.stop();
         this.errorPopupDetectors.delete(key);
+
+        this.questionDetectors.get(key)?.stop();
+        this.questionDetectors.delete(key);
 
         this.planningDetectors.get(key)?.stop();
         this.planningDetectors.delete(key);
@@ -143,6 +153,18 @@ export class CdpConnectionPool {
         const key = buildConnectionKey(projectName, effectiveAccount);
         this.planningDetectors.get(key)?.stop();
         this.planningDetectors.set(key, detector);
+    }
+
+    getQuestionDetector(projectName: string, accountName: string = 'default'): QuestionDetector | undefined {
+        const effectiveAccount = this.resolveAccountName(projectName, accountName);
+        return this.questionDetectors.get(buildConnectionKey(projectName, effectiveAccount));
+    }
+
+    registerQuestionDetector(projectName: string, detector: QuestionDetector, accountName: string = 'default'): void {
+        const effectiveAccount = this.resolveAccountName(projectName, accountName);
+        const key = buildConnectionKey(projectName, effectiveAccount);
+        this.questionDetectors.get(key)?.stop();
+        this.questionDetectors.set(key, detector);
     }
 
     getPlanningDetector(projectName: string, accountName: string = 'default'): PlanningDetector | undefined {
@@ -224,6 +246,8 @@ export class CdpConnectionPool {
             this.errorPopupDetectors.delete(key);
             this.planningDetectors.get(key)?.stop();
             this.planningDetectors.delete(key);
+            this.questionDetectors.get(key)?.stop();
+            this.questionDetectors.delete(key);
             this.runCommandDetectors.get(key)?.stop();
             this.runCommandDetectors.delete(key);
             this.userMessageDetectors.get(key)?.stop();

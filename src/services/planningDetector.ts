@@ -14,6 +14,10 @@ export interface PlanningInfo {
     planSummary: string;
     /** Plan description (markdown rendered in leading-relaxed container) */
     description: string;
+    /** Reject button text (optional, e.g. "Reject All") */
+    rejectText?: string;
+    /** Whether an Open button was found */
+    hasOpenButton?: boolean;
 }
 
 export interface PlanningDetectorOptions {
@@ -34,33 +38,59 @@ export interface PlanningDetectorOptions {
  * and extracts plan metadata from the surrounding DOM elements.
  */
 const DETECT_PLANNING_SCRIPT = `(() => {
-    const OPEN_PATTERNS = ['open'];
+    const OPEN_PATTERNS = ['open', 'review'];
     const PROCEED_PATTERNS = ['proceed'];
+    const REJECT_PATTERNS = ['reject'];
+    const ACCEPT_PATTERNS = ['accept'];
 
     const normalize = (text) => (text || '').toLowerCase().replace(/\\s+/g, ' ').trim();
 
-    // Find the notify container that holds planning UI
-    const container = document.querySelector('.notify-user-container');
+    const allButtons = Array.from(document.querySelectorAll('button, a'))
+        .filter(btn => btn.offsetParent !== null)
+        .reverse();
+
+    let proceedBtn = null;
+    let openBtn = null;
+    let rejectBtn = null;
+
+    for (const btn of allButtons) {
+        const t = normalize(btn.textContent || '');
+        if (t.includes('review changes')) continue; // Ignore file change review button
+
+        // If we hit an accept or reject button before finding a proceed button, 
+        // it means the most recent state is an Approval, not Planning.
+        if (!proceedBtn && (ACCEPT_PATTERNS.some(p => t === p || t.includes(p)) || REJECT_PATTERNS.some(p => t === p || t.includes(p)))) {
+            return null;
+        }
+
+        if (!proceedBtn && PROCEED_PATTERNS.some(p => t === p || t.includes(p))) {
+            proceedBtn = btn;
+            continue;
+        }
+
+        if (!openBtn && OPEN_PATTERNS.some(p => t === p || t.includes(p))) {
+            openBtn = btn;
+        }
+
+        if (!rejectBtn && REJECT_PATTERNS.some(p => t === p || t.includes(p))) {
+            rejectBtn = btn;
+        }
+        
+        if (proceedBtn && openBtn) break;
+    }
+
+    // Proceed button must exist for this to be a planning UI
+    if (!proceedBtn) return null;
+    
+    const container = proceedBtn.closest('.notify-user-container') || proceedBtn.closest('div[class*="rounded-lg"]') || proceedBtn.parentElement?.parentElement;
     if (!container) return null;
 
-    const allButtons = Array.from(container.querySelectorAll('button'))
-        .filter(btn => btn.offsetParent !== null);
+    // openBtn was already extracted in the loop above
 
-    const openBtn = allButtons.find(btn => {
-        const t = normalize(btn.textContent || '');
-        return OPEN_PATTERNS.some(p => t === p || t.includes(p));
-    }) || null;
-
-    const proceedBtn = allButtons.find(btn => {
-        const t = normalize(btn.textContent || '');
-        return PROCEED_PATTERNS.some(p => t === p || t.includes(p));
-    }) || null;
-
-    // Both buttons must exist for this to be a planning UI
-    if (!openBtn || !proceedBtn) return null;
-
-    const openText = (openBtn.textContent || '').trim();
+    const hasOpenButton = openBtn !== null;
+    const openText = openBtn ? (openBtn.textContent || '').trim() : 'Open';
     const proceedText = (proceedBtn.textContent || '').trim();
+    const rejectText = rejectBtn ? (rejectBtn.textContent || '').trim() : '';
 
     // Extract plan title from .inline-flex.break-all
     const titleEl = container.querySelector('span.inline-flex.break-all, .inline-flex.break-all');
@@ -91,7 +121,7 @@ const DETECT_PLANNING_SCRIPT = `(() => {
         description = parts.join(' ').slice(0, 500);
     }
 
-    return { openText, proceedText, planTitle, planSummary, description };
+    return { openText, proceedText, planTitle, planSummary, description, rejectText, hasOpenButton };
 })()`;
 
 /**
@@ -185,8 +215,12 @@ export class PlanningDetector {
     private lastDetectedInfo: PlanningInfo | null = null;
     /** Timestamp of last notification (for cooldown-based dedup) */
     private lastNotifiedAt: number = 0;
+    /** Number of consecutive polls without detecting buttons */
+    private emptyPollCount: number = 0;
     /** Cooldown period in ms to suppress duplicate notifications */
     private static readonly COOLDOWN_MS = 5000;
+    /** Number of consecutive empty polls required before resetting state */
+    private static readonly REQUIRED_EMPTY_POLLS = 3;
 
     constructor(options: PlanningDetectorOptions) {
         this.cdpService = options.cdpService;
@@ -202,6 +236,7 @@ export class PlanningDetector {
         this.lastDetectedKey = null;
         this.lastDetectedInfo = null;
         this.lastNotifiedAt = 0;
+        this.emptyPollCount = 0;
         this.schedulePoll();
     }
 
@@ -241,6 +276,16 @@ export class PlanningDetector {
      */
     async clickProceedButton(buttonText?: string): Promise<boolean> {
         const text = buttonText ?? this.lastDetectedInfo?.proceedText ?? 'Proceed';
+        return this.clickButton(text);
+    }
+
+    /**
+     * Click the Reject button via CDP.
+     * @param buttonText Text of the button to click (default: detected rejectText or "Reject All")
+     * @returns true if click succeeded
+     */
+    async clickRejectButton(buttonText?: string): Promise<boolean> {
+        const text = buttonText || this.lastDetectedInfo?.rejectText || 'Reject All';
         return this.clickButton(text);
     }
 
@@ -291,8 +336,9 @@ export class PlanningDetector {
             const info: PlanningInfo | null = result?.result?.value ?? null;
 
             if (info) {
-                // Duplicate prevention: use button text pair as key (stable across DOM redraws)
-                const key = `${info.openText}::${info.proceedText}`;
+                this.emptyPollCount = 0;
+                // Duplicate prevention: use plan title and content as key (stable across DOM redraws and button text updates)
+                const key = `${info.planTitle}::${info.planSummary}::${(info.description || '').substring(0, 50)}`;
                 const now = Date.now();
                 const withinCooldown = (now - this.lastNotifiedAt) < PlanningDetector.COOLDOWN_MS;
                 if (key !== this.lastDetectedKey && !withinCooldown) {
@@ -305,12 +351,15 @@ export class PlanningDetector {
                     this.lastDetectedInfo = info;
                 }
             } else {
-                // Reset when buttons disappear (prepare for next planning detection)
-                const wasDetected = this.lastDetectedKey !== null;
-                this.lastDetectedKey = null;
-                this.lastDetectedInfo = null;
-                if (wasDetected && this.onResolved) {
-                    this.onResolved();
+                this.emptyPollCount++;
+                if (this.emptyPollCount >= PlanningDetector.REQUIRED_EMPTY_POLLS) {
+                    // Reset when buttons disappear for consecutive polls
+                    const wasDetected = this.lastDetectedKey !== null;
+                    this.lastDetectedKey = null;
+                    this.lastDetectedInfo = null;
+                    if (wasDetected && this.onResolved) {
+                        this.onResolved();
+                    }
                 }
             }
         } catch (error) {

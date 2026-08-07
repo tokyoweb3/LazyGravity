@@ -51,6 +51,14 @@ export function htmlToDiscordMarkdown(html: string): string {
     // Extract language from class="language-xxx" if present.
     // Do NOT decode entities here — let the final decodeEntities() handle them
     // after stripTags() has run, to avoid decoded < > being stripped as tags.
+    
+    // First, Antigravity 2.0 wrapped code blocks
+    result = result.replace(
+        /<div[^>]*class="[^"]*code-block[^"]*"[^>]*>(?:(?!<div[^>]*class="[^"]*code-block[^"]*"[^>]*>)[\s\S])*?<div[^>]*class="[^"]*code-header[^"]*"[^>]*>([\s\S]*?)<\/div>(?:(?!<div[^>]*class="[^"]*code-block[^"]*"[^>]*>)[\s\S])*?<pre[^>]*>\s*<code[^>]*>([\s\S]*?)<\/code>\s*<\/pre>(?:(?!<div[^>]*class="[^"]*code-block[^"]*"[^>]*>)[\s\S])*?<\/div>/gi,
+        (_m, lang, content) => `\n\`\`\`${stripTags(lang).trim()}\n${content}\n\`\`\`\n`
+    );
+
+    // Standard <pre><code> blocks
     result = result.replace(
         /<pre[^>]*>\s*<code(?:\s+class="language-([^"]*)")?[^>]*>([\s\S]*?)<\/code>\s*<\/pre>/gi,
         (_m, lang, content) => `\n\`\`\`${lang || ''}\n${content}\n\`\`\`\n`,
@@ -74,9 +82,9 @@ export function htmlToDiscordMarkdown(html: string): string {
         '*$1*',
     );
 
-    // Handle <span class="context-scope-mention"> → `text`
+    // Handle <span class="context-scope-mention"> or <span class="file-chip"> → `text`
     result = result.replace(
-        /<span[^>]*class="[^"]*context-scope-mention[^"]*"[^>]*>([\s\S]*?)<\/span>/gi,
+        /<span[^>]*class="[^"]*(?:context-scope-mention|file-chip)[^"]*"[^>]*>([\s\S]*?)<\/span>/gi,
         (_m, text) => `\`${stripTags(text).trim()}\``,
     );
 

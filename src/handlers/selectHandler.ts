@@ -19,7 +19,7 @@ export interface SelectAction {
     execute: (
         interaction: PlatformSelectInteraction,
         values: readonly string[],
-    ) => Promise<void>;
+    ) => Promise<void | boolean>;
 }
 
 // ---------------------------------------------------------------------------

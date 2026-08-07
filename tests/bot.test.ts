@@ -11,6 +11,7 @@ jest.mock('discord.js', () => {
                 on: jest.fn(),
                 login: jest.fn().mockResolvedValue('test_token'),
                 guilds: { cache: new Map() },
+                user: { id: 'bot-id' },
             };
         }),
         GatewayIntentBits: {
@@ -22,6 +23,13 @@ jest.mock('discord.js', () => {
             ClientReady: 'ready',
             MessageCreate: 'messageCreate',
             InteractionCreate: 'interactionCreate',
+        },
+        MessageFlags: {
+            Ephemeral: 64,
+        },
+        ChannelType: {
+            GuildText: 0,
+            GuildAnnouncement: 5,
         },
         // Mock for slash commands
         SlashCommandBuilder: jest.fn().mockImplementation(() => {
@@ -48,6 +56,31 @@ jest.mock('discord.js', () => {
                     opt.setDescription = jest.fn().mockReturnValue(opt);
                     opt.setRequired = jest.fn().mockReturnValue(opt);
                     opt.addChoices = jest.fn().mockReturnValue(opt);
+                    optFn(opt);
+                    return sub;
+                });
+                sub.addChannelOption = jest.fn().mockImplementation((optFn: any) => {
+                    const opt: any = {};
+                    opt.setName = jest.fn().mockReturnValue(opt);
+                    opt.setDescription = jest.fn().mockReturnValue(opt);
+                    opt.setRequired = jest.fn().mockReturnValue(opt);
+                    opt.addChannelTypes = jest.fn().mockReturnValue(opt);
+                    optFn(opt);
+                    return sub;
+                });
+                sub.addIntegerOption = jest.fn().mockImplementation((optFn: any) => {
+                    const opt: any = {};
+                    opt.setName = jest.fn().mockReturnValue(opt);
+                    opt.setDescription = jest.fn().mockReturnValue(opt);
+                    opt.setRequired = jest.fn().mockReturnValue(opt);
+                    optFn(opt);
+                    return sub;
+                });
+                sub.addAttachmentOption = jest.fn().mockImplementation((optFn: any) => {
+                    const opt: any = {};
+                    opt.setName = jest.fn().mockReturnValue(opt);
+                    opt.setDescription = jest.fn().mockReturnValue(opt);
+                    opt.setRequired = jest.fn().mockReturnValue(opt);
                     optFn(opt);
                     return sub;
                 });
@@ -146,6 +179,26 @@ jest.mock('../src/services/screenshotService', () => ({
     })),
 }));
 
+jest.mock('../src/services/heartbeatService', () => {
+    return {
+        HeartbeatService: jest.fn().mockImplementation(() => {
+            return {
+                init: jest.fn(),
+                start: jest.fn(),
+                stop: jest.fn(),
+                disable: jest.fn(),
+                recordActivity: jest.fn(),
+                updateConfig: jest.fn().mockResolvedValue(true),
+                botStartTime: Date.now() - 5000,
+                lastActivityTimestamp: Date.now() - 1000,
+            };
+        }),
+        parseInterval: jest.fn().mockReturnValue(1800000),
+        formatDuration: jest.fn().mockReturnValue('30m'),
+        formatRelativeTime: jest.fn().mockReturnValue('1m ago'),
+    };
+});
+
 describe('Bot Startup', () => {
     let clientInstance: any;
 
@@ -184,5 +237,228 @@ describe('Bot Startup', () => {
     it('forces response delivery mode to stream even when final-only is configured', () => {
         process.env.LAZYGRAVITY_RESPONSE_DELIVERY = 'final-only';
         expect(getResponseDeliveryModeForTest()).toBe('stream');
+    });
+
+    describe('heartbeat command interaction', () => {
+        let interactionCallback: (interaction: any) => Promise<void>;
+        let mockTargetChannel: any;
+        let mockPermissions: any;
+
+        const { HeartbeatService } = require('../src/services/heartbeatService');
+
+        beforeEach(() => {
+            interactionCallback = clientInstance.on.mock.calls.find((call: any) => call[0] === Events.InteractionCreate)[1];
+            mockPermissions = {
+                has: jest.fn().mockReturnValue(true),
+            };
+            mockTargetChannel = {
+                id: 'heartbeat-channel-id',
+                isTextBased: () => true,
+                permissionsFor: jest.fn().mockReturnValue(mockPermissions),
+            };
+        });
+
+        const makeMockInteraction = (overrides: {
+            subcommand: string;
+            interval?: string | null;
+            targetChannel?: any;
+            editReply?: jest.Mock;
+            user?: { id: string };
+        }) => {
+            const editReplySpy = overrides.editReply || jest.fn().mockResolvedValue(true);
+            const channel = overrides.hasOwnProperty('targetChannel') ? overrides.targetChannel : mockTargetChannel;
+            return {
+                isAutocomplete: () => false,
+                isButton: () => false,
+                isStringSelectMenu: () => false,
+                isChatInputCommand: () => true,
+                commandName: 'heartbeat',
+                options: {
+                    getSubcommand: () => overrides.subcommand,
+                    getString: (name: string) => name === 'interval' ? (overrides.hasOwnProperty('interval') ? overrides.interval : '30m') : null,
+                    getChannel: (name: string) => name === 'channel' ? channel : null,
+                },
+                client: clientInstance,
+                channel,
+                channelId: 'heartbeat-channel-id',
+                user: overrides.user || { id: '123' }, // allowed user in mocked config
+                deferReply: jest.fn().mockResolvedValue(true),
+                editReply: editReplySpy,
+            } as any;
+        };
+
+        it('handles heartbeat on command successfully', async () => {
+            const editReplySpy = jest.fn().mockResolvedValue(true);
+            const mockInteraction = makeMockInteraction({
+                subcommand: 'on',
+                interval: '30m',
+                editReply: editReplySpy,
+            });
+
+            await interactionCallback(mockInteraction);
+
+            expect(mockTargetChannel.permissionsFor).toHaveBeenCalledWith(clientInstance.user);
+            expect(editReplySpy).toHaveBeenCalledWith(expect.objectContaining({
+                content: expect.stringContaining('Heartbeat enabled'),
+            }));
+        });
+
+        it('fails heartbeat on if bot lacks send permissions', async () => {
+            mockPermissions.has.mockReturnValue(false);
+            const editReplySpy = jest.fn().mockResolvedValue(true);
+            const mockInteraction = makeMockInteraction({
+                subcommand: 'on',
+                interval: '30m',
+                editReply: editReplySpy,
+            });
+
+            await interactionCallback(mockInteraction);
+
+            expect(editReplySpy).toHaveBeenCalledWith(expect.objectContaining({
+                content: expect.stringContaining('Bot does not have permission'),
+            }));
+        });
+
+        it('fails heartbeat on if channel is not text-based', async () => {
+            const nonTextChannel = {
+                id: 'non-text-id',
+                isTextBased: () => false,
+            };
+            const editReplySpy = jest.fn().mockResolvedValue(true);
+            const mockInteraction = makeMockInteraction({
+                subcommand: 'on',
+                targetChannel: nonTextChannel,
+                editReply: editReplySpy,
+            });
+
+            await interactionCallback(mockInteraction);
+
+            expect(editReplySpy).toHaveBeenCalledWith(expect.objectContaining({
+                content: expect.stringContaining('Please select a valid text channel'),
+            }));
+        });
+
+        it('fails heartbeat on if interval format is invalid', async () => {
+            const { parseInterval } = require('../src/services/heartbeatService');
+            parseInterval.mockReturnValueOnce(null);
+
+            const editReplySpy = jest.fn().mockResolvedValue(true);
+            const mockInteraction = makeMockInteraction({
+                subcommand: 'on',
+                interval: 'invalid-val',
+                editReply: editReplySpy,
+            });
+
+            await interactionCallback(mockInteraction);
+
+            expect(editReplySpy).toHaveBeenCalledWith(expect.objectContaining({
+                content: expect.stringContaining('Invalid interval format'),
+            }));
+        });
+
+        it('fails heartbeat on if interval is below 10 seconds', async () => {
+            const { parseInterval } = require('../src/services/heartbeatService');
+            parseInterval.mockReturnValueOnce(5000);
+
+            const editReplySpy = jest.fn().mockResolvedValue(true);
+            const mockInteraction = makeMockInteraction({
+                subcommand: 'on',
+                interval: '5s',
+                editReply: editReplySpy,
+            });
+
+            await interactionCallback(mockInteraction);
+
+            expect(editReplySpy).toHaveBeenCalledWith(expect.objectContaining({
+                content: expect.stringContaining('Interval must be at least 10 seconds'),
+            }));
+        });
+
+        it('handles heartbeat off command successfully', async () => {
+            const editReplySpy = jest.fn().mockResolvedValue(true);
+            const mockInteraction = makeMockInteraction({
+                subcommand: 'off',
+                editReply: editReplySpy,
+            });
+
+            await interactionCallback(mockInteraction);
+
+            const mockServiceInstance = (HeartbeatService as jest.Mock).mock.results[0].value;
+            expect(mockServiceInstance.disable).toHaveBeenCalled();
+            expect(editReplySpy).toHaveBeenCalledWith(expect.objectContaining({
+                content: expect.stringContaining('Heartbeat disabled'),
+            }));
+        });
+
+        it('handles heartbeat status command and returns status embed', async () => {
+            const editReplySpy = jest.fn().mockResolvedValue(true);
+            const mockInteraction = makeMockInteraction({
+                subcommand: 'status',
+                editReply: editReplySpy,
+            });
+
+            await interactionCallback(mockInteraction);
+
+            expect(editReplySpy).toHaveBeenCalledWith(expect.objectContaining({
+                embeds: expect.any(Array),
+            }));
+        });
+
+        it('fails heartbeat on if interval is above 24.8 days', async () => {
+            const { parseInterval } = require('../src/services/heartbeatService');
+            parseInterval.mockReturnValueOnce(3000000000);
+
+            const editReplySpy = jest.fn().mockResolvedValue(true);
+            const mockInteraction = makeMockInteraction({
+                subcommand: 'on',
+                interval: '30d',
+                editReply: editReplySpy,
+            });
+
+            await interactionCallback(mockInteraction);
+
+            expect(editReplySpy).toHaveBeenCalledWith(expect.objectContaining({
+                content: expect.stringContaining('Interval cannot be greater than 24.8 days'),
+            }));
+        });
+
+        it('warns user of environment variables override if present', async () => {
+            const originalEnv = process.env.HEARTBEAT_ENABLED;
+            process.env.HEARTBEAT_ENABLED = 'false';
+
+            try {
+                const editReplySpy = jest.fn().mockResolvedValue(true);
+                const mockInteraction = makeMockInteraction({
+                    subcommand: 'on',
+                    interval: '30m',
+                    editReply: editReplySpy,
+                });
+
+                await interactionCallback(mockInteraction);
+
+                expect(editReplySpy).toHaveBeenCalledWith(expect.objectContaining({
+                    content: expect.stringContaining('Environment override(s) active: HEARTBEAT_ENABLED'),
+                }));
+            } finally {
+                if (originalEnv === undefined) {
+                    delete process.env.HEARTBEAT_ENABLED;
+                } else {
+                    process.env.HEARTBEAT_ENABLED = originalEnv;
+                }
+            }
+        });
+
+        it('excludes heartbeat commands from recording activity', async () => {
+            const mockServiceInstance = (HeartbeatService as jest.Mock).mock.results[0].value;
+            mockServiceInstance.recordActivity.mockClear();
+
+            const mockInteraction = makeMockInteraction({
+                subcommand: 'status',
+            });
+
+            await interactionCallback(mockInteraction);
+
+            expect(mockServiceInstance.recordActivity).not.toHaveBeenCalled();
+        });
     });
 });

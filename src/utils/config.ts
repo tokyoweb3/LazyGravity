@@ -27,6 +27,10 @@ export interface AppConfig {
     platforms: PlatformType[];
     /** Response monitor inactivity timeout in ms. 0 = disabled. Default: 900000 (15 min). */
     responseTimeoutMs: number;
+    heartbeatEnabled: boolean;
+    heartbeatIntervalMs: number;
+    heartbeatChannelId?: string;
+    heartbeatLastMessageId?: string;
 }
 
 export type ResponseDeliveryMode = 'stream';

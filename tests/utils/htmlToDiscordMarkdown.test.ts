@@ -52,6 +52,12 @@ describe('htmlToDiscordMarkdown', () => {
             const html = '<pre><code>if (a &lt; b &amp;&amp; c &gt; d) {}</code></pre>';
             expect(htmlToDiscordMarkdown(html)).toContain('if (a < b && c > d) {}');
         });
+
+        it('handles Antigravity 2.0 wrapped code blocks', () => {
+            const html = '<div class="code-block"><div class="code-header">typescript</div><pre><code>const x = 1;</code></pre></div>';
+            const expected = '```typescript\nconst x = 1;\n```';
+            expect(htmlToDiscordMarkdown(html)).toBe(expected);
+        });
     });
 
     describe('lists', () => {
@@ -68,6 +74,12 @@ describe('htmlToDiscordMarkdown', () => {
             const result = htmlToDiscordMarkdown(html);
             expect(result).toContain('- Alpha');
             expect(result).toContain('- Beta');
+        });
+
+        it('handles nested lists', () => {
+            const html = '<ul><li>Parent<ul><li>Child</li></ul></li></ul>';
+            const result = htmlToDiscordMarkdown(html);
+            expect(result).toContain('- Parent\n  - Child');
         });
     });
 
@@ -105,6 +117,11 @@ describe('htmlToDiscordMarkdown', () => {
         it('removes style tags completely', () => {
             const html = '<style>.foo { color: red; }</style><p>visible</p>';
             expect(htmlToDiscordMarkdown(html)).toBe('visible');
+        });
+
+        it('converts Antigravity 2.0 file chips to inline code', () => {
+            const html = '<span class="file-chip">src/utils/htmlToDiscordMarkdown.ts</span>';
+            expect(htmlToDiscordMarkdown(html)).toBe('`src/utils/htmlToDiscordMarkdown.ts`');
         });
     });
 

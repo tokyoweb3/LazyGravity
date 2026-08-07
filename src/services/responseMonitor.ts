@@ -4,6 +4,7 @@ import { CdpService } from './cdpService';
 import {
     extractAssistantSegmentsPayloadScript,
     classifyAssistantSegments,
+    type ClassifyResult,
 } from './assistantDomExtractor';
 
 /** Lean DOM selectors for response extraction */
@@ -145,6 +146,13 @@ export const RESPONSE_SELECTORS = {
                 if (labels.some(isStopLabel)) {
                     return { isGenerating: true };
                 }
+            }
+        }
+
+        if (panel) {
+            const panelText = (panel.textContent || '').trim();
+            if (/Working\.\s*$/i.test(panelText)) {
+                return { isGenerating: true };
             }
         }
 
@@ -486,7 +494,11 @@ export interface ResponseMonitorOptions {
     /** Text update callback */
     onProgress?: (text: string) => void;
     /** Generation complete callback */
-    onComplete?: (finalText: string) => void;
+    onComplete?: (finalText: string, citedFiles?: string[], fileChanges?: string[]) => void;
+    /** Structured update callback */
+    onStructuredProgress?: (result: ClassifyResult) => void;
+    /** Structured generation complete callback */
+    onStructuredComplete?: (result: ClassifyResult) => void;
     /** Timeout callback */
     onTimeout?: (lastText: string) => void;
     /** Phase change callback */
@@ -684,7 +696,9 @@ export class ResponseMonitor {
     private readonly stopGoneConfirmCount: number;
     private readonly extractionMode: ExtractionMode;
     private readonly onProgress?: (text: string) => void;
-    private readonly onComplete?: (finalText: string) => void;
+    private readonly onComplete?: (finalText: string, citedFiles?: string[], fileChanges?: string[]) => void;
+    private readonly onStructuredProgress?: (result: ClassifyResult) => void;
+    private readonly onStructuredComplete?: (result: ClassifyResult) => void;
     private readonly onTimeout?: (lastText: string) => void;
     private readonly onPhaseChange?: (phase: ResponsePhase, text: string | null) => void;
     private readonly onProcessLog?: (text: string) => void;
@@ -694,12 +708,15 @@ export class ResponseMonitor {
     private pollTimer: ReturnType<typeof setTimeout> | null = null;
     private isRunning: boolean = false;
     private lastText: string | null = null;
+    private lastClassified: ClassifyResult | null = null;
     private baselineText: string | null = null;
     private generationStarted: boolean = false;
     private currentPhase: ResponsePhase = 'waiting';
     private stopGoneCount: number = 0;
     private quotaDetected: boolean = false;
     private seenProcessLogKeys: Set<string> = new Set();
+    private currentCitedFiles: string[] = [];
+    private currentFileChanges: string[] = [];
     private structuredDiagLogged: boolean = false;
     private lastContentContextId: number | null = null;
 
@@ -711,6 +728,7 @@ export class ResponseMonitor {
 
     // Activity-based timeout (#49)
     private lastActivityTime: number = 0;
+    private startTime: number = 0;
 
     constructor(options: ResponseMonitorOptions) {
         this.cdpService = options.cdpService;
@@ -720,11 +738,17 @@ export class ResponseMonitor {
         this.extractionMode = options.extractionMode ?? 'structured';
         this.onProgress = options.onProgress;
         this.onComplete = options.onComplete;
+        this.onStructuredProgress = options.onStructuredProgress;
+        this.onStructuredComplete = options.onStructuredComplete;
         this.onTimeout = options.onTimeout;
         this.onPhaseChange = options.onPhaseChange;
         this.onProcessLog = options.onProcessLog;
         this.initialBaselineText = options.initialBaselineText;
         this.initialSeenProcessLogKeys = options.initialSeenProcessLogKeys;
+    }
+
+    public getLastClassified(): ClassifyResult | null {
+        return this.lastClassified;
     }
 
     /** Start monitoring */
@@ -823,6 +847,7 @@ export class ResponseMonitor {
 
         // Activity-based timeout: track last activity time instead of fixed timer (#49)
         this.lastActivityTime = Date.now();
+        this.startTime = Date.now();
 
         // Register CDP connection event listeners (#48)
         this.registerCdpConnectionListeners();
@@ -1138,6 +1163,7 @@ export class ResponseMonitor {
                     if (classified.diagnostics.source === 'dom-structured') {
                         currentText = classified.finalOutputText.trim() || null;
                         structuredHandledLogs = true;
+                        this.lastClassified = classified;
 
                         if (!this.structuredDiagLogged) {
                             this.structuredDiagLogged = true;
@@ -1148,6 +1174,9 @@ export class ResponseMonitor {
                         if (classified.activityLines.length > 0) {
                             this.emitNewProcessLogs(classified.activityLines);
                         }
+                        
+                        this.currentCitedFiles = classified.citedFiles || [];
+                        this.currentFileChanges = classified.fileChangesTexts || [];
                     } else if (!this.structuredDiagLogged) {
                         this.structuredDiagLogged = true;
                         logger.warn(
@@ -1209,6 +1238,7 @@ export class ResponseMonitor {
                     await this.stop();
                     try {
                         await Promise.resolve(this.onComplete?.(''));
+                        if (this.lastClassified) await Promise.resolve(this.onStructuredComplete?.(this.lastClassified));
                     } catch (error) {
                         logger.error('[ResponseMonitor] complete callback failed:', error);
                     }
@@ -1238,7 +1268,14 @@ export class ResponseMonitor {
                     }
                 }
 
-                this.onProgress?.(effectiveText);
+                this.onProgress?.(effectiveText || '');
+                if (this.lastClassified) this.onStructuredProgress?.(this.lastClassified);
+            } else if (this.lastClassified && this.extractionMode === 'structured') {
+                // If text didn't change but structured data did (e.g. new file changes), emit structured progress anyway
+                // To keep it simple, we just emit on structured mode if generation is active.
+                if (isGenerating && this.generationStarted) {
+                    this.onStructuredProgress?.(this.lastClassified);
+                }
             }
 
             // Completion: stop button gone N consecutive times
@@ -1249,7 +1286,8 @@ export class ResponseMonitor {
                     this.setPhase('complete', finalText);
                     await this.stop();
                     try {
-                        await Promise.resolve(this.onComplete?.(finalText));
+                        await Promise.resolve(this.onComplete?.(finalText, this.currentCitedFiles, this.currentFileChanges));
+                        if (this.lastClassified) await Promise.resolve(this.onStructuredComplete?.(this.lastClassified));
                     } catch (error) {
                         logger.error('[ResponseMonitor] complete callback failed:', error);
                     }
@@ -1261,7 +1299,15 @@ export class ResponseMonitor {
             // Guard: never timeout while the stop button is visible — it means
             // Antigravity is still actively generating (extended thinking, long
             // shell commands, large file operations, etc.).
-            if (this.maxDurationMs > 0 && !isGenerating && Date.now() - this.lastActivityTime >= this.maxDurationMs) {
+            // Hard timeout limit (20 minutes absolute hard timeout)
+            const hardTimeoutLimit = 1200000;
+            const totalElapsed = Date.now() - this.startTime;
+            const isHardTimeout = totalElapsed >= hardTimeoutLimit;
+
+            if (isHardTimeout || (this.maxDurationMs > 0 && !isGenerating && Date.now() - this.lastActivityTime >= this.maxDurationMs)) {
+                if (isHardTimeout) {
+                    logger.warn(`[ResponseMonitor] Hard timeout of 20 minutes reached.`);
+                }
                 const lastText = this.lastText ?? '';
                 this.setPhase('timeout', lastText);
                 await this.stop();

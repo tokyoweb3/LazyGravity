@@ -13,6 +13,8 @@ import {
 } from 'discord.js';
 import Database from 'better-sqlite3';
 import fs from 'fs';
+import { execFile } from 'child_process';
+import path from 'path';
 
 import { wrapDiscordChannel } from '../platform/discord/wrappers';
 import type { PlatformType } from '../platform/types';
@@ -32,6 +34,10 @@ import { WorkspaceBindingRepository } from '../database/workspaceBindingReposito
 import { ChannelPreferenceRepository } from '../database/channelPreferenceRepository';
 import { ChatSessionRepository } from '../database/chatSessionRepository';
 import { ArtifactThreadRepository } from '../database/artifactThreadRepository';
+import { ScheduleRepository, ScheduleRecord } from '../database/scheduleRepository';
+import { ScheduleService } from '../services/scheduleService';
+import cronParser from 'cron-parser';
+import { WorkspaceQueue } from './workspaceQueue';
 import { WorkspaceService } from '../services/workspaceService';
 import {
     WorkspaceCommandHandler,
@@ -55,7 +61,8 @@ import { CdpService } from '../services/cdpService';
 import { ChatSessionService } from '../services/chatSessionService';
 import { ResponseMonitor, RESPONSE_SELECTORS, captureResponseMonitorBaseline } from '../services/responseMonitor';
 import { ensureAntigravityRunning, startAntigravity, stopAntigravity } from '../services/antigravityLauncher';
-import { getAntigravityCdpHint } from '../utils/pathUtils';
+import { getAntigravityCdpHint, getAntigravityCliPath } from '../utils/pathUtils';
+import { fileOpenCache } from '../utils/fileOpenCache';
 import { AutoAcceptService } from '../services/autoAcceptService';
 import { PromptDispatcher } from '../services/promptDispatcher';
 import {
@@ -65,17 +72,21 @@ import {
     ensureErrorPopupDetector,
     ensurePlanningDetector,
     ensureRunCommandDetector,
+    ensureQuestionDetector,
     getCurrentCdp,
     initCdpBridge,
     parseApprovalCustomId,
     parseErrorPopupCustomId,
     parsePlanningCustomId,
+    buildFileChangeCustomId,
+    parseFileChangeCustomId,
     parseRunCommandCustomId,
     registerApprovalSessionChannel,
     registerApprovalWorkspaceChannel,
 } from '../services/cdpBridgeManager';
 import { buildModeModelLines, fitForSingleEmbedDescription, splitForEmbedDescription } from '../utils/streamMessageFormatter';
 import { formatForDiscord, splitOutputAndLogs } from '../utils/discordFormatter';
+import { renderDiscordResponse } from '../platform/discord/discordResponseRenderer';
 import { ProcessLogBuffer } from '../utils/processLogBuffer';
 import {
     buildPromptWithAttachmentUrls,
@@ -110,11 +121,15 @@ import { createPlatformButtonHandler } from '../handlers/buttonHandler';
 import { createPlatformSelectHandler } from '../handlers/selectHandler';
 import { createApprovalButtonAction } from '../handlers/approvalButtonAction';
 import { createPlanningButtonAction } from '../handlers/planningButtonAction';
+import { HeartbeatService, parseInterval, formatDuration, formatRelativeTime } from '../services/heartbeatService';
 import { createErrorPopupButtonAction } from '../handlers/errorPopupButtonAction';
 import { createRunCommandButtonAction } from '../handlers/runCommandButtonAction';
 import { createModelButtonAction } from '../handlers/modelButtonAction';
-import { createAutoAcceptButtonAction } from '../handlers/autoAcceptButtonAction';
+import { createQuestionSelectAction } from '../handlers/questionSelectAction';
 import { createTemplateButtonAction } from '../handlers/templateButtonAction';
+import { createFileChangeButtonAction } from '../handlers/fileChangeButtonAction';
+import { createAutoAcceptButtonAction } from '../handlers/autoAcceptButtonAction';
+import { createGenericActionButtonAction } from '../handlers/genericActionButtonAction';
 import { createModeSelectAction } from '../handlers/modeSelectAction';
 import { createAccountSelectAction } from '../handlers/accountSelectAction';
 import { selectTelegramStartupChatId } from './telegramStartupTarget';
@@ -187,8 +202,10 @@ export function createSerialTaskQueueForTest(queueName: string, traceId: string)
     };
 }
 
+// Shared fileOpenCache is imported from utils/fileOpenCache
+
 /**
- * Send a Discord message (prompt) to Antigravity, wait for the response, and relay it back to Discord
+ * Send a user's prompt to Antigravity and monitor generation.
  *
  * Message strategy:
  *   - Send new messages per phase instead of editing, to preserve history
@@ -210,17 +227,23 @@ async function sendPromptToAntigravity(
         userPrefRepo?: UserPreferenceRepository;
         artifactService?: ArtifactService;
         onFullCompletion?: () => void;
+        onMonitorCreated?: (monitor: { stop: () => Promise<void> }) => void;
         extractionMode?: ExtractionMode;
         responseTimeoutMs?: number;
+        resumeOnly?: boolean;
     }
 
 ): Promise<void> {
     // Completion signal — called exactly once when the entire prompt lifecycle ends
     let completionSignaled = false;
+    let onApprovalRef: ((info: any) => void) | null = null;
     const signalCompletion = (exitPath: string) => {
         if (completionSignaled) return;
         completionSignaled = true;
         logger.debug(`[sendPrompt:${message.channelId}] signalCompletion via ${exitPath}`);
+        if (onApprovalRef) {
+            cdp.off('approval_required', onApprovalRef);
+        }
         options?.onFullCompletion?.();
     };
 
@@ -464,6 +487,7 @@ async function sendPromptToAntigravity(
             source?: string;
             expectedVersion?: number;
             skipWhenFinalized?: boolean;
+            components?: any[]; // using any[] to avoid missing type imports like ActionRowBuilder
         },
     ): Promise<void> => enqueueResponse(async () => {
         if (opts?.skipWhenFinalized && isFinalized) return;
@@ -480,16 +504,21 @@ async function sendPromptToAntigravity(
             lastLiveResponseKey = renderKey;
 
             for (let i = 0; i < plainChunks.length; i++) {
+                const messageOpts: any = { content: plainChunks[i] };
+                if (i === plainChunks.length - 1 && opts?.components?.length) {
+                    messageOpts.components = opts.components;
+                }
+                
                 if (!liveResponseMessages[i]) {
-                    liveResponseMessages[i] = await channel.send({ content: plainChunks[i] }).catch((error: unknown) => {
+                    liveResponseMessages[i] = await channel.send(messageOpts).catch((error: unknown) => {
                         logDeliveryError('liveResponse/plain/send', error);
                         return null;
                     });
                     continue;
                 }
-                await liveResponseMessages[i].edit({ content: plainChunks[i] }).catch(async (error: unknown) => {
+                await liveResponseMessages[i].edit(messageOpts).catch(async (error: unknown) => {
                     logDeliveryError('liveResponse/plain/edit', error);
-                    liveResponseMessages[i] = await channel.send({ content: plainChunks[i] }).catch((sendError: unknown) => {
+                    liveResponseMessages[i] = await channel.send(messageOpts).catch((sendError: unknown) => {
                         logDeliveryError('liveResponse/plain/resend', sendError);
                         return null;
                     });
@@ -519,16 +548,24 @@ async function sendPromptToAntigravity(
                 .setTimestamp();
 
             if (!liveResponseMessages[i]) {
-                liveResponseMessages[i] = await channel.send({ embeds: [embed] }).catch((error: unknown) => {
+                const messageOpts: any = { embeds: [embed] };
+                if (i === descriptions.length - 1 && opts?.components?.length) {
+                    messageOpts.components = opts.components;
+                }
+                liveResponseMessages[i] = await channel.send(messageOpts).catch((error: unknown) => {
                     logDeliveryError('liveResponse/embed/send', error);
                     return null;
                 });
                 continue;
             }
 
-            await liveResponseMessages[i].edit({ embeds: [embed] }).catch(async (error: unknown) => {
+            const messageOpts: any = { embeds: [embed] };
+            if (i === descriptions.length - 1 && opts?.components?.length) {
+                messageOpts.components = opts.components;
+            }
+            await liveResponseMessages[i].edit(messageOpts).catch(async (error: unknown) => {
                 logDeliveryError('liveResponse/embed/edit', error);
-                liveResponseMessages[i] = await channel.send({ embeds: [embed] }).catch((sendError: unknown) => {
+                liveResponseMessages[i] = await channel.send(messageOpts).catch((sendError: unknown) => {
                     logDeliveryError('liveResponse/embed/resend', sendError);
                     return null;
                 });
@@ -635,23 +672,25 @@ async function sendPromptToAntigravity(
 
         logger.prompt(prompt);
 
-        let injectResult;
-        if (inboundImages.length > 0) {
-            injectResult = await cdp.injectMessageWithImageFiles(
-                prompt,
-                inboundImages.map((image) => image.localPath),
-            );
-
-            if (!injectResult.ok) {
-                await sendEmbed(
-                    t('🖼️ Attached image fallback'),
-                    t('Failed to attach image directly, resending via URL reference.'),
-                    PHASE_COLORS.thinking,
+        let injectResult: any = { ok: true };
+        if (!options?.resumeOnly) {
+            if (inboundImages.length > 0) {
+                injectResult = await cdp.injectMessageWithImageFiles(
+                    prompt,
+                    inboundImages.map((image) => image.localPath),
                 );
-                injectResult = await cdp.injectMessage(buildPromptWithAttachmentUrls(prompt, inboundImages));
+
+                if (!injectResult.ok) {
+                    await sendEmbed(
+                        t('🖼️ Attached image fallback'),
+                        t('Failed to attach image directly, resending via URL reference.'),
+                        PHASE_COLORS.thinking,
+                    );
+                    injectResult = await cdp.injectMessage(buildPromptWithAttachmentUrls(prompt, inboundImages));
+                }
+            } else {
+                injectResult = await cdp.injectMessage(prompt);
             }
-        } else {
-            injectResult = await cdp.injectMessage(prompt);
         }
 
         if (!injectResult.ok) {
@@ -668,6 +707,8 @@ async function sendPromptToAntigravity(
         }
 
         const startTime = Date.now();
+        let earlyConvIdResolved = false;
+        let earlyConvIdInFlight = false;
         await upsertLiveActivityEmbeds(
             `${PHASE_ICONS.thinking} Process Log`,
             '',
@@ -708,6 +749,30 @@ async function sendPromptToAntigravity(
                         skipWhenFinalized: true,
                     },
                 ).catch(() => { });
+                // Try to resolve conversation_id early if not already bound
+                const { artifactService, chatSessionRepo, chatSessionService } = options || {};
+                if (!earlyConvIdResolved && !earlyConvIdInFlight && artifactService && chatSessionRepo && chatSessionService) {
+                    earlyConvIdInFlight = true;
+                    chatSessionService.getCurrentSessionInfo(cdp)
+                        .then((sessionInfo) => {
+                            if (sessionInfo && sessionInfo.title && sessionInfo.title !== t('(Untitled)')) {
+                                const session = chatSessionRepo.findByChannelId(message.channelId);
+                                const workspaceDirName = (session
+                                    ? bridge.pool.extractProjectName(session.workspacePath)
+                                    : cdp.getCurrentWorkspaceName()) ?? undefined;
+                                const convId = artifactService.findConversationByTitle(sessionInfo.title, workspaceDirName);
+                                if (convId) {
+                                    chatSessionRepo.setConversationId(message.channelId, convId);
+                                    earlyConvIdResolved = true;
+                                    logger.debug(`[EarlyBinding] Saved conversation_id: "${convId}" for channel: ${message.channelId}`);
+                                }
+                            }
+                        })
+                        .catch(() => {})
+                        .finally(() => {
+                            earlyConvIdInFlight = false;
+                        });
+                }
             },
 
             onProgress: (text) => {
@@ -719,7 +784,7 @@ async function sendPromptToAntigravity(
                 }
             },
 
-            onComplete: async (finalText) => {
+            onComplete: async (finalText, citedFiles, fileChanges) => {
                 isFinalized = true;
 
                 try {
@@ -826,29 +891,16 @@ async function sendPromptToAntigravity(
 
                     liveResponseUpdateVersion += 1;
                     const responseVersion = liveResponseUpdateVersion;
-                    if (finalOutputText && finalOutputText.trim().length > 0) {
-                        await upsertLiveResponseEmbeds(
-                            `${PHASE_ICONS.complete} Final Output`,
-                            finalOutputText,
-                            PHASE_COLORS.complete,
-                            t(`⏱️ Time: ${elapsed}s | Complete`),
-                            {
-                                source: 'complete',
-                                expectedVersion: responseVersion,
-                            },
-                        );
-                    } else {
-                        await upsertLiveResponseEmbeds(
-                            `${PHASE_ICONS.complete} Complete`,
-                            t('Failed to extract response. Use `/screenshot` to verify.'),
-                            PHASE_COLORS.complete,
-                            t(`⏱️ Time: ${elapsed}s | Complete`),
-                            {
-                                source: 'complete',
-                                expectedVersion: responseVersion,
-                            },
-                        );
+                    
+                    const components: any[] = [];
+                    if (!citedFiles) citedFiles = [];
+
+                    // Only pause when newly created conversation folders and files need to flush to disk
+                    const existingConvId = options?.chatSessionRepo?.findByChannelId(message.channelId)?.conversationId;
+                    if (!existingConvId) {
+                        await new Promise((resolve) => setTimeout(resolve, 1000));
                     }
+                    let activeConversationId: string | undefined = undefined;
 
                     if (options && message.guild) {
                         try {
@@ -871,15 +923,253 @@ async function sendPromptToAntigravity(
 
                                 // Persist conversation_id for artifact picker resolution
                                 if (options.artifactService) {
-                                    const convId = options.artifactService.findConversationByTitle(sessionInfo.title);
+                                    const session = options.chatSessionRepo.findByChannelId(message.channelId);
+                                    let workspaceDirName: string | undefined;
+                                    if (session && session.workspacePath) {
+                                        workspaceDirName = bridge.pool.extractProjectName(session.workspacePath);
+                                    }
+                                    const convId = options.artifactService.findConversationByTitle(sessionInfo.title, workspaceDirName);
                                     if (convId) {
                                         options.chatSessionRepo.setConversationId(message.channelId, convId);
+                                        activeConversationId = convId;
                                     }
                                 }
                             }
                         } catch (e) {
                             logger.error('[Rename] Failed to get title from Antigravity and rename:', e);
                         }
+                    }
+
+                    const classifiedForFiles = monitor.getLastClassified();
+                    if (classifiedForFiles?.fileChanges && classifiedForFiles.fileChanges.length > 0) {
+                        for (const fc of classifiedForFiles.fileChanges) {
+                            if (!citedFiles.includes(fc.path)) {
+                                citedFiles.push(fc.path);
+                            }
+                        }
+                    }
+
+                    if (!activeConversationId && options?.chatSessionRepo) {
+                        activeConversationId = options.chatSessionRepo.findByChannelId(message.channelId)?.conversationId ?? undefined;
+                    }
+
+
+
+                    if (activeConversationId && options?.artifactService) {
+                        const artifacts = options.artifactService.listArtifacts(activeConversationId);
+                        const planArt = artifacts.find(art => 
+                            art.artifactType === 'ARTIFACT_TYPE_IMPLEMENTATION_PLAN' || 
+                            art.filename.toLowerCase() === 'implementation_plan.md'
+                        );
+                        let planTime = 0;
+                        if (planArt) {
+                            try {
+                                planTime = fs.statSync(planArt.absolutePath).mtimeMs;
+                            } catch { /* ignore */ }
+                        }
+
+                        for (const art of artifacts) {
+                            const nameWithExt = art.filename;
+                            const nameWithoutExt = art.filename.replace(/\.[^/.]+$/, "");
+                            const regex = new RegExp(`\\b${nameWithoutExt.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')}\\b`, 'i');
+                            
+                            const mentionsArtifact = finalOutputText.includes(nameWithExt) || finalOutputText.includes(`\`${nameWithoutExt}\``) || regex.test(finalOutputText);
+                            
+                            const isTask = art.artifactType === 'ARTIFACT_TYPE_TASK' || nameWithExt.toLowerCase() === 'task.md';
+                            const isWalkthrough = art.artifactType === 'ARTIFACT_TYPE_WALKTHROUGH' || nameWithExt.toLowerCase() === 'walkthrough.md';
+                            
+                            let isSpecialArtifact = false;
+                            if (isTask || isWalkthrough) {
+                                let artTime = 0;
+                                try {
+                                    artTime = fs.statSync(art.absolutePath).mtimeMs;
+                                } catch { /* ignore */ }
+                                if (artTime > planTime) {
+                                    isSpecialArtifact = true;
+                                }
+                            }
+
+                            if ((mentionsArtifact || isSpecialArtifact) && !citedFiles.includes(nameWithExt)) {
+                                citedFiles.push(nameWithExt);
+                            }
+                        }
+                    }
+
+                    if (citedFiles && citedFiles.length > 0) {
+                        // Strip trailing punctuation and deduplicate
+                        let uniqueFiles = Array.from(new Set(citedFiles.map(f => {
+                            let clean = f.trim();
+                            while (clean.match(/[.,;:!?]$/)) {
+                                clean = clean.slice(0, -1);
+                            }
+                            return clean;
+                        })));
+                        // Filter out obviously bad paths
+                        uniqueFiles = uniqueFiles.filter(f => f.length > 0 && f !== 'unknown');
+                        
+                        const row = new ActionRowBuilder();
+                        // Max 5 buttons per row in Discord
+                        for (let i = 0; i < Math.min(uniqueFiles.length, 5); i++) {
+                            let fileUrl = uniqueFiles[i];
+                            
+                            let isArtifactMatch = false;
+                            let artifactDisplayName = fileUrl;
+                            if (activeConversationId && options?.artifactService) {
+                                const artifacts = options.artifactService.listArtifacts(activeConversationId);
+                                const rawName = fileUrl.replace(/^file:\/\/\//, '');
+                                const matched = artifacts.find(a => 
+                                    a.filename.toLowerCase() === fileUrl.toLowerCase() || 
+                                    a.filename.toLowerCase() === rawName.toLowerCase()
+                                );
+                                if (matched) {
+                                    isArtifactMatch = true;
+                                    fileUrl = `file:///${matched.absolutePath.replace(/\\/g, '/')}`;
+                                    artifactDisplayName = matched.filename;
+                                }
+                            }
+
+                            const wsPath = cdp.getCurrentWorkspacePath();
+                            if (!wsPath) {
+                                continue;
+                            }
+
+                            if (!isArtifactMatch) {
+                                if (!fileUrl.startsWith('file:///') && !path.isAbsolute(fileUrl)) {
+                                    fileUrl = `file:///${path.resolve(wsPath, fileUrl).replace(/\\/g, '/')}`;
+                                }
+                                
+                                let fsPath = fileUrl.replace(/^file:\/\/\//, '');
+                                if (path.sep === '/' && !fsPath.startsWith('/')) {
+                                    fsPath = '/' + fsPath;
+                                } else if (process.platform === 'win32' && fsPath.startsWith('/')) {
+                                    fsPath = fsPath.substring(1);
+                                }
+
+                                const relative = path.relative(wsPath, fsPath);
+                                const isArtifact = fsPath.includes('.gemini') && fsPath.includes('antigravity') && fsPath.includes('brain');
+                                if (!isArtifact && (relative.startsWith('..') || path.isAbsolute(relative))) {
+                                    continue;
+                                }
+                                if (!fs.existsSync(fsPath)) {
+                                    continue;
+                                }
+                            }
+
+                            let displayName = fileUrl;
+                            if (isArtifactMatch) {
+                                displayName = artifactDisplayName;
+                            } else if (displayName.startsWith('file:///')) {
+                                const parts = displayName.split('/');
+                                displayName = parts[parts.length - 1];
+                            }
+                            
+                            const hashId = Math.random().toString(36).substring(2, 10);
+                            fileOpenCache.set(hashId, fileUrl);
+
+                            let customId = `file_open:cache:${hashId}`;
+                            if (isArtifactMatch && activeConversationId && displayName) {
+                                const artId = `file_open:art:${activeConversationId}:${displayName}`;
+                                if (artId.length < 100) {
+                                    customId = artId;
+                                }
+                            } else if (wsPath) {
+                                let fsPath = fileUrl.replace(/^file:\/\/\//, '');
+                                if (path.sep === '/' && !fsPath.startsWith('/')) {
+                                    fsPath = '/' + fsPath;
+                                } else if (process.platform === 'win32' && fsPath.startsWith('/')) {
+                                    fsPath = fsPath.substring(1);
+                                }
+                                const resolvedFsPath = path.resolve(fsPath);
+                                const relative = path.relative(wsPath, resolvedFsPath);
+                                if (!relative.startsWith('..') && !path.isAbsolute(relative)) {
+                                    const relSlash = relative.replace(/\\/g, '/');
+                                    const relId = `file_open:rel:${relSlash}`;
+                                    if (relId.length < 100) {
+                                        customId = relId;
+                                    }
+                                }
+                            }
+                            
+                            row.addComponents(
+                                new ButtonBuilder()
+                                    .setCustomId(customId)
+                                    .setLabel(isArtifactMatch ? `Review ${displayName.substring(0, 15)}` : `Open ${displayName.substring(0, 20)}`)
+                                    .setStyle(isArtifactMatch ? ButtonStyle.Success : ButtonStyle.Primary)
+                            );
+                        }
+                        if (row.components.length > 0) {
+                            components.push(row);
+                        }
+                    }
+
+                    if (fileChanges && fileChanges.length > 0) {
+                        // The extracted text is the toolbar title, e.g. "1 File With Changes"
+                        const widgetTitle = fileChanges[fileChanges.length - 1] || 'Files With Changes';
+                        const fileChangesRow = new ActionRowBuilder().addComponents(
+                            new ButtonBuilder()
+                                .setCustomId(buildFileChangeCustomId('reject', cdp.getCurrentWorkspaceName() || 'unknown', message.channelId))
+                                .setLabel(`Reject all (${widgetTitle})`)
+                                .setStyle(ButtonStyle.Danger),
+                            new ButtonBuilder()
+                                .setCustomId(buildFileChangeCustomId('accept', cdp.getCurrentWorkspaceName() || 'unknown', message.channelId))
+                                .setLabel('Accept all')
+                                .setStyle(ButtonStyle.Success)
+                        );
+                        components.push(fileChangesRow);
+                    }
+
+                    const classified = monitor.getLastClassified();
+                    if (options?.extractionMode === 'structured' && classified && outputFormat !== 'plain') {
+                        const messageOptions = renderDiscordResponse(classified, {
+                            projectName: cdp.getCurrentWorkspaceName() || 'unknown',
+                            channelId: message.channelId
+                        });
+                        for (const msg of liveResponseMessages) {
+                            if (msg) await msg.delete().catch(() => {});
+                        }
+                        liveResponseMessages.length = 0;
+                        
+                        if (components.length > 0) {
+                            if (!messageOptions.components) messageOptions.components = [];
+                            messageOptions.components = [...(messageOptions.components || []), ...components];
+                        }
+
+                        if (messageOptions.embeds && messageOptions.embeds.length > 0) {
+                            const lastEmbed = messageOptions.embeds[messageOptions.embeds.length - 1];
+                            if (lastEmbed && typeof (lastEmbed as any).setFooter === 'function') {
+                                (lastEmbed as any).setFooter({ text: t(`⏱️ Time: ${elapsed}s | Complete`) });
+                            }
+                        }
+                        
+                        if (channel) {
+                            await channel.send(messageOptions).catch((error: unknown) => {
+                                logDeliveryError('renderDiscordResponse/send', error);
+                            });
+                        }
+                    } else if (finalOutputText && finalOutputText.trim().length > 0) {
+                        await upsertLiveResponseEmbeds(
+                            `${PHASE_ICONS.complete} Final Output`,
+                            finalOutputText,
+                            PHASE_COLORS.complete,
+                            t(`⏱️ Time: ${elapsed}s | Complete`),
+                            {
+                                source: 'complete',
+                                expectedVersion: responseVersion,
+                                components: components.length > 0 ? components : undefined,
+                            },
+                        );
+                    } else {
+                        await upsertLiveResponseEmbeds(
+                            `${PHASE_ICONS.complete} Complete`,
+                            t('Failed to extract response. Use `/screenshot` to verify.'),
+                            PHASE_COLORS.complete,
+                            t(`⏱️ Time: ${elapsed}s | Complete`),
+                            {
+                                source: 'complete',
+                                expectedVersion: responseVersion,
+                                components: components.length > 0 ? components : undefined,
+                            },
+                        );
                     }
 
                     await sendGeneratedImages(finalOutputText || '');
@@ -942,6 +1232,39 @@ async function sendPromptToAntigravity(
                 }
             },
         });
+
+        onApprovalRef = async () => {
+            if (isFinalized) return;
+            const textToUse = lastProgressText || monitor.getLastText() || '';
+            const separated = splitOutputAndLogs(textToUse);
+            const outputText = separated.output || textToUse;
+            if (outputText && outputText.trim().length > 0) {
+                liveResponseUpdateVersion += 1;
+                const responseVersion = liveResponseUpdateVersion;
+                const elapsed = Math.round((Date.now() - startTime) / 1000);
+                await upsertLiveResponseEmbeds(
+                    t('Response'),
+                    outputText,
+                    PHASE_COLORS.thinking,
+                    t(`⏱️ Time: ${elapsed}s | Awaiting Approval`),
+                    {
+                        source: 'approval-pause',
+                        expectedVersion: responseVersion,
+                        skipWhenFinalized: true,
+                    }
+                ).catch(() => {});
+            }
+        };
+        cdp.on('approval_required', onApprovalRef);
+
+        if (options?.onMonitorCreated) {
+            options.onMonitorCreated({
+                stop: async () => {
+                    isFinalized = true;
+                    await monitor.stop();
+                }
+            });
+        }
 
         await monitor.start();
 
@@ -1010,9 +1333,13 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
     const workspaceBindingRepo = new WorkspaceBindingRepository(db);
     const chatSessionRepo = new ChatSessionRepository(db);
     const artifactThreadRepo = new ArtifactThreadRepository(db);
+    const scheduleRepo = new ScheduleRepository(db);
+    const scheduleService = new ScheduleService(scheduleRepo);
+    const workspaceQueue = new WorkspaceQueue();
     const artifactService = new ArtifactService();
     const workspaceService = new WorkspaceService(config.workspaceBaseDir);
     const channelManager = new ChannelManager();
+    const heartbeatService = new HeartbeatService();
 
     // Auto-launch Antigravity with CDP port if not already running
     await ensureAntigravityRunning();
@@ -1027,6 +1354,8 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             .map((account) => [account.name, account.userDataDir!.trim()]),
     );
     const bridge = initCdpBridge(config.autoApproveFileEdits, accountPorts, accountUserDataDirs);
+    bridge.chatSessionRepo = chatSessionRepo;
+    bridge.artifactService = artifactService;
 
     // Initialize CDP-dependent services (constructor CDP dependency removed)
     const chatSessionService = new ChatSessionService();
@@ -1088,7 +1417,18 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                 accountPrefRepo,
                 accounts: config.antigravityAccounts,
             });
-            await startAntigravity(accountPorts[accountName] ?? 9222);
+            const status = await startAntigravity(accountPorts[accountName] ?? 9222);
+            if (status === 'started') {
+                const cdp = new CdpService({ portsToScan: [accountPorts[accountName] ?? 9222] });
+                try {
+                    await cdp.connect();
+                    await cdp.openChatPanel();
+                } catch (e) {
+                    // ignore
+                } finally {
+                    await cdp.disconnect().catch(() => {});
+                }
+            }
         },
     );
     const chatHandler = new ChatCommandHandler(
@@ -1156,6 +1496,9 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
     client.once(Events.ClientReady, async (readyClient) => {
         logger.info(`Ready! Logged in as ${readyClient.user.tag} | extractionMode=${config.extractionMode}`);
 
+        heartbeatService.init(readyClient, bridge);
+        heartbeatService.start();
+
         try {
             await registerSlashCommands(discordToken, discordClientId, config.guildId);
         } catch (error) {
@@ -1210,6 +1553,83 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         } catch (error) {
             logger.warn('Failed to send startup dashboard embed:', error);
         }
+
+        // Restore scheduled tasks
+        const scheduleJobCallback = async (schedule: ScheduleRecord) => {
+            logger.info(`[Schedule] Trigger callback running for task ${schedule.id}. Workspace: ${schedule.workspacePath}, promptLength: ${schedule.prompt.length}`);
+            try {
+                let channelId = schedule.channelId;
+
+                const isWindows = process.platform === 'win32';
+                const bindings = workspaceBindingRepo.findAll().filter(b => {
+                    const absPath = workspaceService.getWorkspacePath(b.workspacePath);
+                    return isWindows
+                        ? absPath.toLowerCase() === schedule.workspacePath.toLowerCase()
+                        : absPath === schedule.workspacePath;
+                });
+
+                if (!channelId || !bindings.some(b => b.channelId === channelId)) {
+                    channelId = bindings[0]?.channelId;
+                }
+
+                if (!channelId) {
+                    logger.warn(`[Schedule] No channel bound to workspace ${schedule.workspacePath}. Skipping task ${schedule.id}.`);
+                    return;
+                }
+
+                const channel = await readyClient.channels.fetch(channelId).catch(() => null);
+                if (channel && channel.isTextBased() && 'send' in channel) {
+                    logger.info(`[Schedule] Sending trigger notification to channel ${channelId} for task ${schedule.id}`);
+                    const message = await channel.send({
+                        content: '⏰ **Scheduled Task Triggered**',
+                        allowedMentions: { parse: [] }
+                    });
+                    
+                    const projectLabel = bridge.pool.extractProjectName(schedule.workspacePath);
+                    workspaceQueue.incrementDepth(schedule.workspacePath);
+
+                    await workspaceQueue.enqueue(schedule.workspacePath, async () => {
+                        try {
+                            logger.info(`[Schedule] Dispatching prompt to promptDispatcher for task ${schedule.id}`);
+                            const preferredAccount = bridge.pool.getPreferredAccountForWorkspace(schedule.workspacePath) 
+                                || (config.antigravityAccounts?.[0]?.name ?? 'default');
+                            
+                            const cdp = await bridge.pool.getOrConnect(schedule.workspacePath, { name: preferredAccount });
+                            
+                            await promptDispatcher.send({
+                                message: message as any,
+                                prompt: schedule.prompt,
+                                cdp,
+                                inboundImages: [],
+                                options: {
+                                    chatSessionService,
+                                    chatSessionRepo,
+                                    channelManager,
+                                    titleGenerator,
+                                    userPrefRepo,
+                                    artifactService,
+                                    extractionMode: config.extractionMode,
+                                },
+                            });
+                        } finally {
+                            const remainingDepth = workspaceQueue.decrementDepth(schedule.workspacePath);
+                            if (remainingDepth > 0) {
+                                logger.info(
+                                    `[Queue:${projectLabel}] Task done, ${remainingDepth} remaining`,
+                                );
+                            }
+                        }
+                    });
+                } else {
+                    logger.warn(`[Schedule] Channel ${channelId} not found or not text-based for task ${schedule.id}.`);
+                }
+            } catch (error) {
+                logger.error(`[Schedule] Failed to execute task ${schedule.id}:`, error);
+            }
+        };
+
+        const restoredCount = scheduleService.restoreAll(scheduleJobCallback);
+        logger.info(`[Schedule] Restored ${restoredCount} scheduled tasks.`);
     });
 
     // [Discord Interactions API] Slash command interaction handler
@@ -1223,6 +1643,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         wsHandler,
         chatHandler,
         client,
+        promptDispatcher,
         sendModeUI,
         sendModelsUI,
         sendAutoAcceptUI,
@@ -1230,6 +1651,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         parseApprovalCustomId,
         parseErrorPopupCustomId,
         parsePlanningCustomId,
+        parseFileChangeCustomId,
         parseRunCommandCustomId,
         joinHandler,
         userPrefRepo,
@@ -1239,7 +1661,11 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         chatSessionService,
         artifactThreadRepo,
         artifactService,
+        channelManager,
+        titleGenerator,
         antigravityAccounts: config.antigravityAccounts,
+        heartbeatService,
+        scheduleService,
         handleSlashInteraction: async (
             interaction,
             handler,
@@ -1254,6 +1680,8 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             accountPrefRepoArg,
             channelPrefRepoArg,
             antigravityAccountsArg,
+            chatSessionRepoArg,
+            scheduleServiceArg,
         ) => handleSlashInteraction(
             interaction,
             handler,
@@ -1273,8 +1701,10 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             accountPrefRepoArg,
             channelPrefRepoArg,
             antigravityAccountsArg,
-            chatSessionRepo,
+            chatSessionRepoArg,
             artifactService,
+            scheduleServiceArg,
+            heartbeatService,
         ),
         handleTemplateUse: async (interaction, templateId) => {
             const template = templateRepo.findById(templateId);
@@ -1322,6 +1752,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                     ensureErrorPopupDetector(bridge, cdp, projectName, selectedAccount);
                     ensurePlanningDetector(bridge, cdp, projectName, selectedAccount);
                     ensureRunCommandDetector(bridge, cdp, projectName, selectedAccount);
+                    ensureQuestionDetector(bridge, cdp, projectName, selectedAccount);
                 } catch (e: any) {
                     await interaction.followUp({
                         content: `Failed to connect to workspace: ${e.message}`,
@@ -1416,6 +1847,8 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
         accountPrefRepo,
         channelPrefRepo,
         antigravityAccounts: config.antigravityAccounts,
+        heartbeatService,
+        workspaceQueue,
     }));
 
     await client.login(discordToken);
@@ -1488,10 +1921,12 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                         : binding.workspacePath;
                 },
             });
+            const questionSelectAction = createQuestionSelectAction({ bridge, wsHandler });
             const telegramSelectHandler = createPlatformSelectHandler({
                 actions: [
                     modeSelectAction,
                     accountSelectAction,
+                    questionSelectAction,
                 ],
             });
             // Composite handler that routes to the right handler
@@ -1510,7 +1945,11 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                     }, interaction);
                     return;
                 }
-                if (interaction.customId === 'mode_select' || interaction.customId === 'account_select') {
+                if (
+                    interaction.customId === 'mode_select' ||
+                    interaction.customId === 'account_select' ||
+                    interaction.customId.startsWith('question_select_action')
+                ) {
                     await telegramSelectHandler(interaction);
                     return;
                 }
@@ -1526,10 +1965,10 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
 
             const telegramButtonHandler = createPlatformButtonHandler({
                 actions: [
-                    createApprovalButtonAction({ bridge }),
-                    createPlanningButtonAction({ bridge }),
-                    createErrorPopupButtonAction({ bridge }),
-                    createRunCommandButtonAction({ bridge }),
+                    createApprovalButtonAction({ bridge, wsHandler }),
+                    createPlanningButtonAction({ bridge, wsHandler }),
+                    createErrorPopupButtonAction({ bridge, wsHandler }),
+                    createRunCommandButtonAction({ bridge, wsHandler }),
                     createModelButtonAction({
                         bridge,
                         fetchQuota: () => bridge.quota.fetchQuota(),
@@ -1574,6 +2013,8 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                     }),
                     createAutoAcceptButtonAction({ autoAcceptService: bridge.autoAccept }),
                     createTemplateButtonAction({ bridge, templateRepo }),
+                    createFileChangeButtonAction({ bridge, wsHandler }),
+                    createGenericActionButtonAction({ bridge, wsHandler }),
                 ],
             });
 
@@ -1704,6 +2145,18 @@ async function autoRenameChannel(
 }
 
 /**
+ * Utility to parse a cron expression and format the next run time.
+ */
+function formatNextRunTime(cronExpression: string): string {
+    try {
+        const interval = cronParser.parse(cronExpression);
+        return interval.next().toDate().toLocaleString();
+    } catch (err) {
+        return 'Invalid Cron';
+    }
+}
+
+/**
  * Handle Discord Interactions API slash commands
  */
 export async function handleSlashInteraction(
@@ -1727,6 +2180,8 @@ export async function handleSlashInteraction(
     antigravityAccounts: AntigravityAccountConfig[] = [{ name: 'default', cdpPort: 9222 }],
     chatSessionRepo?: ChatSessionRepository,
     artifactService?: ArtifactService,
+    scheduleService?: ScheduleService,
+    heartbeatService?: HeartbeatService,
 ): Promise<void> {
     const commandName = interaction.commandName;
     const getAccountPort = (accountName: string): number | null => {
@@ -1759,10 +2214,7 @@ export async function handleSlashInteraction(
                 const projectName = bridge.pool.extractProjectName(workspacePath);
                 return bridge.pool.getConnected(projectName, resolveSelectedAccount());
             }
-
-            return bridge.lastActiveWorkspace
-                ? bridge.pool.getConnected(bridge.lastActiveWorkspace, resolveSelectedAccount())
-                : null;
+            return null;
         })();
     const ensureChannelCdp = async (): Promise<CdpService | null> => {
         const existing = getChannelCdp();
@@ -2292,12 +2744,349 @@ export async function handleSlashInteraction(
             break;
         }
 
+        case 'open': {
+            const filepath = interaction.options.getString('filepath', true);
+            let resolvedPath: string | null = null;
+            
+            // 1. Try to resolve as an artifact
+            if (chatSessionRepo && artifactService) {
+                const session = chatSessionRepo.findByChannelId(interaction.channelId);
+                if (session && session.conversationId) {
+                    const possibleArtifact = artifactService.getArtifactPath(session.conversationId, filepath);
+                    if (fs.existsSync(possibleArtifact)) {
+                        resolvedPath = possibleArtifact;
+                    }
+                }
+            }
+            
+            // 2. Try to resolve against the workspace
+            if (!resolvedPath) {
+                const cdp = await ensureChannelCdp();
+                if (cdp) {
+                    const wsPath = cdp.getCurrentWorkspacePath();
+                    if (wsPath) {
+                        let rawPath = filepath;
+                        if (filepath.startsWith('file:///')) {
+                            rawPath = filepath.replace('file:///', '');
+                            if (process.platform === 'win32' && rawPath.startsWith('/')) {
+                                rawPath = rawPath.substring(1);
+                            }
+                        }
+                        const candidatePath = path.isAbsolute(rawPath) ? rawPath : path.join(wsPath, rawPath);
+                        const relative = path.relative(wsPath, candidatePath);
+                        if (!relative.startsWith('..') && !path.isAbsolute(relative)) {
+                            if (fs.existsSync(candidatePath)) {
+                                resolvedPath = candidatePath;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!resolvedPath) {
+                await interaction.editReply({
+                    content: '❌ Error: Cannot resolve file path. Ensure the file exists as an artifact or within the current workspace.'
+                });
+                break;
+            }
+
+            try {
+                execFile(getAntigravityCliPath(), [resolvedPath], (error) => {
+                    if (error) {
+                        logger.error(`Failed to open file via CLI: ${error.message}`);
+                        interaction.editReply({ content: `❌ Error opening file via CLI.` }).catch(() => {});
+                    } else {
+                        interaction.editReply({ content: `✅ Opened file: **${path.basename(resolvedPath)}**` }).catch(() => {});
+                    }
+                });
+            } catch (e: any) {
+                logger.error(`Failed to open file: ${e.message}`);
+                await interaction.editReply({ content: `❌ Error opening file.` });
+            }
+            break;
+        }
+
         case 'artifacts': {
             await sendArtifactPickerUI(interaction, { 
                 userPrefRepo, 
                 chatSessionRepo, 
                 artifactService 
             });
+            break;
+        }
+
+        case 'heartbeat': {
+            const subcommand = interaction.options.getSubcommand();
+            if (!heartbeatService) {
+                await interaction.editReply({ content: 'Heartbeat service not available.' });
+                break;
+            }
+
+            const envOverrides: string[] = [];
+            if (process.env.HEARTBEAT_ENABLED !== undefined) envOverrides.push('HEARTBEAT_ENABLED');
+            if (process.env.HEARTBEAT_INTERVAL_MS !== undefined) envOverrides.push('HEARTBEAT_INTERVAL_MS');
+            if (process.env.HEARTBEAT_CHANNEL_ID !== undefined) envOverrides.push('HEARTBEAT_CHANNEL_ID');
+
+            let warningPrefix = '';
+            if (envOverrides.length > 0) {
+                warningPrefix = `⚠️ **Warning**: Environment override(s) active: ${envOverrides.join(', ')}. Changes saved to config.json may not take effect until overrides are removed.\n\n`;
+            }
+
+            if (subcommand === 'on') {
+                const intervalStr = interaction.options.getString('interval') || '1h';
+                const targetChannel = interaction.options.getChannel('channel') || interaction.channel;
+                
+                if (!targetChannel || typeof (targetChannel as any).isTextBased !== 'function' || !(targetChannel as any).isTextBased()) {
+                    await interaction.editReply({ content: '⚠️ Please select a valid text channel.' });
+                    break;
+                }
+
+                // Check permissions
+                const botUser = interaction.client.user;
+                const permissions = (targetChannel as any).permissionsFor?.(botUser);
+                if (!permissions || !permissions.has('SendMessages') || !permissions.has('EmbedLinks')) {
+                    await interaction.editReply({ content: '⚠️ Bot does not have permission to send messages and embed links in that channel.' });
+                    break;
+                }
+
+                const intervalMs = parseInterval(intervalStr);
+                if (intervalMs === null || intervalMs <= 0) {
+                    await interaction.editReply({ content: '⚠️ Invalid interval format. Use a value with a unit, e.g. "1d", "1h", "30m" (bare numbers are not allowed).' });
+                    break;
+                }
+
+                if (intervalMs < 10000) {
+                    await interaction.editReply({ content: '⚠️ Interval must be at least 10 seconds.' });
+                    break;
+                }
+
+                if (intervalMs > 2147483647) {
+                    await interaction.editReply({ content: '⚠️ Interval cannot be greater than 24.8 days (2147483647 ms).' });
+                    break;
+                }
+
+                await heartbeatService.updateConfig(true, intervalMs, targetChannel.id);
+                await interaction.editReply({ 
+                    content: `${warningPrefix}💓 Heartbeat enabled! Sending updates every **${intervalStr}** to channel <#${targetChannel.id}>.` 
+                });
+            } else if (subcommand === 'off') {
+                await heartbeatService.disable();
+                await interaction.editReply({ content: `${warningPrefix}💓 Heartbeat disabled.` });
+            } else if (subcommand === 'status') {
+                const config = loadConfig();
+                const uptimeMs = Date.now() - heartbeatService.botStartTime;
+                const uptimeStr = formatDuration(uptimeMs);
+                const lastActivityStr = formatRelativeTime(heartbeatService.lastActivityTimestamp);
+
+                const activeWorkspaces = bridge.pool.getActiveWorkspaceNames();
+                const activeCount = activeWorkspaces.length;
+                const activeList = activeCount > 0 ? activeWorkspaces.join(', ') : 'None';
+
+                const intervalVal = config.heartbeatIntervalMs != null ? formatDuration(config.heartbeatIntervalMs) : 'N/A';
+
+                const statusEmbed = new EmbedBuilder()
+                    .setTitle('💓 Heartbeat Status')
+                    .setColor(config.heartbeatEnabled ? 0x00CC88 : 0x888888)
+                    .addFields(
+                        { name: 'Enabled', value: config.heartbeatEnabled ? '🟢 Yes' : '⚪ No', inline: true },
+                        { name: 'Interval', value: config.heartbeatEnabled ? intervalVal : 'N/A', inline: true },
+                        { name: 'Target Channel', value: config.heartbeatChannelId ? `<#${config.heartbeatChannelId}>` : 'N/A', inline: true },
+                        { name: 'Active Sessions', value: `${activeCount} (${activeList})`, inline: true },
+                        { name: 'Uptime', value: uptimeStr, inline: true },
+                        { name: 'Last Activity', value: lastActivityStr, inline: true },
+                    )
+                    .setTimestamp();
+                await interaction.editReply({ embeds: [statusEmbed] });
+            }
+            break;
+        }
+
+        case 'schedule': {
+            if (!scheduleService) {
+                await interaction.editReply({ content: 'Schedule service not available.' });
+                break;
+            }
+
+            const subcommand = interaction.options.getSubcommand();
+            if (subcommand === 'list') {
+                const schedules = scheduleService.listSchedules();
+                if (schedules.length === 0) {
+                    await interaction.editReply({ content: 'No scheduled tasks found.' });
+                    break;
+                }
+                
+                let formatted = '';
+                let truncatedCount = 0;
+                for (const s of schedules) {
+                    const nextRunStr = formatNextRunTime(s.cronExpression);
+                    const line = `**ID:** ${s.id} | **Cron:** \`${s.cronExpression}\` | **Next:** ${nextRunStr} | **Prompt:** ${s.prompt}\n`;
+                    if (formatted.length + line.length > 3900) {
+                        truncatedCount = schedules.length - schedules.indexOf(s);
+                        break;
+                    }
+                    formatted += line;
+                }
+                if (truncatedCount > 0) {
+                    formatted += `\n*...and ${truncatedCount} more task(s) (truncated due to Discord size limit).*`;
+                }
+
+                const embed = new EmbedBuilder()
+                    .setTitle('🕒 Scheduled Tasks')
+                    .setDescription(formatted)
+                    .setColor(0x00CC88);
+                await interaction.editReply({ embeds: [embed] });
+                break;
+            }
+
+            if (subcommand === 'add') {
+                const cronExpr = interaction.options.getString('cron', true);
+                const promptText = interaction.options.getString('prompt', true);
+                const workspacePath = wsHandler.getWorkspaceForChannel(interaction.channelId);
+
+                if (!workspacePath) {
+                    await interaction.editReply({ content: '⚠️ This channel is not bound to a workspace. Please bind it first.' });
+                    break;
+                }
+
+                try {
+                    const jobCb = scheduleService.getJobCallback();
+                    if (!jobCb) {
+                        await interaction.editReply({ content: '⚠️ Schedule service is still initializing. Please try again in a few seconds.' });
+                        break;
+                    }
+                    const record = scheduleService.addSchedule(cronExpr, promptText, workspacePath, interaction.channelId, jobCb);
+                    
+                    const nextRun = formatNextRunTime(cronExpr);
+                    const nextRunStr = nextRun !== 'Invalid Cron' ? ` (Next run: ${nextRun})` : '';
+
+                    await interaction.editReply({ content: `✅ Scheduled task added! (ID: ${record.id})${nextRunStr}` });
+                } catch (error: any) {
+                    await interaction.editReply({ content: `❌ Failed to add schedule: ${error.message}` });
+                }
+                break;
+            }
+
+            if (subcommand === 'remove') {
+                const id = interaction.options.getInteger('id', true);
+                const success = scheduleService.removeSchedule(id);
+                if (success) {
+                    await interaction.editReply({ content: `✅ Removed scheduled task ID: ${id}` });
+                } else {
+                    await interaction.editReply({ content: `⚠️ Scheduled task ID ${id} not found.` });
+                }
+                break;
+            }
+
+            if (subcommand === 'clear') {
+                const initialSchedules = scheduleService.listSchedules();
+                const count = initialSchedules.length;
+                if (count === 0) {
+                    await interaction.editReply({ content: '📅 No scheduled tasks found to clear.' });
+                    break;
+                }
+
+                const initialIdsJson = JSON.stringify(initialSchedules.map(s => s.id).sort((a, b) => a - b));
+
+                const confirmBtnId = `schedule_clear_confirm_${interaction.id}`;
+                const cancelBtnId = `schedule_clear_cancel_${interaction.id}`;
+
+                const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId(confirmBtnId)
+                        .setLabel(`${t('Confirm Clear')} (${count})`)
+                        .setStyle(ButtonStyle.Danger),
+                    new ButtonBuilder()
+                        .setCustomId(cancelBtnId)
+                        .setLabel(t('Cancel'))
+                        .setStyle(ButtonStyle.Secondary)
+                );
+
+                const message = await interaction.editReply({
+                    content: `⚠️ **Warning**: This will delete all **${count}** scheduled task(s) and reset the ID counter to 0. Are you sure you want to proceed?`,
+                    components: [row]
+                });
+
+                const collector = message.createMessageComponentCollector({
+                    filter: (i: any) => i.user.id === interaction.user.id && (i.customId === confirmBtnId || i.customId === cancelBtnId),
+                    time: 30000,
+                    max: 1
+                });
+
+                collector.on('collect', async (i: any) => {
+                    if (i.customId === confirmBtnId) {
+                        const currentSchedules = scheduleService.listSchedules();
+                        const currentIdsJson = JSON.stringify(currentSchedules.map(s => s.id).sort((a, b) => a - b));
+                        if (initialIdsJson !== currentIdsJson) {
+                            await i.update({
+                                content: '⚠️ **Action aborted**: The scheduled tasks list changed while waiting for confirmation. No schedules were cleared.',
+                                components: []
+                            });
+                            return;
+                        }
+                        scheduleService.resetSchedules();
+                        await i.update({
+                            content: `✅ Successfully removed all **${count}** scheduled task(s) and reset the task ID counter to 0.`,
+                            components: []
+                        });
+                    } else {
+                        await i.update({
+                            content: '❌ Action cancelled. Scheduled tasks were not cleared.',
+                            components: []
+                        });
+                    }
+                });
+
+                collector.on('end', async (collected: any) => {
+                    if (collected.size === 0) {
+                        await interaction.editReply({
+                            content: '⚠️ Action timed out. Scheduled tasks were not cleared.',
+                            components: []
+                        }).catch(() => {});
+                    }
+                });
+
+                break;
+            }
+
+            if (subcommand === 'backup') {
+                const json = scheduleService.backupSchedules();
+                const buffer = Buffer.from(json, 'utf-8');
+                await interaction.editReply({
+                    content: '📋 **LazyGravity Schedules Backup**',
+                    files: [{
+                        attachment: buffer,
+                        name: 'schedules_backup.json'
+                    }]
+                });
+                break;
+            }
+
+            if (subcommand === 'restore') {
+                const attachment = interaction.options.getAttachment('file', true);
+                if (!attachment.name.endsWith('.json')) {
+                    await interaction.editReply({ content: '❌ Attachment must be a `.json` file.' });
+                    break;
+                }
+
+                try {
+                    // Download file content using global fetch (available in Node 18+)
+                    const response = await fetch(attachment.url);
+                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                    const jsonText = await response.text();
+
+                    const jobCb = scheduleService.getJobCallback();
+                    if (!jobCb) {
+                        await interaction.editReply({ content: '⚠️ Schedule service is still initializing. Please try again in a few seconds.' });
+                        break;
+                    }
+                    const restoredCount = scheduleService.restoreSchedules(jsonText, jobCb);
+
+                    await interaction.editReply({ content: `✅ Successfully restored ${restoredCount} scheduled tasks from backup!` });
+                } catch (error: any) {
+                    await interaction.editReply({ content: `❌ Failed to restore schedules: ${error.message}` });
+                }
+                break;
+            }
             break;
         }
 

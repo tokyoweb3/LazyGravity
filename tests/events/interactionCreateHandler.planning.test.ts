@@ -34,6 +34,7 @@ describe('interactionCreateHandler - planning buttons', () => {
             parseApprovalCustomId: jest.fn().mockReturnValue(null),
             parseErrorPopupCustomId: jest.fn().mockReturnValue(null),
             parsePlanningCustomId: jest.fn().mockReturnValue(null),
+            parseFileChangeCustomId: jest.fn().mockReturnValue(null),
             parseRunCommandCustomId: jest.fn().mockReturnValue(null),
             handleSlashInteraction: jest.fn(),
             ...overrides,
@@ -245,6 +246,136 @@ describe('interactionCreateHandler - planning buttons', () => {
                 ]),
             }),
         );
+    });
+
+    it('handles Reject button: clicks reject in detector and updates embed', async () => {
+        const update = jest.fn().mockResolvedValue(undefined);
+
+        const planDetector = {
+            clickRejectButton: jest.fn().mockResolvedValue(true),
+        };
+
+        const interaction = {
+            isAutocomplete: () => false,
+            isButton: () => true,
+            user: { id: 'allowed' },
+            customId: 'planning_reject_action:ws-a:channel-a',
+            channelId: 'channel-a',
+            update,
+            channel: { send: jest.fn() },
+            message: {
+                embeds: [{
+                    title: 'Planning Mode',
+                    description: 'Test',
+                    color: 0x3498DB,
+                }],
+                components: [{
+                    components: [
+                        {
+                            type: 2,
+                            data: { type: 2 },
+                            toJSON: () => ({
+                                type: 2,
+                                style: 1,
+                                label: 'Proceed',
+                                custom_id: 'planning_proceed_action:ws-a:channel-a',
+                            }),
+                        },
+                        {
+                            type: 2,
+                            data: { type: 2 },
+                            toJSON: () => ({
+                                type: 2,
+                                style: 4,
+                                label: 'Reject',
+                                custom_id: 'planning_reject_action:ws-a:channel-a',
+                            }),
+                        },
+                    ],
+                }],
+            },
+        } as any;
+
+        const handler = createInteractionCreateHandler(createBaseDeps({
+            parsePlanningCustomId: jest.fn().mockReturnValue({
+                action: 'reject',
+                projectName: 'ws-a',
+                channelId: 'channel-a',
+            }),
+            bridge: {
+                pool: {
+                    getApprovalDetector: jest.fn(),
+                    getPlanningDetector: jest.fn().mockReturnValue(planDetector),
+                },
+                lastActiveWorkspace: null,
+            } as any,
+        }));
+
+        await handler(interaction);
+
+        expect(planDetector.clickRejectButton).toHaveBeenCalled();
+        expect(update).toHaveBeenCalledWith(
+            expect.objectContaining({
+                embeds: expect.any(Array),
+                components: expect.any(Array),
+            }),
+        );
+        expect(update.mock.calls[0][0].embeds[0].data.color).toBe(0xE74C3C);
+    });
+
+    it('handles Reject button: clicks reject returns false, uses gray color', async () => {
+        const update = jest.fn().mockResolvedValue(undefined);
+        const planDetector = { clickRejectButton: jest.fn().mockResolvedValue(false) };
+
+        const interaction = {
+            isAutocomplete: () => false,
+            isButton: () => true,
+            user: { id: 'allowed' },
+            customId: 'planning_reject_action:ws-a:channel-a',
+            channelId: 'channel-a',
+            update,
+            channel: { send: jest.fn() },
+            message: {
+                embeds: [{ title: 'Planning Mode', description: 'Test', color: 0x3498DB }],
+                components: [{ components: [{ type: 2, data: { type: 2 }, toJSON: () => ({ type: 2, style: 4, label: 'Reject', custom_id: 'planning_reject_action:ws-a:channel-a' }) }] }],
+            },
+        } as any;
+
+        const handler = createInteractionCreateHandler(createBaseDeps({
+            parsePlanningCustomId: jest.fn().mockReturnValue({ action: 'reject', projectName: 'ws-a', channelId: 'channel-a' }),
+            bridge: { pool: { getPlanningDetector: jest.fn().mockReturnValue(planDetector) }, lastActiveWorkspace: null } as any,
+        }));
+
+        await handler(interaction);
+        expect(update.mock.calls[0][0].embeds[0].data.color).toBe(0x95A5A6);
+    });
+
+    it('handles Reject button: expiry error fallback', async () => {
+        const update = jest.fn().mockRejectedValue({ code: 10062 });
+        const channelSend = jest.fn().mockResolvedValue(undefined);
+        const planDetector = { clickRejectButton: jest.fn().mockResolvedValue(true) };
+
+        const interaction = {
+            isAutocomplete: () => false,
+            isButton: () => true,
+            user: { id: 'allowed' },
+            customId: 'planning_reject_action:ws-a:channel-a',
+            channelId: 'channel-a',
+            update,
+            channel: { send: channelSend },
+            message: {
+                embeds: [{ title: 'Planning Mode', description: 'Test', color: 0x3498DB }],
+                components: [{ components: [{ type: 2, data: { type: 2 }, toJSON: () => ({ type: 2, style: 4, label: 'Reject', custom_id: 'planning_reject_action:ws-a:channel-a' }) }] }],
+            },
+        } as any;
+
+        const handler = createInteractionCreateHandler(createBaseDeps({
+            parsePlanningCustomId: jest.fn().mockReturnValue({ action: 'reject', projectName: 'ws-a', channelId: 'channel-a' }),
+            bridge: { pool: { getPlanningDetector: jest.fn().mockReturnValue(planDetector) }, lastActiveWorkspace: null } as any,
+        }));
+
+        await handler(interaction);
+        expect(channelSend).toHaveBeenCalledWith(expect.stringContaining('Reject completed.'));
     });
 
     it('handles Open button: sends plan content as markdown (not code block)', async () => {

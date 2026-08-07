@@ -271,7 +271,7 @@ describe('RunCommandDetector - run command dialog detection and remote execution
         await jest.advanceTimersByTimeAsync(500);
         expect(detector.getLastDetectedInfo()).not.toBeNull();
 
-        await jest.advanceTimersByTimeAsync(500);
+        await jest.advanceTimersByTimeAsync(1500);
         expect(detector.getLastDetectedInfo()).toBeNull();
     });
 
@@ -431,7 +431,7 @@ describe('RunCommandDetector - run command dialog detection and remote execution
         await jest.advanceTimersByTimeAsync(500);
         expect(onResolved).not.toHaveBeenCalled();
 
-        await jest.advanceTimersByTimeAsync(500);
+        await jest.advanceTimersByTimeAsync(1500);
         expect(onResolved).toHaveBeenCalledTimes(1);
     });
 

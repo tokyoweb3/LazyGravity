@@ -38,6 +38,9 @@ const ERROR_POPUP_COPY_DEBUG_ACTION_PREFIX = 'error_popup_copy_debug_action';
 const ERROR_POPUP_RETRY_ACTION_PREFIX = 'error_popup_retry_action';
 const RUN_COMMAND_RUN_ACTION_PREFIX = 'run_command_run_action';
 const RUN_COMMAND_REJECT_ACTION_PREFIX = 'run_command_reject_action';
+export const FEEDBACK_ACTION_PREFIX = 'feedback_action';
+export const QUESTION_SELECT_ACTION_PREFIX = 'question_select_action';
+export const QUESTION_SKIP_ACTION_PREFIX = 'question_skip_action';
 
 // ---------------------------------------------------------------------------
 // Notification colours
@@ -105,8 +108,13 @@ export function buildApprovalNotification(opts: {
     readonly toolNames?: readonly string[];
     /** Additional fields appended after default ones. */
     readonly extraFields?: readonly { readonly name: string; readonly value: string; readonly inline?: boolean }[];
+    /** Whether an 'Always Allow' / 'Allow Chat' button exists. */
+    readonly hasAlwaysAllow?: boolean;
+    readonly alwaysAllowText?: string;
+    readonly walkthroughCustomId?: string;
+    readonly taskCustomId?: string;
 }): MessagePayload {
-    const { title, description, projectName, channelId, toolNames, extraFields } = opts;
+    const { title, description, projectName, channelId, toolNames, extraFields, hasAlwaysAllow, alwaysAllowText, walkthroughCustomId, taskCustomId } = opts;
 
     const richContent = pipe(
         createRichContent(),
@@ -126,13 +134,31 @@ export function buildApprovalNotification(opts: {
         (rc) => withTimestamp(rc),
     );
 
-    const components: readonly ComponentRow[] = [
-        buttonRow(
-            button(customId(APPROVE_ACTION_PREFIX, projectName, channelId), 'Allow', 'success'),
-            button(customId(ALWAYS_ALLOW_ACTION_PREFIX, projectName, channelId), 'Allow Chat', 'primary'),
-            button(customId(DENY_ACTION_PREFIX, projectName, channelId), 'Deny', 'danger'),
-        ),
+    const buttons = [
+        button(customId(APPROVE_ACTION_PREFIX, projectName, channelId), 'Allow', 'success'),
     ];
+    
+    if (hasAlwaysAllow) {
+        buttons.push(button(customId(ALWAYS_ALLOW_ACTION_PREFIX, projectName, channelId), alwaysAllowText || 'Allow Chat', 'primary'));
+    }
+    
+    buttons.push(button(customId(DENY_ACTION_PREFIX, projectName, channelId), 'Deny', 'danger'));
+
+    const components: ComponentRow[] = [
+        buttonRow(...buttons),
+    ];
+
+    const artifactButtons = [];
+    if (walkthroughCustomId) {
+        artifactButtons.push(button(walkthroughCustomId, 'Review walkthrough.md', 'success'));
+    }
+    if (taskCustomId) {
+        artifactButtons.push(button(taskCustomId, 'Review task.md', 'primary'));
+    }
+
+    if (artifactButtons.length > 0) {
+        components.push(buttonRow(...artifactButtons));
+    }
 
     return { richContent, components };
 }
@@ -145,6 +171,9 @@ export function buildPlanningNotification(opts: {
     readonly channelId: string | null;
     /** Additional fields appended before footer. */
     readonly extraFields?: readonly { readonly name: string; readonly value: string; readonly inline?: boolean }[];
+    readonly hasOpenButton?: boolean;
+    readonly openText?: string;
+    readonly proceedText?: string;
 }): MessagePayload {
     const { title, description, projectName, channelId, extraFields } = opts;
 
@@ -161,11 +190,16 @@ export function buildPlanningNotification(opts: {
         (rc) => withTimestamp(rc),
     );
 
+    const buttons = [];
+    if (opts.hasOpenButton !== false) {
+        const openLabel = opts.openText || 'Open Plan';
+        buttons.push(button(customId(PLANNING_OPEN_ACTION_PREFIX, projectName, channelId), openLabel, 'primary'));
+    }
+    const buttonLabel = opts.proceedText || 'Proceed';
+    buttons.push(button(customId(PLANNING_PROCEED_ACTION_PREFIX, projectName, channelId), buttonLabel, 'success'));
+
     const components: readonly ComponentRow[] = [
-        buttonRow(
-            button(customId(PLANNING_OPEN_ACTION_PREFIX, projectName, channelId), 'Open', 'primary'),
-            button(customId(PLANNING_PROCEED_ACTION_PREFIX, projectName, channelId), 'Proceed', 'success'),
-        ),
+        buttonRow(...buttons),
     ];
 
     return { richContent, components };
@@ -335,6 +369,76 @@ export function buildStatusNotification(opts: {
     );
 
     return { richContent };
+}
+
+export interface BuildQuestionNotificationParams {
+    title: string;
+    description: string;
+    projectName: string;
+    channelId: string;
+    options: { text: string; x: number; y: number }[];
+}
+
+export function buildQuestionNotification(
+    params: BuildQuestionNotificationParams,
+): MessagePayload {
+    const { title, description, projectName, channelId, options } = params;
+
+    const baseContent = pipe(
+        createRichContent(),
+        (rc) => withTitle(rc, title),
+        (rc) => withColor(rc, COLOR_APPROVAL),
+    );
+
+    const embed = description ? withDescription(baseContent, description) : baseContent;
+
+    const selectMenuOptions = options.map((opt, i) => ({
+        label: opt.text.substring(0, 100), // Discord max length for label is 100
+        value: i.toString(),
+    })).slice(0, 25); // Discord max options in a select menu is 25
+
+    // Ensure customIds fit within 100 chars without losing channelId
+    const encodeSafe = (str: string, maxLen: number) => {
+        let encoded = encodeURIComponent(str);
+        if (encoded.length <= maxLen) return encoded;
+        return encoded.substring(0, maxLen).replace(/(%[0-9A-F]?)$/i, '');
+    };
+
+    const encodedChannel = encodeURIComponent(channelId);
+    
+    const selectOverhead = QUESTION_SELECT_ACTION_PREFIX.length + 2 + encodedChannel.length;
+    const safeSelectProjectName = encodeSafe(projectName, 100 - selectOverhead);
+    const encodedCustomId = `${QUESTION_SELECT_ACTION_PREFIX}:${safeSelectProjectName}:${encodedChannel}`;
+
+    const skipOverhead = QUESTION_SKIP_ACTION_PREFIX.length + 2 + encodedChannel.length;
+    const safeSkipProjectName = encodeSafe(projectName, 100 - skipOverhead);
+    const encodedSkipCustomId = `${QUESTION_SKIP_ACTION_PREFIX}:${safeSkipProjectName}:${encodedChannel}`;
+
+    return {
+        richContent: embed,
+        components: [
+            {
+                components: [
+                    {
+                        type: 'selectMenu',
+                        customId: encodedCustomId,
+                        placeholder: 'Select an option...',
+                        options: selectMenuOptions,
+                    },
+                ],
+            },
+            {
+                components: [
+                    {
+                        type: 'button',
+                        customId: encodedSkipCustomId,
+                        label: 'Skip',
+                        style: 'secondary',
+                    },
+                ],
+            },
+        ],
+    };
 }
 
 /** Build a progress / phase notification (e.g. "Thinking...", "Generating..."). */
