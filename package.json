@@ -48,7 +48,7 @@
   "homepage": "https://github.com/tokyoweb3/LazyGravity#readme",
   "dependencies": {
     "@inquirer/select": "^5.1.0",
-    "better-sqlite3": "^12.6.2",
+    "better-sqlite3": "^13.0.2",
     "commander": "^15.0.0",
     "cron-parser": "^5.6.1",
     "discord.js": "^14.25.1",
