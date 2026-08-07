@@ -5,7 +5,7 @@ First off, thank you for considering contributing to LazyGravity! It's people li
 ## Development Setup
 
 ### Prerequisites
-- **Node.js**: Version 18.x or higher
+- **Node.js**: Version 22.14 or higher
 - **npm**: Version 8.x or higher
 - **Antigravity**: Installed and running on your local machine
 

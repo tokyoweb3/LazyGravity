@@ -5,7 +5,7 @@
 <p align="center">
   <img src="https://img.shields.io/npm/v/lazy-gravity?style=flat-square&color=blue" alt="Version" />
   <img src="https://img.shields.io/badge/Antigravity-1.19.5-ff6b35?style=flat-square" alt="Antigravity" />
-  <img src="https://img.shields.io/badge/node-18.x+-brightgreen?style=flat-square&logo=node.js" alt="Node.js" />
+  <img src="https://img.shields.io/badge/node-22.14+-brightgreen?style=flat-square&logo=node.js" alt="Node.js" />
   <img src="https://img.shields.io/badge/discord.js-14.x-5865F2?style=flat-square&logo=discord&logoColor=white" alt="discord.js" />
   <img src="https://img.shields.io/badge/telegram-optional-26A5E4?style=flat-square&logo=telegram&logoColor=white" alt="Telegram" />
   <img src="https://img.shields.io/badge/protocol-CDP%20%2F%20WebSocket-orange?style=flat-square" alt="CDP/WebSocket" />
@@ -23,7 +23,7 @@ https://github.com/user-attachments/assets/08eac63e-5ede-469b-ac6c-1c40ec77b0c0
 
 ## Quick Setup
 
-Runtime: **Node >= 18**.
+Runtime: **Node >= 22.14**.
 
 ```bash
 npm install -g lazy-gravity
