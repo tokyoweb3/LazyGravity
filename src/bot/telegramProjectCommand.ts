@@ -1,3 +1,15 @@
+/**
+ * Telegram /project command handler.
+ *
+ * Allows users to bind a Telegram chat to an Antigravity workspace
+ * via inline keyboard buttons, similar to Discord's /project slash command.
+ *
+ * User flow:
+ *   /project        → show workspace list as buttons → user taps → chat bound
+ *   /project list   → show workspace list (same as bare /project)
+ *   /project unbind → remove current binding
+ */
+
 import { logger } from '../utils/logger';
 import type { PlatformMessage, PlatformSelectInteraction, SelectMenuDef } from '../platform/types';
 import type { TelegramBindingRepository } from '../database/telegramBindingRepository';

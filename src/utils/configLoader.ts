@@ -45,7 +45,7 @@ export interface PersistedConfig {
     telegramAllowedUserIds?: string[];
     /** Platforms enabled list. */
     platforms?: PlatformType[];
-    /** Response monitor timeout in ms. */
+    /** Response monitor inactivity timeout in ms. 0 = disabled. Default: 900000 (15 min). */
     responseTimeoutMs?: number;
     /** Serialized or object config accounts array. */
     antigravityAccounts?: string | AntigravityAccountConfig[];

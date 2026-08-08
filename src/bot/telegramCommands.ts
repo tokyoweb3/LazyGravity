@@ -1,3 +1,22 @@
+/**
+ * Telegram command parser and handlers.
+ *
+ * Handles built-in bot commands that can be answered immediately
+ * without routing through CDP/Antigravity:
+ *   /start      — Welcome message
+ *   /help       — List available commands
+ *   /status     — Show bot connection status
+ *   /stop       — Interrupt active LLM generation
+ *   /ping       — Latency check
+ *   /mode       — Switch execution mode
+ *   /model      — Switch LLM model
+ *   /screenshot — Capture Antigravity screenshot
+ *   /autoaccept — Toggle auto-accept for approval dialogs
+ *   /template   — List and execute prompt templates
+ *   /logs       — Show recent log entries
+ *   /new        — Start a new chat session
+ */
+
 import { handleJoin, handleMirror } from './telegramJoinCommand';
 import fs from 'fs';
 import type { PlatformMessage, MessagePayload } from '../platform/types';

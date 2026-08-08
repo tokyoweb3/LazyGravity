@@ -229,7 +229,8 @@ export interface SelectMenuDef {
 export type ComponentDef = ButtonDef | SelectMenuDef;
 
 /**
- * A row of interactive components.
+ * A row of components. Discord allows up to 5 buttons per row,
+ * or 1 select menu per row. Telegram uses InlineKeyboard rows.
  */
 export interface ComponentRow {
     /** Ordered list of components in the row. */
@@ -376,7 +377,7 @@ export interface PlatformButtonInteraction {
      */
     followUp(payload: MessagePayload): Promise<PlatformSentMessage>;
     /**
-     * Show a popup form modal.
+     * Show a popup form modal. Must be the first response.
      * @param modal Modal specifications.
      */
     showModal?(modal: ModalDef): Promise<void>;

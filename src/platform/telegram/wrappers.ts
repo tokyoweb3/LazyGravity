@@ -295,7 +295,7 @@ export function wrapTelegramUser(from: TelegramFrom): PlatformUser {
  * @param file Attachment payload.
  * @param caption Custom caption text.
  * @param extraOptions Optional additional options.
- * @param toInputFile GrammY file formatter helper.
+ * @param toInputFile - Optional converter that wraps Buffer for the Telegram API. grammY requires Buffer wrapped in InputFile; pass `bot.toInputFile` here.
  * @returns Resolves to sent message object, or null.
  */
 async function trySendFile(
