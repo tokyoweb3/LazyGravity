@@ -119,6 +119,21 @@ describe('TelegramAdapter', () => {
                 'TelegramAdapter is already started',
             );
         });
+
+        it('performs transactional cleanup if readiness check (getMe) fails', async () => {
+            const bot = createMockBot();
+            bot.api.getMe = jest.fn().mockRejectedValue(new Error('Unauthorized token'));
+            const events = createMockEvents();
+            const adapter = new TelegramAdapter(bot, 'bot_1');
+
+            await expect(adapter.start(events)).rejects.toThrow('Unauthorized token');
+
+            expect(bot.start).not.toHaveBeenCalled();
+            expect(bot.stop).toHaveBeenCalledTimes(1);
+            expect(events.onError).toHaveBeenCalledTimes(1);
+            expect(adapter['events']).toBeNull();
+            expect(adapter['started']).toBe(false);
+        });
     });
 
     describe('stop', () => {

@@ -12,6 +12,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import * as crypto from 'crypto';
 import { logger } from '../utils/logger';
 
 // ---------------------------------------------------------------------------
@@ -425,16 +426,14 @@ export class ArtifactService {
      * @returns Encoded select value string.
      */
     static encodeSelectValue(conversationId: string, filename: string): string {
-        const shortConv = conversationId.replace(/-/g, '').slice(0, 12);
-        // Simple hash of the filename
-        let hash = 0;
-        for (let i = 0; i < filename.length; i++) {
-            hash = ((hash << 5) - hash) + filename.charCodeAt(i);
-            hash |= 0; // Convert to 32bit integer
-        }
-        const shortHash = Math.abs(hash).toString(36).slice(0, 4);
+        const shortConv = conversationId.replace(/-/g, '').slice(0, 8);
+        const hash = crypto
+            .createHash('sha256')
+            .update(`${conversationId}:${filename}`)
+            .digest('hex')
+            .slice(0, 8);
         
-        return `art_${shortConv}_${shortHash}_${filename}`;
+        return `art_${shortConv}_${hash}_${filename}`;
     }
 
     /**
@@ -453,13 +452,22 @@ export class ArtifactService {
         if (parts.length < 4) return null;
         
         const shortConv = parts[1];
+        const hash = parts[2];
         const filename = parts.slice(3).join('_'); // Filename might contain underscores
 
-        // Find the matching artifact in the current list
-        const found = artifacts.find(a => 
-            a.filename === filename && 
-            a.conversationId.replace(/-/g, '').startsWith(shortConv)
-        );
+        // Find the matching artifact in the current list, requiring exact SHA-256 hash match
+        const found = artifacts.find(a => {
+            if (a.filename !== filename) return false;
+            if (!a.conversationId.replace(/-/g, '').startsWith(shortConv)) return false;
+
+            const expectedHash = crypto
+                .createHash('sha256')
+                .update(`${a.conversationId}:${a.filename}`)
+                .digest('hex')
+                .slice(0, 8);
+
+            return expectedHash === hash;
+        });
 
         return found ? { conversationId: found.conversationId, filename: found.filename } : null;
     }

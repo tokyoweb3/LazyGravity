@@ -2,7 +2,7 @@ import * as net from 'net';
 import * as http from 'http';
 import * as os from 'os';
 import { execFile, spawn } from 'child_process';
-import { CDP_PORTS } from '../../utils/cdpPorts';
+import { getCdpCandidatePorts } from '../../utils/cdpPorts';
 
 const APP_NAME = 'Antigravity';
 
@@ -37,7 +37,7 @@ function isPortAvailable(port: number): Promise<boolean> {
  * @returns Available port number, or null if none are available.
  */
 async function findAvailablePort(): Promise<number | null> {
-    for (const port of CDP_PORTS) {
+    for (const port of getCdpCandidatePorts()) {
         if (await isPortAvailable(port)) {
             return port;
         }
@@ -159,7 +159,7 @@ export async function openAction(): Promise<void> {
     const port = await findAvailablePort();
     if (port === null) {
         console.log(`  ${C.red}No available CDP ports found.${C.reset}`);
-        console.log(`  ${C.dim}All candidate ports are in use: ${CDP_PORTS.join(', ')}${C.reset}`);
+        console.log(`  ${C.dim}All candidate ports are in use: ${getCdpCandidatePorts().join(', ')}${C.reset}`);
         console.log(`  ${C.dim}Close an application using one of these ports and try again.${C.reset}\n`);
         process.exitCode = 1;
         return;

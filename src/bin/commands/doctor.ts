@@ -1,7 +1,7 @@
 import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
-import { CDP_PORTS } from '../../utils/cdpPorts';
+import { getCdpCandidatePorts } from '../../utils/cdpPorts';
 import { ConfigLoader } from '../../utils/configLoader';
 import { getAntigravityCdpHint } from '../../utils/pathUtils';
 import { COLORS } from '../../utils/logger';
@@ -154,7 +154,7 @@ export async function doctorAction(): Promise<void> {
     console.log(`\n  ${COLORS.dim}Checking CDP ports...${COLORS.reset}`);
     let cdpOk = false;
     const portResults = new Map<number, any[]>();
-    for (const port of CDP_PORTS) {
+    for (const port of getCdpCandidatePorts()) {
         const result = await checkPort(port);
         if (result.alive) {
             ok(`CDP port ${port} is responding`);
@@ -176,7 +176,7 @@ export async function doctorAction(): Promise<void> {
     const resolvedPath = artifactService.getBrainBasePath();
     ok(`Resolved brainBasePath: ${resolvedPath}`);
 
-    for (const port of CDP_PORTS) {
+    for (const port of getCdpCandidatePorts()) {
         const targets = portResults.get(port);
         if (targets && Array.isArray(targets)) {
             for (const t of targets) {

@@ -38,7 +38,9 @@ const DETECT_USER_MESSAGE_SCRIPT = `(() => {
     const panel = document.querySelector('.antigravity-agent-side-panel');
     const scope = panel || document;
 
-    const bubbles = Array.from(scope.querySelectorAll('.bg-input.p-2'));
+    const bubbles = Array.from(scope.querySelectorAll(
+        '.bg-input.p-2, div[class*="bg-gray-"][class*="p-2"], div[class*="bg-input"], [data-message-author-role="user"]'
+    ));
     const userBubbles = bubbles.filter(el => {
         if (el.closest('.text-ide-message-block-bot-color')) return false;
         if (el.closest('.rendered-markdown, .prose')) return false;

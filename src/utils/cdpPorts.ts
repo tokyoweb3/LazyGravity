@@ -125,18 +125,7 @@ export function serializeAntigravityAccounts(
  * @returns Array of port integers.
  */
 export function getConfiguredCdpPorts(rawValue?: string): number[] {
-    if (!rawValue || rawValue.trim().length === 0) {
-        return [...DEFAULT_CDP_PORTS];
-    }
-
-    const accounts = parseAntigravityAccounts(rawValue);
-    const uniquePorts = new Set<number>();
-
-    for (const account of accounts) {
-        uniquePorts.add(account.cdpPort);
-    }
-
-    return uniquePorts.size > 0 ? [...uniquePorts] : [...DEFAULT_CDP_PORTS];
+    return getCdpCandidatePorts(rawValue);
 }
 
 /**
@@ -150,5 +139,37 @@ export function getAccountPortMap(rawValue?: string): Record<string, number> {
     );
 }
 
+/**
+ * Resolves deduplicated candidate CDP ports prioritizing custom env overrides.
+ * @param accountsEnv Raw ANTIGRAVITY_ACCOUNTS env string.
+ * @param singlePortEnv Raw CDP_PORT env string.
+ * @returns Deduplicated array of candidate ports.
+ */
+export function getCdpCandidatePorts(
+    accountsEnv?: string,
+    singlePortEnv?: string,
+): number[] {
+    const candidatePorts = new Set<number>();
+
+    const singlePort = parsePort(singlePortEnv ?? process.env.CDP_PORT);
+    if (singlePort !== null) {
+        candidatePorts.add(singlePort);
+    }
+
+    const rawAccounts = accountsEnv ?? process.env.ANTIGRAVITY_ACCOUNTS;
+    if (rawAccounts && rawAccounts.trim().length > 0) {
+        for (const account of parseAntigravityAccounts(rawAccounts)) {
+            candidatePorts.add(account.cdpPort);
+        }
+    }
+
+    for (const port of DEFAULT_CDP_PORTS) {
+        candidatePorts.add(port);
+    }
+
+    return Array.from(candidatePorts);
+}
+
 /** CDP port list scanned for Antigravity connections */
 export const CDP_PORTS = DEFAULT_CDP_PORTS;
+

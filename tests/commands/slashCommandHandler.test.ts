@@ -9,6 +9,8 @@ const mockTemplateRepo = {
     create: jest.fn(),
     deleteByName: jest.fn(),
     updateByName: jest.fn(),
+    exportTemplates: jest.fn(),
+    importTemplates: jest.fn(),
 };
 
 describe('SlashCommandHandler', () => {
@@ -97,6 +99,42 @@ describe('SlashCommandHandler', () => {
             expect(result.success).toBe(false);
         });
 
+        it('exports templates via the export subcommand', async () => {
+            mockTemplateRepo.findAll.mockReturnValue([{ id: 1, name: 't1', prompt: 'p1' }]);
+            mockTemplateRepo.exportTemplates.mockReturnValue('{"version":1,"templates":[{"name":"t1","prompt":"p1"}]}');
+
+            const result = await handler.handleCommand('template', ['export']);
+            expect(result.success).toBe(true);
+            expect(result.prompt).toContain('"t1"');
+        });
+
+        it('handles export subcommand when no templates exist', async () => {
+            mockTemplateRepo.findAll.mockReturnValue([]);
+            const result = await handler.handleCommand('template', ['export']);
+            expect(result.success).toBe(true);
+            expect(result.message).toContain('No templates registered');
+        });
+
+        it('imports templates via the import subcommand', async () => {
+            mockTemplateRepo.importTemplates.mockReturnValue({ imported: 1, updated: 0, skipped: 0, total: 1 });
+            const jsonText = '{"version":1,"templates":[{"name":"t1","prompt":"p1"}]}';
+
+            const result = await handler.handleCommand('template', ['import', jsonText, 'skip']);
+            expect(result.success).toBe(true);
+            expect(mockTemplateRepo.importTemplates).toHaveBeenCalledWith(jsonText, 'skip');
+            expect(result.message).toContain('Imported 1');
+        });
+
+        it('returns error when import subcommand fails', async () => {
+            mockTemplateRepo.importTemplates.mockImplementation(() => {
+                throw new Error('Invalid format');
+            });
+
+            const result = await handler.handleCommand('template', ['import', 'bad json']);
+            expect(result.success).toBe(false);
+            expect(result.message).toContain('Failed to import templates: Invalid format');
+        });
+
         it('rejects old plural alias "templates"', async () => {
             const result = await handler.handleCommand('templates', []);
             expect(result.success).toBe(false);
@@ -104,3 +142,4 @@ describe('SlashCommandHandler', () => {
         });
     });
 });
+

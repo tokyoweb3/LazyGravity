@@ -117,6 +117,48 @@ export class SlashCommandHandler {
             }
         }
 
+        // export: export templates as JSON
+        if (subCommandOrName.toLowerCase() === 'export') {
+            const templates = this.templateRepo.findAll();
+            if (templates.length === 0) {
+                return {
+                    success: true,
+                    message: t('📝 No templates registered to export.'),
+                };
+            }
+            const jsonStr = this.templateRepo.exportTemplates();
+            return {
+                success: true,
+                message: t('📋 Templates exported successfully.'),
+                prompt: jsonStr,
+            };
+        }
+
+        // import: import templates from JSON
+        if (subCommandOrName.toLowerCase() === 'import') {
+            if (args.length < 2) {
+                return {
+                    success: false,
+                    message: t('⚠️ Missing arguments.\nUsage: `/template import <json> [skip|overwrite]`'),
+                };
+            }
+            const jsonText = args[1];
+            const mode = (args[2]?.toLowerCase() === 'overwrite') ? 'overwrite' : 'skip';
+            try {
+                const stats = this.templateRepo.importTemplates(jsonText, mode);
+                return {
+                    success: true,
+                    message: t(`✅ Imported ${stats.imported} template(s), overwritten ${stats.updated}, skipped ${stats.skipped}.`),
+                };
+            } catch (e: any) {
+                return {
+                    success: false,
+                    message: t(`⚠️ Failed to import templates: ${e.message}`),
+                };
+            }
+        }
+
+
         // Otherwise treat as template invocation
         const templateName = subCommandOrName;
         const template = this.templateRepo.findByName(templateName);

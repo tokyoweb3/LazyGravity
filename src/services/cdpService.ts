@@ -1,10 +1,44 @@
 import { logger } from '../utils/logger';
-import { CDP_PORTS } from '../utils/cdpPorts';
+import { getCdpCandidatePorts } from '../utils/cdpPorts';
 import { EventEmitter } from 'events';
 import * as http from 'http';
 import { execFile, spawn } from 'child_process';
 import { getAntigravityCliPath, extractProjectNameFromPath } from '../utils/pathUtils';
 import WebSocket from 'ws';
+
+/**
+ * Extract the workspace/project name from a window or document title.
+ * Handles em-dash (—), en-dash (–), and hyphen (-).
+ * E.g., "My - Project — Antigravity" -> "My - Project"
+ */
+export function parseProjectNameFromTitle(title?: string | null): string {
+    if (!title || !title.trim()) return '';
+    const trimmed = title.trim();
+
+    // 1. Explicit product suffix match (Antigravity / Antigravity IDE / Cascade)
+    const productMatch = trimmed.match(/^(.*?)\s+[—–-]\s+(Antigravity(?: IDE)?|Cascade)$/i);
+    if (productMatch && productMatch[1].trim()) {
+        return productMatch[1].trim();
+    }
+
+    // 2. Em-dash (—) or En-dash (–) separator match takes priority over plain hyphen
+    const dashMatch = Array.from(trimmed.matchAll(/\s+[—–]\s+/g));
+    if (dashMatch.length > 0) {
+        const lastIndex = dashMatch[dashMatch.length - 1].index!;
+        const namePart = trimmed.slice(0, lastIndex).trim();
+        if (namePart) return namePart;
+    }
+
+    // 3. Fallback to space-padded hyphen separator
+    const hyphenMatch = Array.from(trimmed.matchAll(/\s+-\s+/g));
+    if (hyphenMatch.length > 0) {
+        const lastIndex = hyphenMatch[hyphenMatch.length - 1].index!;
+        const namePart = trimmed.slice(0, lastIndex).trim();
+        if (namePart) return namePart;
+    }
+
+    return trimmed;
+}
 
 /** Configuration options for the CDP service. */
 export interface CdpServiceOptions {
@@ -231,7 +265,7 @@ export class CdpService extends EventEmitter {
         if (Number.isInteger(explicitPort) && explicitPort > 0) {
             return [explicitPort];
         }
-        return [...CDP_PORTS];
+        return getCdpCandidatePorts();
     }
 
     /**
@@ -321,9 +355,9 @@ export class CdpService extends EventEmitter {
             this.targetId = typeof target.id === 'string' ? target.id : null;
             // Extract workspace name from title (e.g., "ProjectName — Antigravity")
             if (target.title && !this.currentWorkspaceName) {
-                const titleParts = target.title.split(/\s[—–-]\s/);
-                if (titleParts.length > 0) {
-                    this.currentWorkspaceName = titleParts[0].trim();
+                const name = parseProjectNameFromTitle(target.title);
+                if (name) {
+                    this.currentWorkspaceName = name;
                 }
             }
             return target.webSocketDebuggerUrl;
@@ -600,8 +634,7 @@ export class CdpService extends EventEmitter {
                 returnByValue: true,
             });
             const liveTitle = String(titleResult?.result?.value || '');
-            const titleParts = liveTitle.split(' - ');
-            if (titleParts[0].trim().toLowerCase() === projectName.toLowerCase()) {
+            if (parseProjectNameFromTitle(liveTitle).toLowerCase() === projectName.toLowerCase()) {
                 this.currentWorkspaceName = projectName;
                 return true;
             }
@@ -668,8 +701,7 @@ export class CdpService extends EventEmitter {
         // 1. Title match (fast path)
         const titleMatch = workbenchPages.find((t: any) => {
             if (!t.title) return false;
-            const parts = t.title.split(' - ');
-            return parts[0].trim().toLowerCase() === projectName.toLowerCase();
+            return parseProjectNameFromTitle(t.title).toLowerCase() === projectName.toLowerCase();
         });
         if (titleMatch) {
             return this.connectToPage(titleMatch, projectName);
@@ -734,8 +766,7 @@ export class CdpService extends EventEmitter {
                     returnByValue: true,
                 });
                 const liveTitle = String(result?.result?.value || '');
-                const liveParts = liveTitle.split(' - ');
-                if (liveParts[0].trim().toLowerCase() === projectName.toLowerCase()) {
+                if (parseProjectNameFromTitle(liveTitle).toLowerCase() === projectName.toLowerCase()) {
                     this.currentWorkspaceName = projectName;
                     logger.debug(`[CdpService] Probe success: detected "${projectName}"`);
                     return true;
@@ -971,8 +1002,7 @@ export class CdpService extends EventEmitter {
             // Title match
             const titleMatch = workbenchPages.find((t: any) => {
                 if (!t.title) return false;
-                const parts = t.title.split(' - ');
-                return parts[0].trim().toLowerCase() === projectName.toLowerCase();
+                return parseProjectNameFromTitle(t.title).toLowerCase() === projectName.toLowerCase();
             });
             if (titleMatch) {
                 return this.connectToPage(titleMatch, projectName);

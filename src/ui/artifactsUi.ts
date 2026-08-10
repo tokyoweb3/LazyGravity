@@ -4,19 +4,11 @@
  * Follows the same pattern as sessionPickerUi.ts.
  */
 
-import {
-    ActionRowBuilder,
-    ButtonBuilder,
-    ButtonInteraction,
-    ButtonStyle,
-    ChatInputCommandInteraction,
-    EmbedBuilder,
-    StringSelectMenuBuilder,
-    MessageFlags,
-} from 'discord.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonInteraction, ButtonStyle, ChatInputCommandInteraction, EmbedBuilder, StringSelectMenuBuilder } from 'discord.js';
 import * as path from 'path';
 import { UserPreferenceRepository } from '../database/userPreferenceRepository';
 import { ChatSessionRepository } from '../database/chatSessionRepository';
+import { t } from '../utils/i18n';
 
 import type { ArtifactInfo } from '../services/artifactService';
 import { ArtifactService, artifactTypeLabel } from '../services/artifactService';
@@ -99,22 +91,22 @@ export function buildArtifactPickerUI(
     renderMode: 'thread' | 'inline' = 'thread',
 ): { embeds: EmbedBuilder[]; components: ActionRowBuilder<any>[] } {
     const embed = new EmbedBuilder()
-        .setTitle('📂 Artifacts')
+        .setTitle(t('📂 Artifacts'))
         .setColor(0x5865F2)
         .setTimestamp();
 
     if (artifacts.length === 0) {
-        embed.setDescription('No artifacts found for the active session.');
+        embed.setDescription(t('No artifacts found for the active session.'));
         return { embeds: [embed], components: [] };
     }
 
     const displayId = conversationId
         ? conversationId.slice(0, 8) + '…'
-        : 'current session';
+        : t('current session');
 
     embed.setDescription(
-        `**${artifacts.length}** artifact(s) found (conversation \`${displayId}\`)\n` +
-        'Select one to render its content below.',
+        `**${artifacts.length}** ${t('artifact(s) found')} (conversation \`${displayId}\`)\n` +
+        t('Select one to render its content below.'),
     );
 
     const fields = artifacts.map((a) => ({
@@ -140,7 +132,7 @@ export function buildArtifactPickerUI(
 
     const selectMenu = new StringSelectMenuBuilder()
         .setCustomId(ARTIFACT_SELECT_ID)
-        .setPlaceholder('Select an artifact to view…')
+        .setPlaceholder(t('Select an artifact to view…'))
         .addOptions(options);
 
     const components: ActionRowBuilder<any>[] = [
@@ -152,17 +144,17 @@ export function buildArtifactPickerUI(
     if (renderMode === 'thread') {
         toggleButton
             .setCustomId(`${ARTIFACT_INLINE_BTN}:${conversationId || ''}`)
-            .setLabel('💬 Switch to Inline')
+            .setLabel(`💬 ${t('Switch to Inline')}`)
             .setStyle(ButtonStyle.Secondary)
             .setEmoji('💬');
-        embed.setFooter({ text: 'Output: Thread (one thread per file)' });
+        embed.setFooter({ text: t('Output: Thread (one thread per file)') });
     } else {
         toggleButton
             .setCustomId(`${ARTIFACT_THREAD_BTN}:${conversationId || ''}`)
-            .setLabel('📌 Switch to Thread')
+            .setLabel(`📌 ${t('Switch to Thread')}`)
             .setStyle(ButtonStyle.Primary)
             .setEmoji('📌');
-        embed.setFooter({ text: 'Output: Inline' });
+        embed.setFooter({ text: t('Output: Inline') });
     }
 
     components.push(new ActionRowBuilder<ButtonBuilder>().addComponents(toggleButton));

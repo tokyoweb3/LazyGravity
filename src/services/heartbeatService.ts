@@ -106,6 +106,21 @@ export class HeartbeatService {
         }
     }
 
+    /** Mutation lock to serialize message deletion operations */
+    private cleanupLock: Promise<void> = Promise.resolve();
+
+    /**
+     * Executes cleanup task inside a serialized promise chain to prevent race conditions.
+     */
+    private runSerializedCleanup<T>(fn: () => Promise<T>): Promise<T> {
+        let resultPromise: Promise<T>;
+        this.cleanupLock = this.cleanupLock.then(() => {
+            resultPromise = fn();
+            return resultPromise.then(() => {}, () => {});
+        });
+        return this.cleanupLock.then(() => resultPromise);
+    }
+
     /**
      * Updates the local configuration and restarts the loop.
      * @param enabled Enabled state flag.
@@ -119,6 +134,69 @@ export class HeartbeatService {
         
         // If channel changed, clear the last message ID
         if (config.heartbeatChannelId !== channelId) {
+            await this.runSerializedCleanup(async () => {
+                let clearId = false;
+                const currentConfig = ConfigLoader.load();
+                if (currentConfig.heartbeatChannelId && currentConfig.heartbeatLastMessageId) {
+                    try {
+                        const oldChannel = await this.client?.channels.fetch(currentConfig.heartbeatChannelId);
+                        if (gen !== this.generationToken) return;
+                        if (oldChannel && oldChannel.isTextBased()) {
+                            try {
+                                const oldMsg = await (oldChannel as TextChannel).messages.fetch(currentConfig.heartbeatLastMessageId);
+                                if (gen !== this.generationToken) return;
+                                if (oldMsg) {
+                                    await oldMsg.delete();
+                                    clearId = true;
+                                }
+                            } catch (err: any) {
+                                if (err?.code === 10008 || err?.status === 404) {
+                                    clearId = true;
+                                } else {
+                                    throw err;
+                                }
+                            }
+                        } else {
+                            clearId = true;
+                        }
+                    } catch (err: any) {
+                        logger.debug('[HeartbeatService] Failed to delete old heartbeat message from previous channel:', err);
+                        if (err?.code === 10008 || err?.code === 10003 || err?.status === 404) {
+                            clearId = true;
+                        }
+                    }
+                } else {
+                    clearId = true;
+                }
+                if (gen !== this.generationToken) return;
+                if (clearId) {
+                    ConfigLoader.save({ heartbeatLastMessageId: undefined });
+                }
+            });
+        }
+
+        if (gen !== this.generationToken) return;
+        // Save to config.json
+        ConfigLoader.save({
+            heartbeatEnabled: enabled,
+            heartbeatIntervalMs: intervalMs,
+            heartbeatChannelId: channelId,
+        });
+
+        logger.info(`[HeartbeatService] Config updated: enabled=${enabled}, interval=${intervalMs}ms, channel=${channelId}`);
+        
+        // Restart loop
+        this.start();
+    }
+
+    /**
+     * Deletes the active message, updates configuration state to disabled, and stops the loop.
+     */
+    public async disable() {
+        this.stop();
+        const gen = this.generationToken;
+        await this.runSerializedCleanup(async () => {
+            const config = ConfigLoader.load();
             let clearId = false;
             if (config.heartbeatChannelId && config.heartbeatLastMessageId) {
                 try {
@@ -143,7 +221,7 @@ export class HeartbeatService {
                         clearId = true;
                     }
                 } catch (err: any) {
-                    logger.debug('[HeartbeatService] Failed to delete old heartbeat message from previous channel:', err);
+                    logger.debug('[HeartbeatService] Failed to delete heartbeat message upon disabling:', err);
                     if (err?.code === 10008 || err?.code === 10003 || err?.status === 404) {
                         clearId = true;
                     }
@@ -152,68 +230,10 @@ export class HeartbeatService {
                 clearId = true;
             }
             if (gen !== this.generationToken) return;
-            if (clearId) {
-                ConfigLoader.save({ heartbeatLastMessageId: undefined });
-            }
-        }
-
-        if (gen !== this.generationToken) return;
-        // Save to config.json
-        ConfigLoader.save({
-            heartbeatEnabled: enabled,
-            heartbeatIntervalMs: intervalMs,
-            heartbeatChannelId: channelId,
-        });
-
-        logger.info(`[HeartbeatService] Config updated: enabled=${enabled}, interval=${intervalMs}ms, channel=${channelId}`);
-        
-        // Restart loop
-        this.start();
-    }
-
-    /**
-     * Deletes the active message, updates configuration state to disabled, and stops the loop.
-     */
-    public async disable() {
-        this.stop();
-        const gen = this.generationToken;
-        const config = ConfigLoader.load();
-        let clearId = false;
-        if (config.heartbeatChannelId && config.heartbeatLastMessageId) {
-            try {
-                const oldChannel = await this.client?.channels.fetch(config.heartbeatChannelId);
-                if (gen !== this.generationToken) return;
-                if (oldChannel && oldChannel.isTextBased()) {
-                    try {
-                        const oldMsg = await (oldChannel as TextChannel).messages.fetch(config.heartbeatLastMessageId);
-                        if (gen !== this.generationToken) return;
-                        if (oldMsg) {
-                            await oldMsg.delete();
-                            clearId = true;
-                        }
-                    } catch (err: any) {
-                        if (err?.code === 10008 || err?.status === 404) {
-                            clearId = true;
-                        } else {
-                            throw err;
-                        }
-                    }
-                } else {
-                    clearId = true;
-                }
-            } catch (err: any) {
-                logger.debug('[HeartbeatService] Failed to delete heartbeat message upon disabling:', err);
-                if (err?.code === 10008 || err?.code === 10003 || err?.status === 404) {
-                    clearId = true;
-                }
-            }
-        } else {
-            clearId = true;
-        }
-        if (gen !== this.generationToken) return;
-        ConfigLoader.save({
-            heartbeatEnabled: false,
-            heartbeatLastMessageId: clearId ? undefined : config.heartbeatLastMessageId,
+            ConfigLoader.save({
+                heartbeatEnabled: false,
+                heartbeatLastMessageId: clearId ? undefined : config.heartbeatLastMessageId,
+            });
         });
         logger.info('[HeartbeatService] Heartbeat disabled.');
     }

@@ -1,5 +1,5 @@
 import { logger } from '../utils/logger';
-import { CDP_PORTS } from '../utils/cdpPorts';
+import { getCdpCandidatePorts } from '../utils/cdpPorts';
 import { getAntigravityCdpHint, getAntigravityCliPath } from '../utils/pathUtils';
 import * as http from 'http';
 import { execFile, spawn } from 'child_process';
@@ -61,7 +61,7 @@ function serializeLifecycle<T>(operation: () => Promise<T>): Promise<T> {
 /**
  * Starts the Antigravity IDE process with CDP enabled on the specified port.
  */
-export function startAntigravity(port: number = CDP_PORTS[0]): Promise<'started' | 'already-running'> {
+export function startAntigravity(port: number = getCdpCandidatePorts()[0]): Promise<'started' | 'already-running'> {
     return serializeLifecycle(async () => {
         if (await checkPort(port)) return 'already-running';
 
@@ -93,7 +93,7 @@ export function startAntigravity(port: number = CDP_PORTS[0]): Promise<'started'
 /**
  * Stops the running Antigravity IDE CDP process on the specified port (SIGTERM on POSIX, Stop-Process -Force on Windows).
  */
-export function stopAntigravity(port: number = CDP_PORTS[0]): Promise<'stopped' | 'already-stopped'> {
+export function stopAntigravity(port: number = getCdpCandidatePorts()[0]): Promise<'stopped' | 'already-stopped'> {
     return serializeLifecycle(async () => {
         if (!await checkPort(port)) return 'already-stopped';
 
@@ -188,7 +188,7 @@ function getCdpTargets(port: number): Promise<Record<string, unknown>[]> {
 export async function ensureAntigravityRunning(): Promise<void> {
     logger.debug('[AntigravityLauncher] Checking CDP ports...');
 
-    for (const port of CDP_PORTS) {
+    for (const port of getCdpCandidatePorts()) {
         if (await checkPort(port)) {
             logger.debug(`[AntigravityLauncher] OK — Port ${port} responding`);
             return;

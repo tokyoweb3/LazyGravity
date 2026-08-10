@@ -313,7 +313,7 @@ describe('assistantDomExtractor', () => {
             panel.className = 'antigravity-agent-side-panel';
 
             const message = document.createElement('div');
-            message.setAttribute('data-message-role', 'assistant');
+            message.className = 'rendered-markdown';
 
             // Ordered and unordered lists
             const ol = document.createElement('ol');

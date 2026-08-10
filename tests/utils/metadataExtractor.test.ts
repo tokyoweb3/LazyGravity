@@ -35,4 +35,11 @@ describe('Metadata Extractor', () => {
         expect(result.taskId).toBe('foo-bar');
         expect(result.directory).toBe('/project/a/b/c');
     });
+
+    it('ignores whitespace-only Dir metadata and does not set directory', () => {
+        const footerText = 'TaskID: abc-123 | Dir:    ';
+        const result = extractMetadataFromFooter(footerText);
+        expect(result.taskId).toBe('abc-123');
+        expect(result.directory).toBeUndefined();
+    });
 });
