@@ -450,5 +450,50 @@ describe('JoinCommandHandler', () => {
                 }),
             );
         });
+
+        it('falls back to workspace channel when session is not explicitly bound via findByDisplayName', async () => {
+            bindingRepo.upsert({ channelId: 'ws-ch-123', workspacePath: 'my-project', guildId: 'guild-1' });
+            mockPool.getUserMessageDetector.mockReturnValue(undefined);
+            const mockCdp = { isConnected: () => true } as any;
+            mockPool.getOrConnect.mockResolvedValue(mockCdp);
+
+            const { getCurrentChatTitle } = require('../../src/services/cdpBridgeManager');
+            (getCurrentChatTitle as jest.Mock).mockResolvedValueOnce('Random Session');
+
+            const mockSend = jest.fn().mockResolvedValue(undefined);
+            mockClient.channels.cache.get.mockImplementation((id: string) => {
+                if (id === 'ws-ch-123') return { send: mockSend };
+                return null;
+            });
+
+            let registeredCallback: ((info: { text: string }) => void) | null = null;
+            (ensureUserMessageDetector as jest.Mock).mockImplementation((bridge, cdp, proj, callback) => {
+                registeredCallback = callback;
+            });
+
+            const interaction = makeMockInteraction({ channelId: 'ws-ch-123' });
+            const bridge = {
+                pool: mockPool,
+                approvalChannelByWorkspace: new Map([['my-project', { id: 'ws-ch-123' }]]),
+            } as any;
+
+            await handler.handleMirror(interaction as any, bridge);
+
+            expect(registeredCallback).not.toBeNull();
+
+            await (handler as any).routeMirroredMessage(mockCdp, 'my-project', { text: 'Hello from PC' }, bridge);
+
+            expect(mockSend).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    embeds: expect.arrayContaining([
+                        expect.objectContaining({
+                            data: expect.objectContaining({
+                                description: expect.stringContaining('Hello from PC'),
+                            }),
+                        }),
+                    ]),
+                }),
+            );
+        });
     });
 });
