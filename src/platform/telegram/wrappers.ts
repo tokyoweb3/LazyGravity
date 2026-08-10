@@ -49,6 +49,7 @@ export interface TelegramBotLike {
         sendPhoto?(chatId: number | string, photo: any, options?: any): Promise<any>;
         sendDocument?(chatId: number | string, document: any, options?: any): Promise<any>;
         getFile?(file_id: string): Promise<{ file_id: string; file_path?: string }>;
+        getMe?(): Promise<any>;
     };
     /**
      * Convert a Buffer to a platform-specific input file object.

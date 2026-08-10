@@ -324,4 +324,27 @@ describe('CdpService - Cross-Platform Workspace Launching', () => {
             expect(service.getCurrentWorkspaceName()).toBe('MyProject');
         });
     });
+
+    describe('parseProjectNameFromTitle', () => {
+        const { parseProjectNameFromTitle } = require('../../src/services/cdpService');
+
+        it('should parse titles with hyphen, en-dash, and em-dash separators', () => {
+            expect(parseProjectNameFromTitle('MyProject - Antigravity')).toBe('MyProject');
+            expect(parseProjectNameFromTitle('MyProject – Antigravity')).toBe('MyProject');
+            expect(parseProjectNameFromTitle('MyProject — Antigravity')).toBe('MyProject');
+            expect(parseProjectNameFromTitle('  Complex-Project — Antigravity IDE  ')).toBe('Complex-Project');
+        });
+
+        it('should preserve full project name when earlier hyphens exist before product suffix', () => {
+            expect(parseProjectNameFromTitle('My - Project — Antigravity')).toBe('My - Project');
+            expect(parseProjectNameFromTitle('My - Project - Cascade')).toBe('My - Project');
+            expect(parseProjectNameFromTitle('My - Project — Antigravity IDE')).toBe('My - Project');
+        });
+
+        it('should handle null, undefined, or empty titles gracefully', () => {
+            expect(parseProjectNameFromTitle(null)).toBe('');
+            expect(parseProjectNameFromTitle(undefined)).toBe('');
+            expect(parseProjectNameFromTitle('   ')).toBe('');
+        });
+    });
 });

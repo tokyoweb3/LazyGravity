@@ -23,7 +23,10 @@ export function extractMetadataFromFooter(footerText: string): TaskMetadata {
 
     const dirMatch = footerText.match(/Dir:\s*([^|]+)/i);
     if (dirMatch && dirMatch[1]) {
-        result.directory = dirMatch[1].trim();
+        const trimmed = dirMatch[1].trim();
+        if (trimmed.length > 0) {
+            result.directory = trimmed;
+        }
     }
 
     return result;
