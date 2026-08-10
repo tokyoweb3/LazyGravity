@@ -105,5 +105,6 @@
   "Fast Mode — for simple tasks": "高速応答モード — シンプルなタスク向け",
   "Plan Mode — for complex step-by-step tasks": "計画モード — 複雑なタスクを段階的に実行",
   "⚠️ Mode name not specified. Available modes: ": "⚠️ モード名が指定されていません。利用可能なモード: ",
-  "⚠️ Invalid mode \"${modeName}\". Available modes: ${AVAILABLE_MODES.join(', ')}": "⚠️ 無効なモード \"${modeName}\" です。利用可能なモード: ${AVAILABLE_MODES.join(', ')}"
+  "⚠️ Invalid mode \"${modeName}\". Available modes: ${AVAILABLE_MODES.join(', ')}": "⚠️ 無効なモード \"${modeName}\" です。利用可能なモード: ${AVAILABLE_MODES.join(', ')}",
+  "📂 Artifacts": "📂 成果物一覧"
 }

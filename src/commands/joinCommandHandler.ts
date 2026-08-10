@@ -312,7 +312,7 @@ export class JoinCommandHandler {
         }
 
         ensureUserMessageDetector(bridge, cdp, projectName, (info) => {
-            this.routeMirroredMessage(cdp, projectName, info)
+            this.routeMirroredMessage(cdp, projectName, info, bridge)
                 .catch((err) => {
                     logger.error('[Mirror] Error routing mirrored message:', err);
                 });
@@ -323,13 +323,14 @@ export class JoinCommandHandler {
      * Route a mirrored PC message to the correct Discord channel and
      * start a passive ResponseMonitor to capture the AI response.
      *
-     * Routing: chatSessionRepo.findByDisplayName only — no fallbacks.
-     * Sessions without an explicit channel binding are silently skipped.
+     * Routing: chatSessionRepo.findByDisplayName first, falling back to
+     * the project workspace approval channel if no session binding exists.
      */
     private async routeMirroredMessage(
         cdp: CdpService,
         projectName: string,
         info: { text: string },
+        bridge?: CdpBridge,
     ): Promise<void> {
         const chatTitle = await getCurrentChatTitle(cdp);
 
@@ -339,12 +340,22 @@ export class JoinCommandHandler {
         }
 
         const session = this.chatSessionRepo.findByDisplayName(projectName, chatTitle);
-        if (!session) {
-            logger.debug(`[Mirror] No bound channel for session "${chatTitle}", skipping`);
+        let targetChannelId = session?.channelId;
+
+        // Fallback to workspace approval channel if no session-specific channel binding exists
+        if (!targetChannelId && bridge) {
+            const workspaceChannel = bridge.approvalChannelByWorkspace.get(projectName);
+            if (workspaceChannel) {
+                targetChannelId = workspaceChannel.id;
+            }
+        }
+
+        if (!targetChannelId) {
+            logger.debug(`[Mirror] No bound channel for session "${chatTitle}" or workspace "${projectName}", skipping`);
             return;
         }
 
-        const channel = this.client.channels.cache.get(session.channelId);
+        const channel = this.client.channels.cache.get(targetChannelId);
         if (!channel || !('send' in channel)) return;
         const sendable = channel as { send: (...args: any[]) => Promise<any> };
 

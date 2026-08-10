@@ -68,6 +68,7 @@ import { ArtifactThreadRepository } from '../database/artifactThreadRepository';
 import { ScheduleService } from '../services/scheduleService';
 import type { AntigravityAccountConfig } from '../utils/configLoader';
 import { inferParentScopeChannelId, listAccountNames, resolveScopedAccountName } from '../utils/accountUtils';
+import { isSendableChannel } from '../utils/discordChannelUtils';
 import { ACCOUNT_SELECT_ID, sendAccountUI } from '../ui/accountUi';
 
 /**
@@ -444,11 +445,11 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                     } catch (interactionError: any) {
                         if (interactionError?.code === 10062 || interactionError?.code === 40060) {
                             logger.warn('[Approval] Interaction expired. Responding directly in the channel.');
-                            if (interaction.channel && 'send' in interaction.channel) {
+                            if (isSendableChannel(interaction.channel)) {
                                 const fallbackMessage = success
                                     ? `${actionLabel} completed.`
                                     : 'Approval button not found.';
-                                await (interaction.channel as any).send(fallbackMessage).catch(logger.error);
+                                await interaction.channel.send(fallbackMessage).catch(logger.error);
                             }
                         } else {
                             throw interactionError;
@@ -524,7 +525,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                             });
 
                             // Send plan content as a new message in the same channel
-                            if (planContent && interaction.channel && 'send' in interaction.channel) {
+                            if (planContent && isSendableChannel(interaction.channel)) {
                                 // Discord embed description limit is 4096 chars
                                 const MAX_PLAN_CONTENT = 4096;
                                 const truncated = planContent.length > MAX_PLAN_CONTENT
@@ -537,7 +538,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                                     .setColor(0x3498DB)
                                     .setTimestamp();
 
-                                await (interaction.channel as any).send({ embeds: [planEmbed] }).catch(logger.error);
+                                await interaction.channel.send({ embeds: [planEmbed] }).catch(logger.error);
                             } else if (!planContent) {
                                 await interaction.followUp({
                                     content: t('Could not extract plan content from the editor.'),
@@ -565,11 +566,11 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                             } catch (interactionError: any) {
                                 if (interactionError?.code === 10062 || interactionError?.code === 40060) {
                                     logger.warn('[Planning] Interaction expired. Responding directly in the channel.');
-                                    if (interaction.channel && 'send' in interaction.channel) {
+                                    if (isSendableChannel(interaction.channel)) {
                                         const fallbackMessage = clicked
                                             ? t('Reject completed.')
                                             : t('Reject button not found.');
-                                        await (interaction.channel as any).send(fallbackMessage).catch(logger.error);
+                                        await interaction.channel.send(fallbackMessage).catch(logger.error);
                                     }
                                 } else {
                                     throw interactionError;
@@ -598,11 +599,11 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                             } catch (interactionError: any) {
                                 if (interactionError?.code === 10062 || interactionError?.code === 40060) {
                                     logger.warn('[Planning] Interaction expired. Responding directly in the channel.');
-                                    if (interaction.channel && 'send' in interaction.channel) {
+                                    if (isSendableChannel(interaction.channel)) {
                                         const fallbackMessage = clicked
                                             ? t('Proceed completed. Implementation started.')
                                             : t('Proceed button not found.');
-                                        await (interaction.channel as any).send(fallbackMessage).catch(logger.error);
+                                        await interaction.channel.send(fallbackMessage).catch(logger.error);
                                     }
                                 } else {
                                     throw interactionError;
@@ -702,12 +703,12 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                     } catch (err: any) {
                         if (err?.code === 10062 || err?.code === 40060) {
                             logger.warn('[FileChange] Interaction expired. Responding directly in the channel.');
-                            if (interaction.channel && 'send' in interaction.channel) {
+                            if (isSendableChannel(interaction.channel)) {
                                 const actionLabel = fileChangeAction.action === 'accept' ? 'Accept All' : 'Reject All';
                                 const fallbackMessage = clicked
                                     ? `${actionLabel} completed.`
                                     : t('File change button not found or error occurred.');
-                                await (interaction.channel as any).send(fallbackMessage).catch(logger.error);
+                                await interaction.channel.send(fallbackMessage).catch(logger.error);
                             }
                         } else {
                             logger.error('[FileChange] action error:', err);
@@ -767,11 +768,11 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                             } catch (interactionError: any) {
                                 if (interactionError?.code === 10062 || interactionError?.code === 40060) {
                                     logger.warn('[ErrorPopup] Interaction expired. Responding directly in the channel.');
-                                    if (interaction.channel && 'send' in interaction.channel) {
+                                    if (isSendableChannel(interaction.channel)) {
                                         const fallbackMessage = clicked
                                             ? t('Error popup dismissed.')
                                             : t('Dismiss button not found.');
-                                        await (interaction.channel as any).send(fallbackMessage).catch(logger.error);
+                                        await interaction.channel.send(fallbackMessage).catch(logger.error);
                                     }
                                 } else {
                                     throw interactionError;
@@ -808,7 +809,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                             });
 
                             // Send debug info as a new message
-                            if (clipboardContent && interaction.channel && 'send' in interaction.channel) {
+                            if (clipboardContent && isSendableChannel(interaction.channel)) {
                                 const MAX_DEBUG_CONTENT = 4096;
                                 const truncated = clipboardContent.length > MAX_DEBUG_CONTENT
                                     ? clipboardContent.substring(0, MAX_DEBUG_CONTENT - 15) + '\n\n(truncated)'
@@ -820,7 +821,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                                     .setColor(0x3498DB)
                                     .setTimestamp();
 
-                                await (interaction.channel as any).send({ embeds: [debugEmbed] }).catch(logger.error);
+                                await interaction.channel.send({ embeds: [debugEmbed] }).catch(logger.error);
                             } else if (!clipboardContent) {
                                 await interaction.followUp({
                                     content: t('Could not read debug info from clipboard.'),
@@ -849,11 +850,11 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                             } catch (interactionError: any) {
                                 if (interactionError?.code === 10062 || interactionError?.code === 40060) {
                                     logger.warn('[ErrorPopup] Interaction expired. Responding directly in the channel.');
-                                    if (interaction.channel && 'send' in interaction.channel) {
+                                    if (isSendableChannel(interaction.channel)) {
                                         const fallbackMessage = clicked
                                             ? t('Retry initiated.')
                                             : t('Retry button not found.');
-                                        await (interaction.channel as any).send(fallbackMessage).catch(logger.error);
+                                        await interaction.channel.send(fallbackMessage).catch(logger.error);
                                     }
                                 } else {
                                     throw interactionError;
@@ -934,11 +935,11 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                     } catch (interactionError: any) {
                         if (interactionError?.code === 10062 || interactionError?.code === 40060) {
                             logger.warn('[RunCommand] Interaction expired. Responding directly in the channel.');
-                            if (interaction.channel && 'send' in interaction.channel) {
+                            if (isSendableChannel(interaction.channel)) {
                                 const fallbackMessage = success
                                     ? `${actionLabel} completed.`
                                     : t('Run command button not found.');
-                                await (interaction.channel as any).send(fallbackMessage).catch(logger.error);
+                                await interaction.channel.send(fallbackMessage).catch(logger.error);
                             }
                         } else {
                             throw interactionError;
@@ -1522,10 +1523,10 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
             }
 
             try {
-                const artifactService = new ArtifactService();
+                const artifactService = deps.artifactService || new ArtifactService();
 
                 // Resolve the selected artifact by rescanning and matching the encoded value
-                const channelId = (interaction as any).channelId as string;
+                const channelId = interaction.channelId;
                 const session = deps.chatSessionRepo?.findByChannelId(channelId);
                 const sessionTitle = session?.displayName?.trim() ?? '';
                 const workspaceDirName = getWorkspaceDirName(session);
@@ -1555,9 +1556,10 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                 // Get user render mode
                 const renderMode = deps.userPrefRepo?.getArtifactRenderMode(interaction.user.id) ?? 'thread';
 
-                let targetChannel: any = interaction.channel;
+                let targetChannel = interaction.channel;
+                const channelHasThreads = interaction.channel && 'threads' in interaction.channel;
 
-                if (renderMode === 'thread' && deps.artifactThreadRepo && (interaction as any).channel?.threads) {
+                if (renderMode === 'thread' && deps.artifactThreadRepo && channelHasThreads) {
                     try {
                         const existingThreadId = deps.artifactThreadRepo.getThreadId(channelId, conversationId, decoded.filename);
                         let thread: any = null;
@@ -1631,7 +1633,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                         remaining = remaining.slice(chunk.length).replace(/^\n/, '');
                     }
                     
-                    if (targetChannel && targetChannel.send) {
+                    if (isSendableChannel(targetChannel)) {
                         await targetChannel.send({ content: chunk, allowedMentions: { parse: [] } }).catch(logger.error);
                     } else {
                         await interaction.followUp({ content: chunk, allowedMentions: { parse: [] } }).catch(logger.error);

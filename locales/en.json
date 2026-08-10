@@ -81,5 +81,6 @@
   "Fast Mode — for simple tasks": "Fast Mode — for simple tasks",
   "Plan Mode — for complex step-by-step tasks": "Plan Mode — for complex step-by-step tasks",
   "⚠️ Mode name not specified. Available modes: ": "⚠️ Mode name not specified. Available modes: ",
-  "⚠️ Invalid mode \"${modeName}\". Available modes: ${AVAILABLE_MODES.join(', ')}": "⚠️ Invalid mode \"${modeName}\". Available modes: ${AVAILABLE_MODES.join(', ')}"
+  "⚠️ Invalid mode \"${modeName}\". Available modes: ${AVAILABLE_MODES.join(', ')}": "⚠️ Invalid mode \"${modeName}\". Available modes: ${AVAILABLE_MODES.join(', ')}",
+  "📂 Artifacts": "📂 Artifacts"
 }

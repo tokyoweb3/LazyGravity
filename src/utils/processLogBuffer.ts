@@ -154,3 +154,17 @@ export class ProcessLogBuffer {
         this.seen.delete(removed.toLowerCase());
     }
 }
+
+/**
+ * Factory creating a ProcessLogBuffer initialized with standardized platform defaults.
+ * @param options Optional override parameters.
+ * @returns Configured ProcessLogBuffer instance.
+ */
+export function createDefaultProcessLogBuffer(options: ProcessLogBufferOptions = {}): ProcessLogBuffer {
+    return new ProcessLogBuffer({
+        maxChars: options.maxChars ?? DEFAULT_MAX_CHARS,
+        maxEntries: options.maxEntries ?? DEFAULT_MAX_ENTRIES,
+        maxEntryLength: options.maxEntryLength ?? 220,
+    });
+}
+
