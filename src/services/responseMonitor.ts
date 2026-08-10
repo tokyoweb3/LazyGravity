@@ -21,11 +21,6 @@ export const RESPONSE_SELECTORS = {
             { sel: '.text-ide-message-block-bot-color', score: 11 },
             { sel: '.rendered-markdown', score: 10 },
             { sel: '.leading-relaxed.select-text', score: 9 },
-            { sel: '[data-message-author-role="assistant"]', score: 7 },
-            { sel: '[data-message-role="assistant"]', score: 6 },
-            { sel: '[class*="assistant-message"]', score: 5 },
-            { sel: '[class*="message-content"]', score: 4 },
-            { sel: '[class*="markdown-body"]', score: 3 },
             { sel: '.prose', score: 2 },
         ];
 
@@ -218,11 +213,6 @@ export const RESPONSE_SELECTORS = {
             { sel: '.text-ide-message-block-bot-color', score: 11 },
             { sel: '.rendered-markdown', score: 10 },
             { sel: '.leading-relaxed.select-text', score: 9 },
-            { sel: '[data-message-author-role="assistant"]', score: 7 },
-            { sel: '[data-message-role="assistant"]', score: 6 },
-            { sel: '[class*="assistant-message"]', score: 5 },
-            { sel: '[class*="message-content"]', score: 4 },
-            { sel: '[class*="markdown-body"]', score: 3 },
             { sel: '.prose', score: 2 },
         ];
 
@@ -310,11 +300,6 @@ export const RESPONSE_SELECTORS = {
             { sel: '.text-ide-message-block-bot-color', score: 11 },
             { sel: '.rendered-markdown', score: 10 },
             { sel: '.leading-relaxed.select-text', score: 9 },
-            { sel: '[data-message-author-role="assistant"]', score: 7 },
-            { sel: '[data-message-role="assistant"]', score: 6 },
-            { sel: '[class*="assistant-message"]', score: 5 },
-            { sel: '[class*="message-content"]', score: 4 },
-            { sel: '[class*="markdown-body"]', score: 3 },
             { sel: '.prose', score: 2 },
         ];
 
@@ -381,7 +366,7 @@ export const RESPONSE_SELECTORS = {
         const scope = panel || document;
         const QUOTA_KEYWORDS = ['model quota reached', 'rate limit', 'quota exceeded', 'exhausted your quota', 'exhausted quota'];
         const isInsideResponse = (node) =>
-            node.closest('.rendered-markdown, .prose, pre, code, [data-message-author-role="assistant"], [data-message-role="assistant"], [class*="message-content"]');
+            node.closest('.rendered-markdown, .prose, pre, code');
 
         // Primary: text-based detection via h3 span (Tailwind-only popup)
         const headings = scope.querySelectorAll('h3 span, h3');
@@ -440,7 +425,7 @@ export const RESPONSE_SELECTORS = {
         }
 
         // 2. Find all text nodes that look like activity
-        var selectors = '.rendered-markdown, .leading-relaxed.select-text, .flex.flex-col.gap-y-3, [data-message-author-role="assistant"], [data-message-role="assistant"], [class*="assistant-message"], [class*="message-content"], [class*="markdown-body"], .prose';
+        var selectors = '.rendered-markdown, .leading-relaxed.select-text, .flex.flex-col.gap-y-3, .prose';
         var nodes = scope.querySelectorAll(selectors);
         for (var j = 0; j < nodes.length; j++) {
             var text = (nodes[j].innerText || nodes[j].textContent || '').trim();

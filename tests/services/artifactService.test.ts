@@ -2,6 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import * as crypto from 'crypto';
 import { ArtifactService, ArtifactInfo } from '../../src/services/artifactService';
 
 describe('ArtifactService', () => {
@@ -22,9 +23,15 @@ describe('ArtifactService', () => {
             const conversationId = '123e4567-e89b-12d3-a456-426614174000';
             const filename = 'implementation_plan.md';
             
+            const expectedHash = crypto
+                .createHash('sha256')
+                .update(`${conversationId}:${filename}`)
+                .digest('hex')
+                .slice(0, 8);
+
             const encoded = ArtifactService.encodeSelectValue(conversationId, filename);
-            // New format includes a 4-char hash, e.g. art_123e4567e89b_abcd_implementation_plan.md
-            expect(encoded).toMatch(/^art_123e4567e89b_[a-z0-9]{4}_implementation_plan\.md$/);
+            // Assert exact known SHA-256 hash for the fixture
+            expect(encoded).toBe(`art_123e4567_${expectedHash}_implementation_plan.md`);
 
             const artifacts: ArtifactInfo[] = [
                 {
@@ -43,6 +50,80 @@ describe('ArtifactService', () => {
 
         it('should return null for unknown values', () => {
             const decoded = artifactService.decodeSelectValue('art_unknown', []);
+            expect(decoded).toBeNull();
+        });
+
+        it('should reject tampered or changed hashes', () => {
+            const conversationId = '123e4567-e89b-12d3-a456-426614174000';
+            const filename = 'implementation_plan.md';
+            const encoded = ArtifactService.encodeSelectValue(conversationId, filename);
+            
+            // Tamper with the hash segment (middle part)
+            const parts = encoded.split('_');
+            parts[2] = 'deadbeef';
+            const tampered = parts.join('_');
+
+            const artifacts: ArtifactInfo[] = [
+                { conversationId, filename, artifactType: 'ARTIFACT_TYPE_IMPLEMENTATION_PLAN', absolutePath: 'ignored' }
+            ];
+
+            const decoded = artifactService.decodeSelectValue(tampered, artifacts);
+            expect(decoded).toBeNull();
+        });
+
+        it('should reject decoding when filename is swapped but original hash is retained', () => {
+            const conversationId = '123e4567-e89b-12d3-a456-426614174000';
+            const originalFile = 'implementation_plan.md';
+            const swappedFile = 'walkthrough.md';
+
+            // Generate encoded value for implementation_plan.md
+            const encodedOriginal = ArtifactService.encodeSelectValue(conversationId, originalFile);
+            
+            // Swap out implementation_plan.md with walkthrough.md in the select string while retaining original hash
+            const hash = encodedOriginal.split('_')[2];
+            const swappedSelectValue = `art_123e4567_${hash}_${swappedFile}`;
+
+            const artifacts: ArtifactInfo[] = [
+                { conversationId, filename: swappedFile, artifactType: 'ARTIFACT_TYPE_WALKTHROUGH', absolutePath: 'ignored' }
+            ];
+
+            const decoded = artifactService.decodeSelectValue(swappedSelectValue, artifacts);
+            expect(decoded).toBeNull();
+        });
+
+        it('should correctly resolve between two conversation IDs sharing the same short prefix and filename', () => {
+            // Both IDs share the same 8-char shortConv prefix ('123e4567')
+            const convA = '123e4567-aaaa-1111-2222-333333333333';
+            const convB = '123e4567-bbbb-4444-5555-666666666666';
+            const filename = 'walkthrough.md';
+
+            const encodedA = ArtifactService.encodeSelectValue(convA, filename);
+            const encodedB = ArtifactService.encodeSelectValue(convB, filename);
+
+            const artifacts: ArtifactInfo[] = [
+                { conversationId: convA, filename, artifactType: 'ARTIFACT_TYPE_WALKTHROUGH', absolutePath: 'a' },
+                { conversationId: convB, filename, artifactType: 'ARTIFACT_TYPE_WALKTHROUGH', absolutePath: 'b' }
+            ];
+
+            const decodedA = artifactService.decodeSelectValue(encodedA, artifacts);
+            const decodedB = artifactService.decodeSelectValue(encodedB, artifacts);
+
+            expect(decodedA?.conversationId).toBe(convA);
+            expect(decodedB?.conversationId).toBe(convB);
+        });
+
+        it('should reject decoding when encoded for convB but candidate list only contains convA (prefix collision)', () => {
+            const convA = '123e4567-aaaa-1111-2222-333333333333';
+            const convB = '123e4567-bbbb-4444-5555-666666666666';
+            const filename = 'walkthrough.md';
+
+            const encodedB = ArtifactService.encodeSelectValue(convB, filename);
+
+            const artifacts: ArtifactInfo[] = [
+                { conversationId: convA, filename, artifactType: 'ARTIFACT_TYPE_WALKTHROUGH', absolutePath: 'a' },
+            ];
+
+            const decoded = artifactService.decodeSelectValue(encodedB, artifacts);
             expect(decoded).toBeNull();
         });
     });

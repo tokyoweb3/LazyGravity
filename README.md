@@ -90,6 +90,9 @@ Just type in any bound channel:
 - `📝 /template list` — Display registered templates with execute buttons
 - `📝 /template add <name> <prompt>` — Register a new prompt template
 - `📝 /template delete <name>` — Delete a template
+- `📝 /template export` — Export all prompt templates as a JSON file attachment
+- `📝 /template import <file> [conflict]` — Bulk-import templates from a JSON file attachment
+
 - `📅 /schedule list` — Show all scheduled tasks with next localized run times
 - `📅 /schedule add <cron> <prompt>` — Register a recurring task for the current channel's bound project
 - `📅 /schedule remove <id>` — Delete a scheduled task by ID

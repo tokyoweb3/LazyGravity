@@ -74,21 +74,37 @@ export class TelegramAdapter implements PlatformAdapter {
             this.registerHandlers();
             this.handlersRegistered = true;
         }
-        // bot.start() returns a Promise that resolves when polling stops.
-        // We intentionally do NOT await it (would block forever).
-        // Catch errors to prevent unhandled promise rejections (e.g. getMe()
-        // failure inside grammY's init phase).
-        const startPromise = this.bot.start();
-        if (startPromise && typeof (startPromise as any).catch === 'function') {
-            (startPromise as Promise<void>).catch((err: unknown) => {
-                logger.error('[TelegramAdapter] Polling loop error:', err instanceof Error ? err.message : err);
-                this.emitError(err);
-            });
-        }
-        this.started = true;
+        try {
+            // Confirm authentication and startup completion via explicit getMe check before starting polling
+            if (this.bot.api?.getMe) {
+                await this.bot.api.getMe();
+            }
 
-        if (this.events.onReady) {
-            this.events.onReady();
+            // bot.start() returns a Promise that resolves when polling stops.
+            // We intentionally do NOT await it (would block forever).
+            const startPromise = this.bot.start();
+            if (startPromise && typeof (startPromise as any).catch === 'function') {
+                (startPromise as Promise<void>).catch((err: unknown) => {
+                    logger.error('[TelegramAdapter] Polling loop error:', err instanceof Error ? err.message : err);
+                    this.emitError(err);
+                });
+            }
+
+            this.started = true;
+
+            if (this.events.onReady) {
+                this.events.onReady();
+            }
+        } catch (err: unknown) {
+            logger.error('[TelegramAdapter] Readiness check failed:', err instanceof Error ? err.message : err);
+            try {
+                this.bot.stop();
+            } catch { }
+            this.started = false;
+            const errorObj = err instanceof Error ? err : new Error(String(err));
+            this.emitError(errorObj);
+            this.events = null;
+            throw errorObj;
         }
     }
 
@@ -97,8 +113,10 @@ export class TelegramAdapter implements PlatformAdapter {
      */
     async stop(): Promise<void> {
         if (!this.started) return;
-        this.bot.stop();
         this.started = false;
+        try {
+            this.bot.stop();
+        } catch { }
         this.events = null;
     }
 

@@ -65,7 +65,34 @@ const templateCommand = new SlashCommandBuilder()
                     .setDescription(t('Name of the template to delete'))
                     .setRequired(true)
             )
+    )
+    .addSubcommand((sub) =>
+        sub
+            .setName('export')
+            .setDescription(t('Export all prompt templates as a JSON file attachment'))
+    )
+    .addSubcommand((sub) =>
+        sub
+            .setName('import')
+            .setDescription(t('Bulk-import prompt templates from a JSON file attachment'))
+            .addAttachmentOption((option) =>
+                option
+                    .setName('file')
+                    .setDescription(t('The templates JSON file to import'))
+                    .setRequired(true)
+            )
+            .addStringOption((option) =>
+                option
+                    .setName('conflict')
+                    .setDescription(t('How to handle duplicate template names (default: skip)'))
+                    .setRequired(false)
+                    .addChoices(
+                        { name: 'skip', value: 'skip' },
+                        { name: 'overwrite', value: 'overwrite' }
+                    )
+            )
     );
+
 
 /** /stop command definition */
 const stopCommand = new SlashCommandBuilder()

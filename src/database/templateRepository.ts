@@ -30,6 +30,27 @@ export interface UpdateTemplateInput {
 }
 
 /**
+ * Format structure for exported template JSON files
+ */
+export interface TemplateExportFormat {
+    version: number;
+    templates: Array<{
+        name: string;
+        prompt: string;
+    }>;
+}
+
+/**
+ * Result metrics for template import operations
+ */
+export interface ImportTemplatesResult {
+    imported: number;
+    updated: number;
+    skipped: number;
+    total: number;
+}
+
+/**
  * Repository class for SQLite persistence of frequently used prompt templates.
  * Handles template creation, retrieval, updating, and deletion.
  */
@@ -128,6 +149,96 @@ export class TemplateRepository {
     }
 
     /**
+     * Export all templates formatted as a JSON string
+     */
+    public exportTemplates(): string {
+        const templates = this.findAll();
+        const exportData: TemplateExportFormat = {
+            version: 1,
+            templates: templates.map((t) => ({
+                name: t.name,
+                prompt: t.prompt,
+            })),
+        };
+        return JSON.stringify(exportData, null, 2);
+    }
+
+    /**
+     * Import templates from JSON string or parsed object.
+     * @param input Raw JSON string or object
+     * @param mode Conflict resolution mode: 'skip' (default) or 'overwrite'
+     */
+    public importTemplates(
+        input: string | any,
+        mode: 'skip' | 'overwrite' = 'skip'
+    ): ImportTemplatesResult {
+        let data: any;
+        if (typeof input === 'string') {
+            try {
+                data = JSON.parse(input);
+            } catch (e: any) {
+                throw new Error(`Invalid JSON format: ${e.message}`);
+            }
+        } else {
+            data = input;
+        }
+
+        if (!data || typeof data !== 'object') {
+            throw new Error('Invalid JSON content: expected an object.');
+        }
+
+        if (!Array.isArray(data.templates)) {
+            throw new Error('Invalid format: missing "templates" array.');
+        }
+
+        for (let i = 0; i < data.templates.length; i++) {
+            const item = data.templates[i];
+            if (!item || typeof item !== 'object') {
+                throw new Error(`Invalid item at index ${i}: expected object.`);
+            }
+            if (typeof item.name !== 'string' || !item.name.trim()) {
+                throw new Error(`Invalid item at index ${i}: "name" must be a non-empty string.`);
+            }
+            if (typeof item.prompt !== 'string') {
+                throw new Error(`Invalid item at index ${i}: "prompt" must be a string.`);
+            }
+        }
+
+        let imported = 0;
+        let updated = 0;
+        let skipped = 0;
+
+        const runImport = this.db.transaction(() => {
+            for (const item of data.templates) {
+                const name = item.name.trim();
+                const prompt = item.prompt;
+                const existing = this.findByName(name);
+
+                if (existing) {
+                    if (mode === 'overwrite') {
+                        this.updateByName(name, { prompt });
+                        updated++;
+                    } else {
+                        skipped++;
+                    }
+                } else {
+                    this.create({ name, prompt });
+                    imported++;
+                }
+            }
+        });
+
+        runImport();
+
+        return {
+            imported,
+            updated,
+            skipped,
+            total: data.templates.length,
+        };
+    }
+
+    /**
      * Map a DB row to TemplateRecord
      */
     private mapRow(row: any): TemplateRecord {
@@ -139,3 +250,4 @@ export class TemplateRepository {
         };
     }
 }
+

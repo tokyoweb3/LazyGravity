@@ -394,11 +394,12 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                     const currentDepth = workspaceQueue.getDepth(workspacePath);
                     const newDepth = workspaceQueue.incrementDepth(workspacePath);
 
+                    let reactPromise: Promise<unknown> | undefined;
                     if (currentDepth > 0) {
                         logger.info(
                             `[Queue:${projectLabel}] Enqueued (depth: ${newDepth}, channel: ${message.channelId})`,
                         );
-                        message.react('⏳').catch(() => { });
+                        reactPromise = message.react('⏳').catch(() => { });
                     } else {
                         logger.info(
                             `[Queue:${projectLabel}] Processing immediately (depth: ${newDepth}, channel: ${message.channelId})`,
@@ -412,6 +413,10 @@ export function createMessageCreateHandler(deps: MessageCreateHandlerDeps) {
                             logger.info(
                                 `[Queue:${projectLabel}] Task started after ${Math.round(waitMs / 1000)}s wait (channel: ${message.channelId})`,
                             );
+                        }
+
+                        if (reactPromise) {
+                            await reactPromise;
                         }
 
                         // Remove hourglass when task starts processing

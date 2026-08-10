@@ -15,7 +15,7 @@ import type { WorkspaceService } from '../services/workspaceService';
 import { CdpBridge, registerApprovalWorkspaceChannel, ensureApprovalDetector, ensureErrorPopupDetector, ensurePlanningDetector, ensureRunCommandDetector, ensureQuestionDetector } from '../services/cdpBridgeManager';
 import { CdpService } from '../services/cdpService';
 import { ResponseMonitor, captureResponseMonitorBaseline } from '../services/responseMonitor';
-import { ProcessLogBuffer } from '../utils/processLogBuffer';
+import { ProcessLogBuffer, createDefaultProcessLogBuffer } from '../utils/processLogBuffer';
 import { splitOutputAndLogs } from '../utils/discordFormatter';
 import { parseTelegramProjectCommand, handleTelegramProjectCommand } from './telegramProjectCommand';
 import { parseTelegramCommand, handleTelegramCommand } from './telegramCommands';
@@ -297,7 +297,7 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
             // Monitor the response
             const channel = message.channel;
             const startTime = Date.now();
-            const processLogBuffer = new ProcessLogBuffer({ maxChars: 3500, maxEntries: 120, maxEntryLength: 220 });
+            const processLogBuffer = createDefaultProcessLogBuffer();
             let lastActivityLogText = '';
             let statusMsg: PlatformSentMessage | null = null;
 

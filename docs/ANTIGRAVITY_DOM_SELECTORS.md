@@ -68,14 +68,14 @@ The assistant's response body, rendered with markdown formatting.
 | 10 | `.rendered-markdown` | **Verified** | `responseMonitor.ts`, `assistantDomExtractor.ts` |
 | 9 | `.leading-relaxed.select-text` | **Verified** | `responseMonitor.ts`, `planningDetector.ts`, `assistantDomExtractor.ts` |
 | 8 | `.flex.flex-col.gap-y-3` | **Deprecated** — removed from primary extraction paths (AG 1.23.x) | — |
-| 7 | `[data-message-author-role="assistant"]` | **NOT FOUND** in DOM | `responseMonitor.ts`, `assistantDomExtractor.ts` |
-| 6 | `[data-message-role="assistant"]` | **NOT FOUND** in DOM | `responseMonitor.ts`, `assistantDomExtractor.ts` |
-| 5 | `[class*="assistant-message"]` | **NOT FOUND** in DOM | `responseMonitor.ts`, `assistantDomExtractor.ts` |
-| 4 | `[class*="message-content"]` | **NOT FOUND** in DOM | `responseMonitor.ts`, `assistantDomExtractor.ts` |
-| 3 | `[class*="markdown-body"]` | **NOT FOUND** in DOM | `responseMonitor.ts`, `assistantDomExtractor.ts` |
+| — | `[data-message-author-role="assistant"]` | **Removed** (Issue #40 cleanup) | — |
+| — | `[data-message-role="assistant"]` | **Removed** (Issue #40 cleanup) | — |
+| — | `[class*="assistant-message"]` | **Removed** (Issue #40 cleanup) | — |
+| — | `[class*="message-content"]` | **Removed** (Issue #40 cleanup) | — |
+| — | `[class*="markdown-body"]` | **Removed** (Issue #40 cleanup) | — |
 | 2 | `.prose` | Unverified | `responseMonitor.ts`, `assistantDomExtractor.ts` |
 
-> **Note**: Selectors scored 3-7 appear to be inherited from ChatGPT/generic patterns and do **not** exist in Antigravity's DOM. They are harmless (scored lower, never matched) but add noise. The top selectors (`.text-ide-message-block-bot-color`, `.rendered-markdown`, `.leading-relaxed.select-text`) are the ones that actually match.
+> **Note**: Selectors scored 3-7 inherited from ChatGPT/generic patterns were removed in Issue #40 cleanup. The active selectors (`.text-ide-message-block-bot-color`, `.rendered-markdown`, `.leading-relaxed.select-text`, `.prose`) handle response extraction.
 
 ### Exclusion Containers
 
@@ -246,10 +246,7 @@ Model quota reached / rate limit detection.
 Quota text is only matched outside response containers to avoid false positives:
 
 ```
-.rendered-markdown, .prose, pre, code,
-[data-message-author-role="assistant"],
-[data-message-role="assistant"],
-[class*="message-content"]
+.rendered-markdown, .prose, pre, code
 ```
 
 ---

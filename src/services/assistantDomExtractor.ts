@@ -255,11 +255,6 @@ export function extractAssistantSegmentsPayloadScript(): string {
         '.text-ide-message-block-bot-color',
         '.rendered-markdown',
         '.leading-relaxed.select-text',
-        '[data-message-author-role="assistant"]',
-        '[data-message-role="assistant"]',
-        '[class*="assistant-message"]',
-        '[class*="message-content"]',
-        '[class*="markdown-body"]',
         '.prose',
     ];
 
