@@ -197,7 +197,7 @@ describe('CdpService - Message Injection (Step 5)', () => {
         expect(keyCalls).toHaveLength(6);
         // clearInputField: Meta+A select all
         expect(keyCalls[0].params.key).toBe('a');
-        expect(keyCalls[0].params.modifiers).toBe(4);
+        expect(keyCalls[0].params.modifiers).toBe(process.platform === 'darwin' ? 4 : 2);
         expect(keyCalls[1].params.key).toBe('a');
         // clearInputField: Backspace delete
         expect(keyCalls[2].params.key).toBe('Backspace');
@@ -237,7 +237,7 @@ describe('CdpService - Message Injection (Step 5)', () => {
         expect(keyCalls[1].params.key).toBe('l');
         // clearInputField: Meta+A select all
         expect(keyCalls[2].params.key).toBe('a');
-        expect(keyCalls[2].params.modifiers).toBe(4);
+        expect(keyCalls[2].params.modifiers).toBe(process.platform === 'darwin' ? 4 : 2);
         expect(keyCalls[3].params.key).toBe('a');
     }, 15000);
 

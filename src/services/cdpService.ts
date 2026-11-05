@@ -3,8 +3,9 @@ import { CDP_PORTS } from '../utils/cdpPorts';
 import { EventEmitter } from 'events';
 import * as http from 'http';
 import { execFile, spawn } from 'child_process';
-import { getAntigravityCliPath, extractProjectNameFromPath } from '../utils/pathUtils';
+import { getAntigravityCliPath, getAntigravityLaunchEnv, extractProjectNameFromPath } from '../utils/pathUtils';
 import WebSocket from 'ws';
+import { MODERN_AGENT_STATE_SCRIPT } from '../ui/antigravityState';
 
 /** Configuration options for the CDP service. */
 export interface CdpServiceOptions {
@@ -89,7 +90,7 @@ export interface UiSyncResult {
 const SELECTORS = {
     /** Chat input box: textbox excluding xterm */
     CHAT_INPUT: [
-        'div[role="textbox"]:not(.xterm-helper-textarea)',
+        'div[role="textbox"][contenteditable="true"]:not(.xterm-helper-textarea)',
         'div[role="combobox"][contenteditable="true"][aria-label="Message input"]',
     ].join(', '),
     /** Submit button search target tag */
@@ -101,6 +102,12 @@ const SELECTORS = {
 };
 
 const WORKSPACE_STATE_SCRIPT = `(() => {
+    const modern = ${MODERN_AGENT_STATE_SCRIPT};
+    if (modern) return {
+        isGenerating: modern.isGenerating,
+        sessionTitle: modern.title,
+        hasActiveChat: modern.hasActiveChat,
+    };
     const panel = document.querySelector('.antigravity-agent-side-panel');
     const scopes = [panel, document].filter(Boolean);
 
@@ -182,6 +189,10 @@ export class CdpService extends EventEmitter {
     private isConnectedFlag: boolean = false;
     private ws: WebSocket | null = null;
     private contexts: CdpContext[] = [];
+    private frameSessions = new Map<string, { url: string }>();
+    private frameContexts = new Map<number, { sessionId: string; contextId: number }>();
+    private frameInitializations = new Set<Promise<void>>();
+    private nextFrameContextId = -1;
     private pendingCalls = new Map<number, { resolve: Function, reject: Function, timeoutId: NodeJS.Timeout }>();
     private idCounter = 1;
     private cdpCallTimeout = 30000;
@@ -364,11 +375,47 @@ export class CdpService extends EventEmitter {
                 }
 
                 if (data.method === 'Runtime.executionContextCreated') {
-                    this.contexts.push(data.params.context);
+                    const context = data.params.context;
+                    let id = context.id;
+                    if (data.sessionId) {
+                        const existing = [...this.frameContexts].find(([, value]) =>
+                            value.sessionId === data.sessionId && value.contextId === context.id,
+                        );
+                        id = existing?.[0] ?? this.nextFrameContextId--;
+                        this.frameContexts.set(id, { sessionId: data.sessionId, contextId: context.id });
+                    }
+                    const url = this.frameSessions.get(data.sessionId)?.url || context.url || context.origin || '';
+                    this.contexts = this.contexts.filter(c => c.id !== id);
+                    this.contexts.push({ ...context, id, url });
                 }
                 if (data.method === 'Runtime.executionContextDestroyed') {
-                    const idx = this.contexts.findIndex(c => c.id === data.params.executionContextId);
-                    if (idx !== -1) this.contexts.splice(idx, 1);
+                    const rawId = data.params.executionContextId;
+                    if (data.sessionId) {
+                        for (const [id, frame] of this.frameContexts) {
+                            if (frame.sessionId === data.sessionId && frame.contextId === rawId) {
+                                this.contexts = this.contexts.filter(c => c.id !== id);
+                                this.frameContexts.delete(id);
+                            }
+                        }
+                    } else {
+                        this.contexts = this.contexts.filter(c => this.frameContexts.has(c.id) || c.id !== rawId);
+                    }
+                }
+                if (data.method === 'Runtime.executionContextsCleared') {
+                    this.clearFrameContexts(data.sessionId);
+                }
+                if (data.method === 'Target.attachedToTarget' && data.params.targetInfo?.type === 'iframe') {
+                    const { sessionId, targetInfo } = data.params;
+                    this.frameSessions.set(sessionId, { url: targetInfo.url || '' });
+                    const initialization = this.initializeFrame(sessionId).catch((error) => {
+                        logger.debug(`[CdpService] Frame initialization failed: ${error?.message || error}`);
+                    });
+                    this.frameInitializations.add(initialization);
+                    initialization.finally(() => this.frameInitializations.delete(initialization));
+                }
+                if (data.method === 'Target.detachedFromTarget') {
+                    this.clearFrameContexts(data.params.sessionId);
+                    this.frameSessions.delete(data.params.sessionId);
                 }
 
                 // Forward CDP events via EventEmitter (Network.*, Runtime.*, etc.)
@@ -384,6 +431,9 @@ export class CdpService extends EventEmitter {
             this.clearPendingCalls(new Error('WebSocket disconnected'));
             this.ws = null;
             this.targetUrl = null;
+            this.contexts = [];
+            this.frameContexts.clear();
+            this.frameSessions.clear();
             // Suppress disconnected event and auto-reconnect during workspace switching
             if (this.isSwitchingWorkspace) return;
             this.emit('disconnected');
@@ -403,6 +453,41 @@ export class CdpService extends EventEmitter {
             // Network.enable failure is non-fatal; polling fallback still works
             logger.warn('[CdpService] Network.enable failed — network event detection disabled');
         }
+
+        // Antigravity 2.6 hosts its agent in an out-of-process iframe. A page's
+        // Runtime domain only exposes in-process contexts, so attach its child targets.
+        if (this.contexts.some(context => context.url.startsWith('vscode-file:'))) {
+            try {
+                await this.call('Target.setAutoAttach', {
+                    autoAttach: true, waitForDebuggerOnStart: false, flatten: true,
+                });
+                while (this.frameInitializations.size > 0) {
+                    await Promise.all([...this.frameInitializations]);
+                }
+            } catch (error: any) {
+                logger.debug(`[CdpService] Child target attachment unavailable: ${error?.message || error}`);
+            }
+        }
+    }
+
+    /** Enable nested iframe runtimes without pausing the IDE. */
+    private async initializeFrame(sessionId: string): Promise<void> {
+        await this.call('Runtime.enable', {}, sessionId);
+        await this.call('Network.enable', {}, sessionId);
+        await this.call('Target.setAutoAttach', {
+            autoAttach: true, waitForDebuggerOnStart: false, flatten: true,
+        }, sessionId);
+    }
+
+    /** Remove only the contexts owned by the runtime that was cleared or detached. */
+    private clearFrameContexts(sessionId?: string): void {
+        this.contexts = this.contexts.filter(context => {
+            const frame = this.frameContexts.get(context.id);
+            return sessionId ? frame?.sessionId !== sessionId : frame !== undefined;
+        });
+        for (const [id, frame] of this.frameContexts) {
+            if (frame.sessionId === sessionId) this.frameContexts.delete(id);
+        }
     }
 
     /**
@@ -411,7 +496,7 @@ export class CdpService extends EventEmitter {
      * @param params Method configuration parameters.
      * @returns Command result promise.
      */
-    async call(method: string, params: any = {}): Promise<any> {
+    async call(method: string, params: any = {}, sessionId?: string): Promise<any> {
         if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
             throw new Error('WebSocket is not connected');
         }
@@ -425,8 +510,15 @@ export class CdpService extends EventEmitter {
                 }
             }, this.cdpCallTimeout);
 
+            const contextKey = 'contextId' in params ? 'contextId' : 'executionContextId';
+            const frame = this.frameContexts.get(params[contextKey]);
+            const routedParams = frame ? { ...params, [contextKey]: frame.contextId } : params;
+            const routedSessionId = sessionId ?? frame?.sessionId;
             this.pendingCalls.set(id, { resolve, reject, timeoutId });
-            this.ws!.send(JSON.stringify({ id, method, params }));
+            this.ws!.send(JSON.stringify({
+                id, method, params: routedParams,
+                ...(routedSessionId ? { sessionId: routedSessionId } : {}),
+            }));
         });
     }
 
@@ -463,6 +555,8 @@ export class CdpService extends EventEmitter {
         }
         this.isConnectedFlag = false;
         this.contexts = [];
+        this.frameContexts.clear();
+        this.frameSessions.clear();
         this.targetId = null;
         this.currentWorkspacePath = null;
         this.currentWorkspaceName = null;
@@ -482,7 +576,10 @@ export class CdpService extends EventEmitter {
         options?: { awaitPromise?: boolean },
     ): Promise<{ value: T | null; contextId: number | null }> {
         const awaitPromise = options?.awaitPromise ?? true;
-        const contexts = this.getContexts();
+        const primaryId = this.getPrimaryContextId();
+        const contexts = this.getContexts().sort((a, b) =>
+            Number(b.id === primaryId) - Number(a.id === primaryId),
+        );
         let firstValue: { value: T | null; contextId: number | null } | null = null;
 
         if (contexts.length === 0) {
@@ -1109,7 +1206,7 @@ export class CdpService extends EventEmitter {
      */
     private async runCommand(command: string, args: string[]): Promise<void> {
         await new Promise<void>((resolve, reject) => {
-            const child = spawn(command, args, { stdio: 'ignore' });
+            const child = spawn(command, args, { stdio: 'ignore', windowsHide: true, env: getAntigravityLaunchEnv() });
 
             child.once('error', (error) => {
                 reject(error);
@@ -1214,6 +1311,8 @@ export class CdpService extends EventEmitter {
             this.ws = null;
             this.isConnectedFlag = false;
             this.contexts = [];
+            this.frameContexts.clear();
+            this.frameSessions.clear();
             this.clearPendingCalls(new Error('Disconnected for workspace switch'));
             this.targetUrl = null;
             this.targetId = null;
@@ -1463,7 +1562,10 @@ export class CdpService extends EventEmitter {
      * @returns Array of CdpContext.
      */
     getContexts(): CdpContext[] {
-        return [...this.contexts];
+        const primaryId = this.getPrimaryContextId();
+        return [...this.contexts].sort((a, b) =>
+            Number(b.id === primaryId) - Number(a.id === primaryId),
+        );
     }
 
     /**
@@ -1479,7 +1581,7 @@ export class CdpService extends EventEmitter {
         const start = Date.now();
         while (Date.now() - start < timeoutMs) {
             const cascadeCtx = this.contexts.find(
-                c => c.url && c.url.includes(SELECTORS.CONTEXT_URL_KEYWORD),
+                c => this.isChatContext(c),
             );
             if (cascadeCtx) {
                 return true;
@@ -1495,7 +1597,7 @@ export class CdpService extends EventEmitter {
      */
     getPrimaryContextId(): number | null {
         // Find cascade-panel context
-        const context = this.contexts.find(c => c.url && c.url.includes('cascade-panel'));
+        const context = this.contexts.find(c => this.isChatContext(c));
         if (context) return context.id;
 
         // Fallback to Extension context or first one
@@ -1503,6 +1605,18 @@ export class CdpService extends EventEmitter {
         if (extContext) return extContext.id;
 
         return this.contexts.length > 0 ? this.contexts[0].id : null;
+    }
+
+    /** Recognize both the legacy Cascade panel and the Antigravity 2.6 agent. */
+    private isChatContext(context: CdpContext): boolean {
+        if (context.url?.includes(SELECTORS.CONTEXT_URL_KEYWORD)) return true;
+        try {
+            const url = new URL(context.url);
+            return ['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
+                && url.searchParams.get('extensionView') === 'true';
+        } catch {
+            return false;
+        }
     }
 
     /**
@@ -1518,7 +1632,11 @@ export class CdpService extends EventEmitter {
             return { ok: true };
         })()`;
 
-        for (const ctx of this.contexts) {
+        const primaryId = this.getPrimaryContextId();
+        const contexts = this.getContexts().sort((a, b) =>
+            Number(b.id === primaryId) - Number(a.id === primaryId),
+        );
+        for (const ctx of contexts) {
             try {
                 const res = await this.call('Runtime.evaluate', {
                     expression: focusScript,
@@ -1715,12 +1833,13 @@ export class CdpService extends EventEmitter {
      * Uses Meta+A (select all) then Backspace (delete) via CDP key events.
      */
     private async clearInputField(): Promise<void> {
+        const selectAllModifier = process.platform === 'darwin' ? 4 : 2;
         // Meta+A to select all content
         await this.call('Input.dispatchKeyEvent', {
             type: 'keyDown',
             key: 'a',
             code: 'KeyA',
-            modifiers: 4, // Meta (Cmd on macOS)
+            modifiers: selectAllModifier,
             windowsVirtualKeyCode: 65,
             nativeVirtualKeyCode: 65,
         });
@@ -1728,7 +1847,7 @@ export class CdpService extends EventEmitter {
             type: 'keyUp',
             key: 'a',
             code: 'KeyA',
-            modifiers: 4,
+            modifiers: selectAllModifier,
             windowsVirtualKeyCode: 65,
             nativeVirtualKeyCode: 65,
         });
@@ -1938,7 +2057,8 @@ export class CdpService extends EventEmitter {
         }
 
         const token = String(locateValue.token);
-        const documentResult = await this.call('DOM.getDocument', { depth: 1, pierce: true });
+        const sessionId = contextId !== undefined ? this.frameContexts.get(contextId)?.sessionId : undefined;
+        const documentResult = await this.call('DOM.getDocument', { depth: 1, pierce: true }, sessionId);
         const rootNodeId = documentResult?.root?.nodeId;
         if (!rootNodeId) {
             return { ok: false, error: 'Failed to get DOM root' };
@@ -1948,7 +2068,7 @@ export class CdpService extends EventEmitter {
         const nodeResult = await this.call('DOM.querySelector', {
             nodeId: rootNodeId,
             selector,
-        });
+        }, sessionId);
         const nodeId = nodeResult?.nodeId;
         if (!nodeId) {
             return { ok: false, error: 'Failed to get upload input node' };
@@ -1957,7 +2077,7 @@ export class CdpService extends EventEmitter {
         await this.call('DOM.setFileInputFiles', {
             nodeId,
             files: filePaths,
-        });
+        }, sessionId);
 
         const notifyScript = `(() => {
             const input = document.querySelector('${selector}');
