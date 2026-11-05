@@ -6,6 +6,7 @@ import { execFile, spawn } from 'child_process';
 import { getAntigravityCliPath, getAntigravityLaunchEnv, extractProjectNameFromPath } from '../utils/pathUtils';
 import WebSocket from 'ws';
 import { MODERN_AGENT_STATE_SCRIPT } from '../ui/antigravityState';
+import { modernModelsScript } from '../ui/antigravityModels';
 
 /** Configuration options for the CDP service. */
 export interface CdpServiceOptions {
@@ -187,6 +188,7 @@ const MODE_RETRY_READY_TIMEOUT_MS = 2000;
 export class CdpService extends EventEmitter {
     private ports: number[];
     private isConnectedFlag: boolean = false;
+    private modelUiOperation: Promise<void> = Promise.resolve();
     private ws: WebSocket | null = null;
     private contexts: CdpContext[] = [];
     private frameSessions = new Map<string, { url: string }>();
@@ -2498,15 +2500,26 @@ export class CdpService extends EventEmitter {
         }
     }
 
-    /**
-     * Dynamically retrieve the list of available models from the Antigravity UI.
-     */
-    async getUiModels(): Promise<string[]> {
+    /** Serialize picker reads and changes so simultaneous Discord actions cannot close each other's menu. */
+    private withModelUi<T>(operation: () => Promise<T>): Promise<T> {
+        const result = this.modelUiOperation.then(operation);
+        this.modelUiOperation = result.then(() => undefined, () => undefined);
+        return result;
+    }
+
+    /** Dynamically retrieve the list of available models from the Antigravity UI. */
+    getUiModels(): Promise<string[]> {
+        return this.withModelUi(() => this.readUiModels());
+    }
+
+    private async readUiModels(): Promise<string[]> {
         if (!this.isConnectedFlag || !this.ws) {
             throw new Error('Not connected to CDP.');
         }
 
         const expression = `(async () => {
+            const modern = await ${modernModelsScript('list')};
+            if (modern) return modern;
             const normalize = (text) => (text || '').trim().replace(/New$/, '').trim();
             const isBlockedModelLabel = (text) => /assist|open in terminal|terminal|code change|claude code|\\bchange\\b/i.test(text || '');
             const looksLikeModel = (text) => {
@@ -2653,6 +2666,7 @@ export class CdpService extends EventEmitter {
                 if (typeof contextId === 'number') params.contextId = contextId;
                 const res = await this.call('Runtime.evaluate', params);
                 const value = res?.result?.value;
+                if (value?.modern) return value.models || [];
                 if (Array.isArray(value) && value.length > 0) {
                     return Array.from(new Set(value));
                 }
@@ -2669,11 +2683,17 @@ export class CdpService extends EventEmitter {
     /**
      * Get the currently selected model from the Antigravity UI.
      */
-    async getCurrentModel(): Promise<string | null> {
+    getCurrentModel(): Promise<string | null> {
+        return this.withModelUi(() => this.readCurrentModel());
+    }
+
+    private async readCurrentModel(): Promise<string | null> {
         if (!this.isConnectedFlag || !this.ws) {
             return null;
         }
-        const expression = `(() => {
+        const expression = `(async () => {
+            const modern = await ${modernModelsScript('current')};
+            if (modern) return modern;
             const normalize = (text) => (text || '').trim().replace(/New$/, '').trim();
             const isBlockedModelLabel = (text) => /assist|open in terminal|terminal|code change|claude code|\\bchange\\b/i.test(text || '');
             const looksLikeModel = (text) => {
@@ -2745,6 +2765,7 @@ export class CdpService extends EventEmitter {
                 if (typeof contextId === 'number') params.contextId = contextId;
                 const res = await this.call('Runtime.evaluate', params);
                 const value = res?.result?.value;
+                if (value?.modern) return value.model || null;
                 if (typeof value === 'string' && value.trim().length > 0) {
                     return value;
                 }
@@ -2761,7 +2782,11 @@ export class CdpService extends EventEmitter {
      *
      * @param modelName Model name to set (e.g., 'gpt-4o', 'claude-3-opus')
      */
-    async setUiModel(modelName: string): Promise<UiSyncResult> {
+    setUiModel(modelName: string): Promise<UiSyncResult> {
+        return this.withModelUi(() => this.applyUiModel(modelName));
+    }
+
+    private async applyUiModel(modelName: string): Promise<UiSyncResult> {
         logger.info(`[CdpService] setUiModel requested account=${this.accountName} target="${modelName}" connected=${this.isConnectedFlag}`);
         if (!this.isConnectedFlag || !this.ws) {
             await this.reconnectOnDemand();
@@ -2773,6 +2798,8 @@ export class CdpService extends EventEmitter {
         // Selection detected via ARIA attributes, data-state, or bg-gray-500/20 class
         const safeModel = JSON.stringify(modelName);
         const expression = `(async () => {
+            const modern = await ${modernModelsScript('select', modelName)};
+            if (modern) return modern;
             const targetModel = ${safeModel};
             const normalize = (text) => (text || '').trim().replace(/New$/, '').trim();
             const isBlockedModelLabel = (text) => /assist|open in terminal|terminal|code change|claude code|\\bchange\\b/i.test(text || '');
@@ -3086,6 +3113,7 @@ export class CdpService extends EventEmitter {
                     };
                 }
                 if (value?.error) {
+                    if (value.modern) return { ok: false, error: value.error };
                     if (value?.diagnostics) {
                         logger.warn(
                             `[CdpService] setUiModel diagnostics account=${this.accountName} context=${contextId ?? 'default'} ` +

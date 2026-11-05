@@ -31,6 +31,11 @@ export interface ModelsUiPayload {
     components: ActionRowBuilder<ButtonBuilder>[];
 }
 
+function quotaFooter(quotaData: any[]): string {
+    return quotaData.some(model => model.quotaInfo)
+        ? 'Latest quota information retrieved'
+        : 'Model list retrieved from IDE; quota information unavailable';
+}
 
 /**
  * Build a platform-agnostic MessagePayload for model selection UI.
@@ -98,7 +103,7 @@ export function buildModelsPayload(
                 `**Available Models (${models.length})**\n` +
                 modelLines,
             ),
-            'Latest quota information retrieved',
+            quotaFooter(quotaData),
         ),
     );
 
@@ -209,7 +214,7 @@ export async function buildModelsUI(
             `**Available Models (${models.length})**\n` +
             models.map(m => formatQuota(m, m === currentModel)).join('\n'),
         )
-        .setFooter({ text: 'Latest quota information retrieved' })
+        .setFooter({ text: quotaFooter(quotaData) })
         .setTimestamp();
 
     const rows: ActionRowBuilder<ButtonBuilder>[] = [];

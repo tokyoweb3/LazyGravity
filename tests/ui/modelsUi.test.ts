@@ -30,6 +30,15 @@ describe('modelsUi', () => {
 });
 
 describe('buildModelsUI', () => {
+    it('does not claim quota data was retrieved when it is unavailable', async () => {
+        const cdp = {
+            getUiModels: jest.fn().mockResolvedValue(['Model A']),
+            getCurrentModel: jest.fn().mockResolvedValue('Model A'),
+        };
+        const result = await buildModelsUI(cdp as any, async () => []);
+        expect(result!.embeds[0].data.footer?.text).toContain('quota information unavailable');
+    });
+
     it('returns null when no models are available', async () => {
         const cdp = {
             getUiModels: jest.fn().mockResolvedValue([]),
@@ -71,6 +80,12 @@ describe('buildModelsUI', () => {
 });
 
 describe('buildModelsPayload', () => {
+    it('reports unavailable quotas accurately', () => {
+        expect(buildModelsPayload(['Model A'], 'Model A', [])!.richContent!.footer).toContain('quota information unavailable');
+        expect(buildModelsPayload(['Model A'], 'Model A', [{ label: 'Model A', quotaInfo: { remainingFraction: 0.5 } }])!.richContent!.footer)
+            .toBe('Latest quota information retrieved');
+    });
+
     it('returns null when no models are available', () => {
         const result = buildModelsPayload([], null, []);
         expect(result).toBeNull();
