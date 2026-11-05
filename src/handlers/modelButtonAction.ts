@@ -15,6 +15,11 @@ import type { UserPreferenceRepository } from '../database/userPreferenceReposit
 import type { PlatformChannel } from '../platform/types';
 import { logger } from '../utils/logger';
 
+/** Scope inheritance is opt-in for ordinary prompts; menu and question controls use exact bindings. */
+export interface SessionScopeOptions {
+    allowParentFallback?: boolean;
+}
+
 /**
  * Dependencies injected into model button action creator.
  */
@@ -30,9 +35,9 @@ export interface ModelButtonActionDeps {
     /** Resolve the connection belonging to the interaction's channel. */
     readonly resolveCdp?: (channelId: string, userId: string) => Promise<ReturnType<typeof getCurrentCdp>>;
     /** Resolve the scoped account, including a platform's persisted conversation owner. */
-    readonly resolveAccountName?: (channelId: string, userId: string) => string;
+    readonly resolveAccountName?: (channelId: string, userId: string, options?: SessionScopeOptions) => string;
     /** Optional activation callback interface checker. */
-    readonly ensureSessionActivated?: (channelId: string, userId: string, cdp: NonNullable<ReturnType<typeof getCurrentCdp>>) => Promise<{ ok: true } | { ok: false; error: string }>;
+    readonly ensureSessionActivated?: (channelId: string, userId: string, cdp: NonNullable<ReturnType<typeof getCurrentCdp>>, options?: SessionScopeOptions) => Promise<{ ok: true } | { ok: false; error: string }>;
     /** Restore pending controls after the bound session is ready. */
     readonly onSessionReady?: (channel: PlatformChannel, userId: string, cdp: NonNullable<ReturnType<typeof getCurrentCdp>>) => Promise<void>;
 }

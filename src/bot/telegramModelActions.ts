@@ -1,4 +1,4 @@
-import type { ModelButtonActionDeps } from '../handlers/modelButtonAction';
+import type { ModelButtonActionDeps, SessionScopeOptions } from '../handlers/modelButtonAction';
 import type { TelegramBindingRepository } from '../database/telegramBindingRepository';
 import type { ChatSessionService } from '../services/chatSessionService';
 import type { WorkspaceService } from '../services/workspaceService';
@@ -22,7 +22,7 @@ export interface TelegramModelRoutingDeps extends Omit<ModelButtonActionDeps, 'r
 
 /** Model routing also exposes the account resolver to Telegram question controls. */
 export interface TelegramModelActionDeps extends ModelButtonActionDeps {
-    resolveAccountName(channelId: string, userId: string): string;
+    resolveAccountName(channelId: string, userId: string, options?: SessionScopeOptions): string;
     /** Restore the topic before question controls can click a matching prompt in the IDE. */
     prepareQuestionSession(channelId: string, userId: string): Promise<{ ok: true } | { ok: false; error: string }>;
 }
@@ -33,11 +33,12 @@ export interface TelegramModelActionDeps extends ModelButtonActionDeps {
  */
 export function createTelegramModelActionDeps(deps: TelegramModelRoutingDeps): TelegramModelActionDeps {
     /** Honor explicit chat account changes, otherwise retain the persisted conversation's owner. */
-    const resolveAccountName = (channelId: string, userId: string): string => resolveScopedAccountName({
+    const resolveAccountName = (channelId: string, userId: string, options?: SessionScopeOptions): string => resolveScopedAccountName({
         channelId, userId,
         sessionAccountName: deps.bridge.selectedAccountByChannel?.get(channelId)
             ?? deps.channelPrefRepo?.getAccountName(channelId)
-            ?? deps.telegramBindingRepo.findByChatId(channelId)?.accountName,
+            ?? (options?.allowParentFallback ? deps.telegramBindingRepo.findByChatIdWithParentFallback(channelId)
+                : deps.telegramBindingRepo.findByChatId(channelId))?.accountName,
         selectedAccountByChannel: deps.bridge.selectedAccountByChannel,
         accountPrefRepo: deps.accountPrefRepo, channelPrefRepo: deps.channelPrefRepo,
         accounts: deps.antigravityAccounts,
@@ -69,12 +70,14 @@ export function createTelegramModelActionDeps(deps: TelegramModelRoutingDeps): T
             }
         },
         /** Restore the chat's saved conversation before reading or changing its model. */
-        ensureSessionActivated: async (channelId, userId, cdp) => {
-            const binding = deps.telegramBindingRepo.findByChatId(channelId);
+        ensureSessionActivated: async (channelId, userId, cdp, options) => {
+            const binding = options?.allowParentFallback
+                ? deps.telegramBindingRepo.findByChatIdWithParentFallback(channelId)
+                : deps.telegramBindingRepo.findByChatId(channelId);
             if (binding?.sessionTitle == null || !binding.accountName) {
                 return { ok: false, error: 'No conversation is linked to this chat. Use /join or /new first.' };
             }
-            if (binding.accountName !== resolveAccountName(channelId, userId)) {
+            if (binding.accountName !== resolveAccountName(channelId, userId, options)) {
                 return { ok: false, error: 'This conversation belongs to another account. Use /join or /new after switching accounts.' };
             }
             const savedTitle = binding.sessionTitle.trim();

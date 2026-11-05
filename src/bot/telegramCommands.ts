@@ -697,7 +697,7 @@ async function handleNew(deps: TelegramCommandDeps, message: PlatformMessage): P
         await message.reply({ text: `✅ Created a new topic for the session.` }).catch(() => {});
     }
 
-    const selectedAccount = deps.modelActionDeps?.resolveAccountName?.(originalChannelId, message.author.id) ?? resolveScopedAccountName({
+    const selectedAccount = deps.modelActionDeps?.resolveAccountName?.(originalChannelId, message.author.id, { allowParentFallback: true }) ?? resolveScopedAccountName({
         channelId: originalChannelId,
         userId: message.author.id,
         selectedAccountByChannel: deps.bridge.selectedAccountByChannel,

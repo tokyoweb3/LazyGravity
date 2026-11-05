@@ -86,7 +86,7 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
 
     /** Use the persisted conversation owner after restart, with scoped preferences as a legacy fallback. */
     function resolveAccount(chatId: string, userId: string): string {
-        const stored = deps.modelActionDeps?.resolveAccountName?.(chatId, userId);
+        const stored = deps.modelActionDeps?.resolveAccountName?.(chatId, userId, { allowParentFallback: true });
         if (stored) return stored;
         return resolveScopedAccountName({
             channelId: chatId,
@@ -182,6 +182,15 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
             : binding.workspacePath;
 
         await enqueueForWorkspace(workspacePath, async () => {
+            const currentBinding = deps.telegramBindingRepo.findByChatIdWithParentFallback(chatId);
+            if (!currentBinding || currentBinding.workspacePath !== binding.workspacePath) {
+                await message.reply({ text: 'The linked project changed while this message was queued. Please send it again.' }).catch(logger.error);
+                return;
+            }
+            const sessionWorkspace = currentBinding.workspacePath;
+            const inheritedSessionTitle = currentBinding.sessionTitle;
+            let savedSessionTitle = deps.telegramBindingRepo.findByChatId?.(chatId)?.sessionTitle ?? null;
+            let titleSaveOperation = Promise.resolve();
             const selectedAccount = resolveAccount(chatId, message.author.id);
             deps.bridge.selectedAccountByChannel?.set(chatId, selectedAccount);
 
@@ -199,7 +208,26 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
             logger.debug(`[TelegramHandler] getOrConnect done (took=${Date.now() - cdpStartTime}ms)`);
 
             if (deps.modelActionDeps?.ensureSessionActivated) {
-                const ready = await deps.modelActionDeps.ensureSessionActivated(chatId, message.author.id, cdp);
+                if (currentBinding.sessionTitle == null) {
+                    if (!deps.chatSessionService) {
+                        await message.reply({ text: 'Chat session service not available.' }).catch(logger.error);
+                        return;
+                    }
+                    try {
+                        const created = await deps.chatSessionService.startNewChat(cdp);
+                        if (!created.ok) {
+                            await message.reply({ text: created.error || 'Failed to start a new conversation.' }).catch(logger.error);
+                            return;
+                        }
+                        deps.telegramBindingRepo.setSession(chatId, currentBinding.workspacePath, '', selectedAccount);
+                        savedSessionTitle = '';
+                    } catch (error) {
+                        logger.warn('[TelegramHandler] Could not prepare the first conversation:', error);
+                        await message.reply({ text: 'Failed to prepare a conversation. Please try /new.' }).catch(logger.error);
+                        return;
+                    }
+                }
+                const ready = await deps.modelActionDeps.ensureSessionActivated(chatId, message.author.id, cdp, { allowParentFallback: true });
                 if (!ready.ok) {
                     await message.reply({ text: ready.error }).catch(logger.error);
                     return;
@@ -307,8 +335,6 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
                 }).catch(logger.error);
                 return;
             }
-            let savedSessionTitle = binding.sessionTitle ?? null;
-            let titleSaveOperation = Promise.resolve();
             await saveConversationTitle();
 
             /** Persist a newly created conversation's title before question controls or later model actions need it. */
@@ -318,7 +344,13 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
                     try {
                         const info = await deps.chatSessionService.getCurrentSessionInfo(cdp);
                         if (info.hasActiveChat && info.title.trim() && info.title !== savedSessionTitle) {
-                            deps.telegramBindingRepo.setSession(chatId, binding!.workspacePath, info.title, selectedAccount);
+                            const exact = deps.telegramBindingRepo.findByChatId(chatId);
+                            const live = exact ?? deps.telegramBindingRepo.findByChatIdWithParentFallback(chatId);
+                            if (!live || live.workspacePath !== sessionWorkspace
+                                || (live.accountName && live.accountName !== selectedAccount)) return;
+                            if (exact ? (exact.sessionTitle ?? null) !== savedSessionTitle
+                                : savedSessionTitle !== null || live.sessionTitle !== inheritedSessionTitle) return;
+                            deps.telegramBindingRepo.setSession(chatId, sessionWorkspace, info.title, selectedAccount);
                             savedSessionTitle = info.title;
                         }
                     } catch (error) { logger.warn('[TelegramHandler] Could not persist conversation title:', error); }

@@ -52,7 +52,7 @@ const activeResponseMonitors = new Map<string, ResponseMonitor>();
  * @returns Resolved account name.
  */
 function resolveAccount(deps: TelegramJoinCommandDeps, chatId: string, userId: string): string {
-    const stored = deps.modelActionDeps?.resolveAccountName?.(chatId, userId);
+    const stored = deps.modelActionDeps?.resolveAccountName?.(chatId, userId, { allowParentFallback: true });
     if (stored) return stored;
     return resolveScopedAccountName({
         channelId: chatId,

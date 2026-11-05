@@ -153,7 +153,7 @@ describe('createTelegramMessageHandler', () => {
         const modelService = { getDefaultModel: jest.fn() } as any;
         const { message } = createMockMessage();
         await createTelegramMessageHandler({ bridge: createBridge(createMockPool(cdp)),
-            telegramBindingRepo: createTelegramBindingRepo({ chatId: 'chat-123', workspacePath: 'project' }), modelService,
+            telegramBindingRepo: createTelegramBindingRepo({ chatId: 'chat-123', workspacePath: 'project', sessionTitle: 'Stored' } as any), modelService,
             modelActionDeps: { bridge: {} as any, fetchQuota: async () => [],
                 ensureSessionActivated: async () => ({ ok: false, error: 'Select the linked conversation with /join.' }) },
         })(message as any);
@@ -167,7 +167,7 @@ describe('createTelegramMessageHandler', () => {
         const pool = createMockPool(cdp);
         const { message } = createMockMessage();
         await createTelegramMessageHandler({ bridge: createBridge(pool),
-            telegramBindingRepo: createTelegramBindingRepo({ chatId: 'chat-123', workspacePath: 'project' }),
+            telegramBindingRepo: createTelegramBindingRepo({ chatId: 'chat-123', workspacePath: 'project', sessionTitle: 'Stored' } as any),
             modelActionDeps: { bridge: {} as any, fetchQuota: async () => [], resolveAccountName: () => 'personal',
                 ensureSessionActivated: async () => ({ ok: true }) },
         })(message as any);
@@ -177,8 +177,12 @@ describe('createTelegramMessageHandler', () => {
 
     it('saves conversation titles after the first prompt and before permission waits', async () => {
         const cdp = createMockCdp();
-        const repo = createTelegramBindingRepo({ chatId: 'chat-123', workspacePath: 'project' });
-        repo.setSession = jest.fn();
+        const binding = { chatId: 'chat-123', workspacePath: 'project', sessionTitle: null as string | null, accountName: 'default' };
+        const repo = createTelegramBindingRepo(binding);
+        repo.setSession = jest.fn((_chat: string, _workspace: string, title: string, account: string) => {
+            binding.sessionTitle = title;
+            binding.accountName = account;
+        });
         const getCurrentSessionInfo = jest.fn()
             .mockResolvedValueOnce({ title: 'Draft title', hasActiveChat: true })
             .mockResolvedValue({ title: 'Permission task', hasActiveChat: true });
