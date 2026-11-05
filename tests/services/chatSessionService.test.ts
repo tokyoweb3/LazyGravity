@@ -311,13 +311,17 @@ describe('ChatSessionService', () => {
                 return { result: { value: null } };
             });
 
-            const result = await service.activateSessionByTitle(
-                mockCdpService,
-                'target-session',
-                { maxWaitMs: 100, retryIntervalMs: 1 },
-            );
-            expect(result).toEqual({ ok: true });
-            expect(directAttemptCount).toBe(3);
+            jest.useFakeTimers();
+            try {
+                const operation = service.activateSessionByTitle(
+                    mockCdpService,
+                    'target-session',
+                    { maxWaitMs: 100, retryIntervalMs: 1 },
+                );
+                await jest.runAllTimersAsync();
+                expect(await operation).toEqual({ ok: true });
+                expect(directAttemptCount).toBe(3);
+            } finally { jest.useRealTimers(); }
         });
 
         it('returns ok:false for empty title', async () => {
