@@ -3,6 +3,7 @@ import * as http from 'http';
 import * as os from 'os';
 import { execFile, spawn } from 'child_process';
 import { CDP_PORTS } from '../../utils/cdpPorts';
+import { getAntigravityCliPath, getAntigravityLaunchEnv } from '../../utils/pathUtils';
 
 const APP_NAME = 'Antigravity';
 
@@ -45,6 +46,31 @@ async function findAvailablePort(): Promise<number | null> {
     return null;
 }
 
+/** Read a local CDP target list without treating other HTTP servers as CDP. */
+function readTargets(port: number): Promise<Array<{ url?: string; title?: string }>> {
+    return new Promise((resolve) => {
+        const req = http.get(`http://127.0.0.1:${port}/json/list`, (res) => {
+            let data = '';
+            res.on('data', (chunk) => (data += chunk));
+            res.on('end', () => {
+                try {
+                    const targets = JSON.parse(data);
+                    resolve(Array.isArray(targets) ? targets : []);
+                } catch {
+                    resolve([]);
+                }
+            });
+            res.on('error', () => resolve([]));
+        });
+        req.on('error', () => resolve([]));
+        req.setTimeout(2000, () => { req.destroy(); resolve([]); });
+    });
+}
+
+function hasAntigravityTarget(targets: Array<{ url?: string; title?: string }>): boolean {
+    return targets.some(target => /antigravity/i.test(target.url || target.title || ''));
+}
+
 /**
  * Spawns Antigravity with debugging port enabled on macOS.
  * @param port Debugging target port.
@@ -52,7 +78,7 @@ async function findAvailablePort(): Promise<number | null> {
  */
 function openMacOS(port: number): Promise<void> {
     return new Promise((resolve, reject) => {
-        execFile('open', ['-a', APP_NAME, '--args', `--remote-debugging-port=${port}`], (err) => {
+        execFile('open', ['-a', APP_NAME, '--args', `--remote-debugging-port=${port}`], { env: getAntigravityLaunchEnv() }, (err) => {
             if (err) {
                 reject(new Error(`Failed to open ${APP_NAME}: ${err.message}`));
                 return;
@@ -68,15 +94,7 @@ function openMacOS(port: number): Promise<void> {
  * @returns Promise resolving on spawn completion.
  */
 function openWindows(port: number): Promise<void> {
-    return new Promise((resolve, reject) => {
-        execFile(APP_NAME, [`--remote-debugging-port=${port}`], { shell: true }, (err) => {
-            if (err) {
-                reject(new Error(`Failed to open ${APP_NAME}: ${err.message}`));
-                return;
-            }
-            resolve();
-        });
-    });
+    return spawnAntigravity(port);
 }
 
 /**
@@ -85,22 +103,25 @@ function openWindows(port: number): Promise<void> {
  * @returns Promise resolving on spawn completion.
  */
 function openLinux(port: number): Promise<void> {
+    return spawnAntigravity(port);
+}
+
+/** Launch the resolved executable directly, including paths containing spaces. */
+function spawnAntigravity(port: number): Promise<void> {
     return new Promise((resolve, reject) => {
-        try {
-            const child = spawn(APP_NAME.toLowerCase(), [`--remote-debugging-port=${port}`], {
-                detached: true,
-                stdio: 'ignore',
-            });
+        const child = spawn(getAntigravityCliPath(), [`--remote-debugging-port=${port}`], {
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: true,
+            env: getAntigravityLaunchEnv(),
+        });
+        child.once('spawn', () => {
             child.unref();
-            child.on('error', (err) => {
-                reject(new Error(`Failed to open ${APP_NAME}: ${err.message}`));
-            });
-            // Give it a moment to detect spawn errors
-            setTimeout(() => resolve(), 500);
-        } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            reject(new Error(`Failed to open ${APP_NAME}: ${msg}`));
-        }
+            resolve();
+        });
+        child.once('error', (err) => {
+            reject(new Error(`Failed to open ${APP_NAME}: ${err.message}`));
+        });
     });
 }
 
@@ -154,6 +175,13 @@ function waitForCdp(port: number, timeoutMs: number = 15000, intervalMs: number 
 export async function openAction(): Promise<void> {
     const platform = os.platform();
 
+    for (const port of CDP_PORTS) {
+        if (hasAntigravityTarget(await readTargets(port))) {
+            console.log(`\n  ${C.green}${APP_NAME} is already ready on CDP port ${port}${C.reset}\n`);
+            return;
+        }
+    }
+
     console.log(`\n  ${C.cyan}Searching for an available CDP port...${C.reset}`);
 
     const port = await findAvailablePort();
@@ -184,7 +212,10 @@ export async function openAction(): Promise<void> {
             console.log(`  ${C.green}${APP_NAME} is ready on CDP port ${port}${C.reset}`);
         } else {
             console.log(`  ${C.yellow}${APP_NAME} launched but CDP not yet responding on port ${port}${C.reset}`);
-            console.log(`  ${C.dim}It may still be starting up. Try running start in a few seconds.${C.reset}`);
+            console.log(`  ${C.dim}If Antigravity was already open, close all its windows and run open again.${C.reset}`);
+            console.log(`  ${C.dim}An existing process cannot enable CDP from a second launch.${C.reset}`);
+            process.exitCode = 1;
+            return;
         }
         console.log(`  ${C.dim}Run ${C.reset}${C.cyan}lazy-gravity start${C.reset}${C.dim} to connect the bot.${C.reset}\n`);
     } catch (error) {

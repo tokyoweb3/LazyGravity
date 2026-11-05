@@ -238,6 +238,15 @@ Double-click **`start_antigravity_mac.command`** in the repo root.
 #### Windows
 Double-click **`start_antigravity_win.bat`** in the repo root.
 
+To build this checkout, open the IDE with CDP, and start the Discord bot together,
+double-click **`start_lazy_gravity_win.bat`**. It uses your existing
+`~/.lazy-gravity/config.json`. Keep the bot's terminal open while using Discord;
+press `Ctrl+C` to stop it. If the IDE was already started without CDP, close its
+windows normally and run the launcher again.
+
+The launcher supports Antigravity IDE 2.6's separate agent iframe and clears the
+inherited `ELECTRON_RUN_AS_NODE` variable when launching the IDE from VS Code.
+
 - **If it doesn't launch**: verify that Antigravity IDE is installed at `"%LOCALAPPDATA%\Programs\Antigravity IDE\Antigravity IDE.exe"`. If it is installed elsewhere, right-click the file and update the executable path.
 - **Upgrading to Antigravity 2.0?** The Windows executable was renamed to `Antigravity IDE.exe`. If you are still using the older `Antigravity.exe` installation, auto-launch will not find it. Please update Antigravity, or set the `ANTIGRAVITY_PATH` override in your `.env` file.
 

@@ -1,6 +1,6 @@
 import { logger } from '../utils/logger';
 import { CDP_PORTS } from '../utils/cdpPorts';
-import { getAntigravityCdpHint, getAntigravityCliPath } from '../utils/pathUtils';
+import { getAntigravityCdpHint, getAntigravityCliPath, getAntigravityLaunchEnv } from '../utils/pathUtils';
 import * as http from 'http';
 import { execFile, spawn } from 'child_process';
 
@@ -70,6 +70,7 @@ export function startAntigravity(port: number = CDP_PORTS[0]): Promise<'started'
             detached: true,
             stdio: 'ignore',
             windowsHide: true,
+            env: getAntigravityLaunchEnv(),
         });
 
         const spawnError = await new Promise<Error | null>((resolve) => {

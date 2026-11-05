@@ -1,4 +1,4 @@
-import { extractProjectNameFromPath, getAntigravityCdpHint } from '../../src/utils/pathUtils';
+import { extractProjectNameFromPath, getAntigravityCdpHint, getAntigravityLaunchEnv } from '../../src/utils/pathUtils';
 
 // Helper to temporarily override process.platform
 function withPlatform(platform: string, fn: () => void): void {
@@ -12,6 +12,19 @@ function withPlatform(platform: string, fn: () => void): void {
 }
 
 describe('pathUtils', () => {
+    it('launches Electron in GUI mode without changing the parent environment', () => {
+        const previous = process.env.ELECTRON_RUN_AS_NODE;
+        process.env.ELECTRON_RUN_AS_NODE = '1';
+        try {
+            const env = getAntigravityLaunchEnv();
+            expect(env.ELECTRON_RUN_AS_NODE).toBeUndefined();
+            expect(env.PATH).toBe(process.env.PATH);
+            expect(process.env.ELECTRON_RUN_AS_NODE).toBe('1');
+        } finally {
+            if (previous === undefined) delete process.env.ELECTRON_RUN_AS_NODE;
+            else process.env.ELECTRON_RUN_AS_NODE = previous;
+        }
+    });
     describe('extractProjectNameFromPath()', () => {
         it('extracts name from POSIX path', () => {
             expect(extractProjectNameFromPath('/home/user/Code/MyProject')).toBe('MyProject');
