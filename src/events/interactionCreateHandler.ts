@@ -34,6 +34,8 @@ import {
 import { QUESTION_SELECT_ACTION_PREFIX, QUESTION_SKIP_ACTION_PREFIX } from '../services/notificationSender';
 import { createQuestionSelectAction } from '../handlers/questionSelectAction';
 import { createQuestionSkipAction } from '../handlers/questionSkipAction';
+import { createModelSelectAction } from '../handlers/modelSelectAction';
+import { MODEL_SELECT_ID, MODEL_ACTIONS_SELECT_ID } from '../ui/modelsUi';
 import { wrapDiscordButton, wrapDiscordSelect, wrapDiscordCommand, wrapDiscordModalSubmit } from '../platform/discord/wrappers';
 import { parseQuestionCustomId } from '../utils/questionActionUtils';
 import { resolveProjectName } from '../utils/projectResolver';
@@ -1646,11 +1648,34 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
             return;
         }
 
+        if (interaction.isStringSelectMenu() && [MODEL_SELECT_ID, MODEL_ACTIONS_SELECT_ID].includes(interaction.customId)) {
+            try {
+                const action = createModelSelectAction({
+                    bridge: deps.bridge, modelService: deps.modelService, userPrefRepo: deps.userPrefRepo,
+                    fetchQuota: () => deps.bridge.quota.fetchQuota(),
+                    resolveCdp: async (channelId, userId) => {
+                        const existing = getChannelCdp(interaction);
+                        if (existing) return existing;
+                        const workspace = deps.wsHandler.getWorkspaceForChannel(channelId);
+                        return workspace ? deps.bridge.pool.getOrConnect(workspace, {
+                            name: resolveSelectedAccount(channelId, userId, getParentChannelId(interaction)),
+                        }) : null;
+                    },
+                    ensureSessionActivated: (channelId, userId, cdp) => ensureBoundSessionActive(channelId, userId, cdp),
+                });
+                await action.execute(wrapDiscordSelect(interaction as any), interaction.values);
+            } catch (error) {
+                logger.error('[ModelSelect] Failed to handle selection:', error);
+                await interaction.followUp({ content: 'Failed to update the model. Run /model to refresh.', ephemeral: true }).catch(() => {});
+            }
+            return;
+        }
+
         if (interaction.isStringSelectMenu() && interaction.customId.startsWith(QUESTION_SELECT_ACTION_PREFIX)) {
             try {
-                const action = createQuestionSelectAction({ bridge: deps.bridge, wsHandler: deps.wsHandler });
-                const wrapped = wrapDiscordSelect(interaction as any);
-                const success = await action.execute(wrapped, interaction.values);
+                const actionDeps = { bridge: deps.bridge, wsHandler: deps.wsHandler,
+                    accountName: resolveSelectedAccount(interaction.channelId!, interaction.user.id, getParentChannelId(interaction)) };
+                const success = await createQuestionSelectAction(actionDeps).execute(wrapDiscordSelect(interaction as any), interaction.values);
                 if (success && deps.promptDispatcher && interaction.channelId && interaction.message) {
                     const parsed = parseQuestionCustomId(interaction.customId, QUESTION_SELECT_ACTION_PREFIX);
                     if (parsed) {
@@ -1677,10 +1702,11 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
             return;
         }
 
-        if (interaction.isButton() && interaction.customId.startsWith(QUESTION_SKIP_ACTION_PREFIX)) {
+        if ((interaction.isButton() || interaction.isStringSelectMenu()) && interaction.customId.startsWith(QUESTION_SKIP_ACTION_PREFIX)) {
             try {
-                const action = createQuestionSkipAction({ bridge: deps.bridge, wsHandler: deps.wsHandler });
-                const wrapped = wrapDiscordButton(interaction as any);
+                const action = createQuestionSkipAction({ bridge: deps.bridge, wsHandler: deps.wsHandler,
+                    accountName: resolveSelectedAccount(interaction.channelId!, interaction.user.id, getParentChannelId(interaction)) });
+                const wrapped = interaction.isStringSelectMenu() ? wrapDiscordSelect(interaction as any) : wrapDiscordButton(interaction as any);
                 const success = await action.execute(wrapped, {});
                 if (success && deps.promptDispatcher && interaction.channelId && interaction.message) {
                     const parsed = parseQuestionCustomId(interaction.customId, QUESTION_SKIP_ACTION_PREFIX);

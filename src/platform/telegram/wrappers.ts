@@ -192,6 +192,7 @@ function componentRowsToInlineKeyboard(
                 if (comp.disabled) continue;
                 buttons = [...buttons, buttonDefToInline(comp)];
             } else if (comp.type === 'selectMenu') {
+                if (comp.disabled) continue;
                 // A select menu becomes multiple rows (one per option)
                 const menuRows = selectMenuToInlineRows(comp);
                 // Flush any accumulated buttons first

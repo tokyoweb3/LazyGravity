@@ -1,7 +1,8 @@
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from 'discord.js';
+import { ActionRowBuilder, StringSelectMenuBuilder, EmbedBuilder } from 'discord.js';
 
 import { CdpService } from '../services/cdpService';
-import type { MessagePayload, ButtonDef, ComponentRow } from '../platform/types';
+import type { MessagePayload, ComponentRow } from '../platform/types';
+import { toDiscordPayload } from '../platform/discord/wrappers';
 import {
     createRichContent,
     withTitle,
@@ -27,8 +28,30 @@ export interface ModelsUiDeps {
 export interface ModelsUiPayload {
     /** Formatted embed cards. */
     embeds: EmbedBuilder[];
-    /** Formatted button action rows. */
-    components: ActionRowBuilder<ButtonBuilder>[];
+    /** Model and management select menus. */
+    components: ActionRowBuilder<StringSelectMenuBuilder>[];
+}
+
+export const MODEL_SELECT_ID = 'model_select';
+export const MODEL_ACTIONS_SELECT_ID = 'model_actions_select';
+
+function modelSelectRows(models: string[], currentModel: string | null, defaultModel: string | null = null): ComponentRow[] {
+    return [{ components: [{
+        type: 'selectMenu', customId: MODEL_SELECT_ID, placeholder: 'Select a model...',
+        options: models.slice(0, 25).map(model => ({
+            label: model.substring(0, 100), value: model,
+            isDefault: model === currentModel,
+            ...(model === defaultModel ? { description: 'Default model' } : {}),
+        })),
+    }] }, { components: [{
+        type: 'selectMenu', customId: MODEL_ACTIONS_SELECT_ID, placeholder: 'Model actions...',
+        options: [
+            { label: 'Refresh model list', value: 'refresh' },
+            defaultModel
+                ? { label: 'Clear default model', value: 'clear_default' }
+                : { label: 'Set current model as default', value: 'set_default' },
+        ],
+    }] }];
 }
 
 function quotaFooter(quotaData: any[]): string {
@@ -107,57 +130,11 @@ export function buildModelsPayload(
         ),
     );
 
-    // Use 1 button per row so model names are fully readable on Telegram.
-    // Telegram inline keyboard buttons are narrow; 5-per-row truncates names.
-    const rows: ComponentRow[] = [];
-
-    for (const mName of models.slice(0, 24)) {
-        const safeName = mName.length > 80 ? mName.substring(0, 77) + '...' : mName;
-        const isDefault = defaultModel != null && mName.toLowerCase() === defaultModel.toLowerCase();
-        const prefix = mName === currentModel ? '✓ ' : '';
-        const suffix = isDefault ? ' ⭐' : '';
-        rows.push({
-            components: [{
-                type: 'button',
-                customId: `model_btn_${mName}`,
-                label: `${prefix}${safeName}${suffix}`,
-                style: mName === currentModel ? 'success' : 'secondary',
-            }],
-        });
-    }
-
-    // Default model action buttons
-    const defaultBtnRow: ComponentRow = {
-        components: defaultModel
-            ? [{
-                type: 'button',
-                customId: 'model_clear_default_btn',
-                label: 'Clear Default',
-                style: 'danger',
-            }]
-            : [{
-                type: 'button',
-                customId: 'model_set_default_btn',
-                label: 'Set Current as Default',
-                style: 'primary',
-            }],
-    };
-    rows.push(defaultBtnRow);
-
-    rows.push({
-        components: [{
-            type: 'button',
-            customId: 'model_refresh_btn',
-            label: 'Refresh',
-            style: 'primary',
-        }],
-    });
-
-    return { richContent: rc, components: rows };
+    return { richContent: rc, components: modelSelectRows(models, currentModel, defaultModel) };
 }
 
 /**
- * Build the embed + button components for the models UI.
+ * Build the embed + select menu components for the models UI.
  * Returns null when CDP is unavailable or no models are found.
  */
 export async function buildModelsUI(
@@ -217,43 +194,8 @@ export async function buildModelsUI(
         .setFooter({ text: quotaFooter(quotaData) })
         .setTimestamp();
 
-    const rows: ActionRowBuilder<ButtonBuilder>[] = [];
-    let currentRow = new ActionRowBuilder<ButtonBuilder>();
-
-    for (const mName of models.slice(0, 24)) {
-        if (currentRow.components.length === 5) {
-            rows.push(currentRow);
-            currentRow = new ActionRowBuilder<ButtonBuilder>();
-        }
-        const safeName = mName.length > 80 ? mName.substring(0, 77) + '...' : mName;
-        currentRow.addComponents(new ButtonBuilder()
-            .setCustomId(`model_btn_${mName}`)
-            .setLabel(safeName)
-            .setStyle(mName === currentModel ? ButtonStyle.Success : ButtonStyle.Secondary),
-        );
-    }
-
-    if (currentRow.components.length < 5) {
-        currentRow.addComponents(new ButtonBuilder()
-            .setCustomId('model_refresh_btn')
-            .setLabel('Refresh')
-            .setStyle(ButtonStyle.Primary),
-        );
-        rows.push(currentRow);
-    } else {
-        rows.push(currentRow);
-        if (rows.length < 5) {
-            const refreshRow = new ActionRowBuilder<ButtonBuilder>().addComponents(
-                new ButtonBuilder()
-                    .setCustomId('model_refresh_btn')
-                    .setLabel('Refresh')
-                    .setStyle(ButtonStyle.Primary),
-            );
-            rows.push(refreshRow);
-        }
-    }
-
-    return { embeds: [embed], components: rows };
+    const converted = toDiscordPayload({ components: modelSelectRows(models, currentModel) });
+    return { embeds: [embed], components: converted.components as ActionRowBuilder<StringSelectMenuBuilder>[] };
 }
 
 /**

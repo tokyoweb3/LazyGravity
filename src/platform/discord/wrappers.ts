@@ -144,6 +144,7 @@ function toDiscordComponents(
                 if (comp.placeholder !== undefined) {
                     select.setPlaceholder(comp.placeholder);
                 }
+                if (comp.disabled !== undefined) select.setDisabled(comp.disabled);
 
                 actionRow.addComponents(select);
             }

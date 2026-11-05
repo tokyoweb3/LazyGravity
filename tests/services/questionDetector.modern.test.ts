@@ -2,6 +2,7 @@
 import { QuestionDetector, QuestionInfo } from '../../src/services/questionDetector';
 import { CdpService } from '../../src/services/cdpService';
 import { MODERN_QUESTION_SNAPSHOT_SCRIPT } from '../../src/ui/antigravityQuestion';
+import { restoreQuestionDetector } from '../../src/services/cdpBridgeManager';
 
 describe('Antigravity 2.6 question prompts', () => {
     let detector: QuestionDetector;
@@ -53,6 +54,50 @@ describe('Antigravity 2.6 question prompts', () => {
         await (detector as any).poll();
         return detected.mock.calls.at(-1)?.[0];
     }
+
+    it('restores a question after restart and answers the matching control without a duplicate notification', async () => {
+        const info = await poll();
+        let recovered: QuestionDetector | undefined;
+        const channel = { id: 'channel', send: jest.fn().mockResolvedValue({ edit: jest.fn() }) } as any;
+        const bridge = {
+            pool: {
+                getQuestionDetector: () => recovered,
+                getConnected: jest.fn().mockReturnValue(null),
+                extractProjectName: () => 'TestProject',
+                getOrConnect: jest.fn().mockResolvedValue(cdp),
+                registerQuestionDetector: (_project: string, value: QuestionDetector) => { recovered = value; },
+            },
+            approvalChannelByWorkspace: new Map(), approvalChannelBySession: new Map(),
+        } as any;
+        try {
+            const restored = await restoreQuestionDetector(bridge, 'TestProject', '/projects/TestProject', channel, info.questionId);
+            expect(restored).toBe(recovered);
+            expect(bridge.pool.getOrConnect).toHaveBeenCalledTimes(1);
+            expect(channel.send).not.toHaveBeenCalled();
+            expect(submit).not.toHaveBeenCalled();
+            expect(await restored!.submitOption(0, info.questionId)).toBe(true);
+            expect(submit).toHaveBeenCalledTimes(1);
+        } finally { recovered?.stop(); }
+    });
+
+    it('rejects an old question identity after restoring a different pending question', async () => {
+        const old = await poll();
+        document.querySelector('#path')!.textContent = '/projects/other/README.md';
+        let recovered: QuestionDetector | undefined;
+        const channel = { id: 'channel', send: jest.fn().mockResolvedValue({ edit: jest.fn() }) } as any;
+        const bridge = {
+            pool: {
+                getQuestionDetector: () => recovered, getConnected: () => cdp,
+                registerQuestionDetector: (_project: string, value: QuestionDetector) => { recovered = value; },
+            },
+            approvalChannelByWorkspace: new Map(), approvalChannelBySession: new Map(),
+        } as any;
+        try {
+            const restored = await restoreQuestionDetector(bridge, 'TestProject', null, channel, old.questionId);
+            expect(await restored!.submitOption(0, old.questionId)).toBe(false);
+            expect(submit).not.toHaveBeenCalled();
+        } finally { recovered?.stop(); }
+    });
 
     it('reads the path and all choices despite the write-in field and visible Stop control', async () => {
         const info = await poll();

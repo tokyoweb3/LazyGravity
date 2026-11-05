@@ -59,6 +59,7 @@ export class QuestionDetector extends EventEmitter {
     private emptyPollCount: number = 0;
     private static readonly REQUIRED_EMPTY_POLLS = 3;
     private _isStarted: boolean = false;
+    private pollPromise: Promise<void> | null = null;
     private onQuestionRequired: (info: QuestionInfo) => void;
     private onResolved?: () => void;
     private projectName: string = 'unknown';
@@ -108,8 +109,15 @@ export class QuestionDetector extends EventEmitter {
         this.lastQuestionId = null;
         this.emptyPollCount = 0;
         
-        this.intervalId = setInterval(() => this.poll(), this.pollIntervalMs);
-        this.poll();
+        this.intervalId = setInterval(() => this.refresh(), this.pollIntervalMs);
+        this.refresh();
+    }
+
+    /** Read the current prompt before handling an interaction, joining any poll already in flight. */
+    refresh(): Promise<void> {
+        if (this.pollPromise) return this.pollPromise;
+        this.pollPromise = this.poll().finally(() => { this.pollPromise = null; });
+        return this.pollPromise;
     }
 
     /**

@@ -126,6 +126,9 @@ import { createErrorPopupButtonAction } from '../handlers/errorPopupButtonAction
 import { createRunCommandButtonAction } from '../handlers/runCommandButtonAction';
 import { createModelButtonAction } from '../handlers/modelButtonAction';
 import { createQuestionSelectAction } from '../handlers/questionSelectAction';
+import { createModelSelectAction } from '../handlers/modelSelectAction';
+import { MODEL_SELECT_ID, MODEL_ACTIONS_SELECT_ID } from '../ui/modelsUi';
+import { createQuestionSkipAction } from '../handlers/questionSkipAction';
 import { createTemplateButtonAction } from '../handlers/templateButtonAction';
 import { createFileChangeButtonAction } from '../handlers/fileChangeButtonAction';
 import { createAutoAcceptButtonAction } from '../handlers/autoAcceptButtonAction';
@@ -1938,6 +1941,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                     modeSelectAction,
                     accountSelectAction,
                     questionSelectAction,
+                    createModelSelectAction({ bridge, fetchQuota: () => bridge.quota.fetchQuota(), modelService, userPrefRepo }),
                 ],
             });
             // Composite handler that routes to the right handler
@@ -1959,7 +1963,9 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                 if (
                     interaction.customId === 'mode_select' ||
                     interaction.customId === 'account_select' ||
-                    interaction.customId.startsWith('question_select_action')
+                    interaction.customId.startsWith('question_select_action') ||
+                    interaction.customId.startsWith('question_skip_action') ||
+                    interaction.customId === MODEL_SELECT_ID || interaction.customId === MODEL_ACTIONS_SELECT_ID
                 ) {
                     await telegramSelectHandler(interaction);
                     return;
@@ -1976,6 +1982,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
 
             const telegramButtonHandler = createPlatformButtonHandler({
                 actions: [
+                    createQuestionSkipAction({ bridge, wsHandler }),
                     createApprovalButtonAction({ bridge, wsHandler }),
                     createPlanningButtonAction({ bridge, wsHandler }),
                     createErrorPopupButtonAction({ bridge, wsHandler }),

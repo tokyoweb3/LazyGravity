@@ -372,9 +372,7 @@ export function buildResolvedOverlay(
 
     const disabledComponents: ComponentRow[] | undefined = original.components
         ? original.components.map((row) => ({
-              components: row.components.map((comp) =>
-                  comp.type === 'button' ? { ...comp, disabled: true as const } : comp,
-               ),
+              components: row.components.map((comp) => ({ ...comp, disabled: true as const })),
           }))
         : undefined;
 
@@ -476,25 +474,17 @@ export function buildQuestionNotification(
     const encodedSkipCustomId = `${QUESTION_SKIP_ACTION_PREFIX}:${safeSkipProjectName}:${encodedChannel}${questionSuffix}`;
 
     return {
-        richContent: embed,
+        richContent: withFooter(embed, 'Waiting for your answer. Open the select menu below.'),
         components: [
+            { components: [{ type: 'selectMenu', customId: encodedCustomId,
+                placeholder: 'Select an answer...', options: selectMenuOptions }] },
             {
                 components: [
                     {
                         type: 'selectMenu',
-                        customId: encodedCustomId,
-                        placeholder: 'Select an option...',
-                        options: selectMenuOptions,
-                    },
-                ],
-            },
-            {
-                components: [
-                    {
-                        type: 'button',
                         customId: encodedSkipCustomId,
-                        label: 'Skip',
-                        style: 'secondary',
+                        placeholder: 'Question actions...',
+                        options: [{ label: 'Skip question', value: 'skip' }],
                     },
                 ],
             },

@@ -11,6 +11,8 @@ jest.mock('../../src/handlers/questionSkipAction', () => ({
     createQuestionSkipAction: jest.fn(),
 }));
 
+jest.mock('../../src/handlers/modelSelectAction', () => ({ createModelSelectAction: jest.fn() }));
+
 jest.mock('child_process', () => ({
     execFile: jest.fn(),
 }));
@@ -114,6 +116,18 @@ describe('interactionCreateHandler - question select and skip', () => {
                 cdp: mockCdp,
             })
         );
+    });
+
+    it('routes model dropdown selections to the model select handler', async () => {
+        const { createModelSelectAction } = require('../../src/handlers/modelSelectAction');
+        const execute = jest.fn().mockResolvedValue(undefined);
+        createModelSelectAction.mockReturnValue({ execute });
+        const interaction = { isAutocomplete: () => false, isButton: () => false, isStringSelectMenu: () => true,
+            user: { id: 'allowed' }, channelId: 'channel-a', customId: 'model_select', values: ['Gemini 3.8 Flash Low'],
+            message: { id: 'model-message' }, followUp: jest.fn().mockResolvedValue(undefined),
+        } as any;
+        await createInteractionCreateHandler(createBaseDeps())(interaction);
+        expect(execute).toHaveBeenCalledWith(expect.objectContaining({ customId: 'model_select' }), ['Gemini 3.8 Flash Low']);
     });
 
     it('resumes prompt dispatcher when question skip action executes successfully', async () => {

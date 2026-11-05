@@ -26,6 +26,8 @@ export interface ModelButtonActionDeps {
     readonly modelService?: ModelService;
     /** User preferences repository. */
     readonly userPrefRepo?: UserPreferenceRepository;
+    /** Resolve the connection belonging to the interaction's channel. */
+    readonly resolveCdp?: (channelId: string, userId: string) => Promise<ReturnType<typeof getCurrentCdp>>;
     /** Optional activation callback interface checker. */
     readonly ensureSessionActivated?: (channelId: string, userId: string, cdp: NonNullable<ReturnType<typeof getCurrentCdp>>) => Promise<{ ok: true } | { ok: false; error: string }>;
 }
@@ -56,7 +58,9 @@ export function createModelButtonAction(deps: ModelButtonActionDeps): ButtonActi
         async execute(interaction, params): Promise<void> {
             await interaction.deferUpdate();
 
-            const cdp = getCurrentCdp(deps.bridge);
+            const cdp = deps.resolveCdp
+                ? await deps.resolveCdp(interaction.channel.id, interaction.user.id)
+                : getCurrentCdp(deps.bridge);
             if (!cdp) {
                 logger.warn(`[ModelCommand] source=button user=${interaction.user.id} action=${params.action} cdp=unavailable`);
                 await interaction.followUp({ text: 'Not connected to CDP.' }).catch(() => {});

@@ -253,6 +253,11 @@ that message to continue. The response monitor shows a waiting state and pauses
 its execution timeout while the question is pending. Old question controls are
 rejected if the IDE is now asking a different question.
 
+Question answers and skipping use dropdown menus. After a bot restart, choosing
+an existing question reconnects its session and checks the current prompt before
+submitting. `/model` also uses dropdowns for full model/effort names, refreshing
+the list, and managing the default model.
+
 - **If it doesn't launch**: verify that Antigravity IDE is installed at `"%LOCALAPPDATA%\Programs\Antigravity IDE\Antigravity IDE.exe"`. If it is installed elsewhere, right-click the file and update the executable path.
 - **Upgrading to Antigravity 2.0?** The Windows executable was renamed to `Antigravity IDE.exe`. If you are still using the older `Antigravity.exe` installation, auto-launch will not find it. Please update Antigravity, or set the `ANTIGRAVITY_PATH` override in your `.env` file.
 

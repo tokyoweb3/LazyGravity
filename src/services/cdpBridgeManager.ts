@@ -937,11 +937,13 @@ export function ensureQuestionDetector(
     cdp: CdpService,
     projectName: string,
     accountName: string = 'default',
+    initialQuestionId?: string,
 ): void {
     const existing = bridge.pool.getQuestionDetector(projectName, accountName);
     if (existing && existing.isActive) return;
 
     let lastNotification: { sent: PlatformSentMessage; payload: MessagePayload } | null = null;
+    let pendingInitialQuestionId = initialQuestionId;
 
     const detector = new QuestionDetector({
         cdpService: cdp,
@@ -954,6 +956,9 @@ export function ensureQuestionDetector(
             sent.edit(resolved).catch(logger.error);
         },
         onQuestionRequired: async (info: QuestionInfo) => {
+            const suppress = pendingInitialQuestionId === info.questionId;
+            pendingInitialQuestionId = undefined;
+            if (suppress) return;
             const currentChatTitle = await getCurrentChatTitle(cdp);
             const targetChannel = resolveApprovalChannelForCurrentChat(bridge, projectName, currentChatTitle);
             const targetChannelId = targetChannel ? targetChannel.id : '';
@@ -983,4 +988,34 @@ export function ensureQuestionDetector(
     detector.start();
     bridge.pool.registerQuestionDetector(projectName, detector, accountName);
     logger.debug(`[QuestionDetector:${projectName}] Started question detection`);
+}
+
+/** Restore an existing question control after a bot restart without answering it or posting a duplicate. */
+export async function restoreQuestionDetector(
+    bridge: CdpBridge,
+    projectName: string,
+    workspacePath: string | null | undefined,
+    channel: PlatformChannel,
+    questionId?: string,
+    accountName?: string,
+): Promise<QuestionDetector | undefined> {
+    const existing = bridge.pool.getQuestionDetector(projectName, accountName);
+    if (existing) {
+        await existing.refresh();
+        return existing;
+    }
+    if (workspacePath && bridge.pool.extractProjectName(workspacePath) !== projectName) return undefined;
+    const cdp = bridge.pool.getConnected(projectName, accountName)
+        ?? (workspacePath ? await bridge.pool.getOrConnect(workspacePath, accountName ? { name: accountName } : undefined) : null);
+    if (!cdp) return undefined;
+
+    const savedTitle = bridge.chatSessionRepo?.findByChannelId(channel.id)?.displayName?.trim();
+    const currentTitle = await getCurrentChatTitle(cdp);
+    if (savedTitle && currentTitle && normalizeSessionTitle(savedTitle) !== normalizeSessionTitle(currentTitle)) return undefined;
+    registerApprovalWorkspaceChannel(bridge, projectName, channel);
+    if (currentTitle) registerApprovalSessionChannel(bridge, projectName, currentTitle, channel);
+    ensureQuestionDetector(bridge, cdp, projectName, accountName, questionId);
+    const detector = bridge.pool.getQuestionDetector(projectName, accountName);
+    await detector?.refresh();
+    return detector;
 }

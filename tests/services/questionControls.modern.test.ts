@@ -1,4 +1,4 @@
-import { buildQuestionNotification, QUESTION_SELECT_ACTION_PREFIX, QUESTION_SKIP_ACTION_PREFIX } from '../../src/services/notificationSender';
+import { buildQuestionNotification, buildResolvedOverlay, QUESTION_SELECT_ACTION_PREFIX, QUESTION_SKIP_ACTION_PREFIX } from '../../src/services/notificationSender';
 import { parseQuestionCustomId } from '../../src/utils/questionActionUtils';
 import { createQuestionSelectAction } from '../../src/handlers/questionSelectAction';
 import { createQuestionSkipAction } from '../../src/handlers/questionSkipAction';
@@ -10,6 +10,32 @@ jest.mock('../../src/utils/projectResolver', () => ({ resolveProjectName: () => 
 
 describe('Question notification identity', () => {
     const questionId = '0123456789abcdef';
+
+    it('keeps every answer and the skip action in dropdowns and disables resolved controls', () => {
+        const texts = ['Yes, allow this time', 'Yes, and always allow in this conversation', 'Yes, and always allow', 'No'];
+        const payload = buildQuestionNotification({ title: 'Allow read access?', description: '/projects/other/AGENTS.md',
+            projectName: 'TestProject', channelId: 'channel', questionId,
+            options: texts.map(text => ({ text, x: 0, y: 0 })) });
+        expect(payload.components).toHaveLength(2);
+        expect(payload.components!.flatMap(row => row.components).every(component => component.type === 'selectMenu')).toBe(true);
+        expect((payload.components![0].components[0] as any).options.map((option: any) => option.label)).toEqual(texts);
+        expect(payload.components![1].components[0]).toMatchObject({ options: [{ label: 'Skip question', value: 'skip' }] });
+        const resolved = toDiscordPayload(buildResolvedOverlay(payload, 'Question answered'));
+        expect((resolved.components as any[]).every(row => row.toJSON().components[0].disabled)).toBe(true);
+    });
+
+    it('handles the skip dropdown through the same question identity checks', async () => {
+        const detector = { skipQuestion: jest.fn().mockResolvedValue(true), refresh: jest.fn().mockResolvedValue(undefined) };
+        const action = createQuestionSelectAction({ bridge: { pool: { getQuestionDetector: () => detector } }, wsHandler: {} } as any);
+        const interaction = { channel: { id: 'channel' },
+            customId: `${QUESTION_SKIP_ACTION_PREFIX}:TestProject:channel:${questionId}`,
+            deferUpdate: jest.fn().mockResolvedValue(undefined), editReply: jest.fn().mockResolvedValue(undefined),
+            followUp: jest.fn().mockResolvedValue(undefined),
+        } as any;
+        expect(action.match(interaction.customId)).toBe(true);
+        expect(await action.execute(interaction, ['skip'])).toBe(true);
+        expect(detector.skipQuestion).toHaveBeenCalledWith(questionId);
+    });
 
     it('preserves path and PowerShell underscores when rendering a Discord question', () => {
         const description = String.raw`Get-ChildItem C:\work\Sample_Studio | Where-Object { $_.Name -ne '__pycache__' }; echo "a*b"`;
@@ -31,7 +57,7 @@ describe('Question notification identity', () => {
     it('round-trips question and channel identities within Discord custom ID limits', () => {
         const payload = buildQuestionNotification({ title: 'Allow read access?', description: '/projects/other/AGENTS.md',
             projectName: '專案'.repeat(80), channelId: '123456789012345678', questionId,
-            options: [{ text: 'Yes, allow this time', x: 0, y: 0 }, { text: 'No', x: 0, y: 0 }] });
+            options: Array.from({ length: 5 }, (_, index) => ({ text: `Choice ${index + 1}`, x: 0, y: 0 })) });
         const selectId = (payload.components![0].components[0] as any).customId;
         const skipId = (payload.components![1].components[0] as any).customId;
         expect(selectId.length).toBeLessThanOrEqual(100);

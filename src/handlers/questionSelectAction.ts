@@ -1,9 +1,11 @@
 import type { PlatformSelectInteraction } from '../platform/types';
 import type { SelectAction } from './selectHandler';
 import type { CdpBridge } from '../services/cdpBridgeManager';
+import { restoreQuestionDetector } from '../services/cdpBridgeManager';
 import type { WorkspaceCommandHandler } from '../commands/workspaceCommandHandler';
 import { logger } from '../utils/logger';
-import { QUESTION_SELECT_ACTION_PREFIX } from '../services/notificationSender';
+import { QUESTION_SELECT_ACTION_PREFIX, QUESTION_SKIP_ACTION_PREFIX } from '../services/notificationSender';
+import { createQuestionSkipAction } from './questionSkipAction';
 import { parseQuestionCustomId } from '../utils/questionActionUtils';
 import { resolveProjectName } from '../utils/projectResolver';
 
@@ -15,6 +17,8 @@ export interface QuestionSelectActionDeps {
     readonly bridge: CdpBridge;
     /** Workspace command handler instance. */
     readonly wsHandler: WorkspaceCommandHandler;
+    /** Account selected for this session. */
+    readonly accountName?: string;
 }
 
 /**
@@ -25,18 +29,21 @@ export interface QuestionSelectActionDeps {
 export function createQuestionSelectAction(deps: QuestionSelectActionDeps): SelectAction {
     return {
         match(customId: string): boolean {
-            return customId.startsWith(QUESTION_SELECT_ACTION_PREFIX);
+            return customId.startsWith(QUESTION_SELECT_ACTION_PREFIX) || customId.startsWith(QUESTION_SKIP_ACTION_PREFIX);
         },
 
         async execute(
             interaction: PlatformSelectInteraction,
             values: readonly string[],
         ): Promise<boolean> {
+            if (interaction.customId.startsWith(QUESTION_SKIP_ACTION_PREFIX)) {
+                return values[0] === 'skip' ? !!(await createQuestionSkipAction(deps).execute(interaction, {})) : false;
+            }
             const parsed = parseQuestionCustomId(interaction.customId, QUESTION_SELECT_ACTION_PREFIX);
             if (!parsed) return false;
 
-            const selectedOption = parseInt(values[0], 10);
-            if (isNaN(selectedOption)) return false;
+            const selectedOption = Number(values[0]);
+            if (!/^\d+$/.test(values[0] || '') || !Number.isInteger(selectedOption) || selectedOption < 0 || selectedOption > 24) return false;
 
             const channelId = parsed.channelId;
             if (channelId && channelId !== interaction.channel.id) {
@@ -49,19 +56,29 @@ export function createQuestionSelectAction(deps: QuestionSelectActionDeps): Sele
             const projectName = resolveProjectName(deps, interaction.channel.id, parsed.projectName);
             logger.debug(`[QuestionSelectAction] project=${projectName ?? 'null'} channel=${interaction.channel.id}`);
 
-            const detector = projectName
-                ? deps.bridge.pool.getQuestionDetector(projectName)
+            await interaction.deferUpdate().catch(() => {});
+            let detector = projectName
+                ? deps.bridge.pool.getQuestionDetector(projectName, deps.accountName)
                 : undefined;
+
+            try {
+                if (detector) await detector.refresh?.();
+                else if (projectName) detector = await restoreQuestionDetector(
+                    deps.bridge, projectName, deps.wsHandler.getWorkspaceForChannel(interaction.channel.id),
+                    interaction.channel, parsed.questionId, deps.accountName,
+                );
+            } catch (error) {
+                logger.warn('[QuestionSelectAction] Could not restore the question:', error);
+                detector = undefined;
+            }
 
             if (!detector) {
                 logger.warn(`[QuestionSelectAction] No detector for project=${projectName}`);
                 await interaction
-                    .reply({ text: 'Question detector not found.', ephemeral: true })
+                    .followUp({ text: 'Unable to restore this question. Run /model to refresh the question.', ephemeral: true })
                     .catch(() => {});
                 return false;
             }
-
-            await interaction.deferUpdate().catch(() => {});
 
             let success = false;
             try {

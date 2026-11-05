@@ -223,6 +223,8 @@ export interface SelectMenuDef {
     readonly placeholder?: string;
     /** Selectable menu options list. */
     readonly options: readonly SelectMenuOption[];
+    /** True after the question or action has been resolved. */
+    readonly disabled?: boolean;
 }
 
 /**

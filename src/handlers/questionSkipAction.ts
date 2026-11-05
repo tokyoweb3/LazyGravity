@@ -1,6 +1,7 @@
 import type { PlatformButtonInteraction } from '../platform/types';
 import type { ButtonAction } from './buttonHandler';
 import type { CdpBridge } from '../services/cdpBridgeManager';
+import { restoreQuestionDetector } from '../services/cdpBridgeManager';
 import type { WorkspaceCommandHandler } from '../commands/workspaceCommandHandler';
 import { logger } from '../utils/logger';
 import { QUESTION_SKIP_ACTION_PREFIX } from '../services/notificationSender';
@@ -15,6 +16,8 @@ export interface QuestionSkipActionDeps {
     readonly bridge: CdpBridge;
     /** Workspace command handler instance. */
     readonly wsHandler: WorkspaceCommandHandler;
+    /** Account selected for this session. */
+    readonly accountName?: string;
 }
 
 /**
@@ -47,19 +50,29 @@ export function createQuestionSkipAction(deps: QuestionSkipActionDeps): ButtonAc
             const projectName = resolveProjectName(deps, interaction.channel.id, parsed.projectName);
             logger.debug(`[QuestionSkipAction] project=${projectName ?? 'null'} channel=${interaction.channel.id}`);
 
-            const detector = projectName
-                ? deps.bridge.pool.getQuestionDetector(projectName)
+            await interaction.deferUpdate().catch(() => {});
+            let detector = projectName
+                ? deps.bridge.pool.getQuestionDetector(projectName, deps.accountName)
                 : undefined;
+
+            try {
+                if (detector) await detector.refresh?.();
+                else if (projectName) detector = await restoreQuestionDetector(
+                    deps.bridge, projectName, deps.wsHandler.getWorkspaceForChannel(interaction.channel.id),
+                    interaction.channel, parsed.questionId, deps.accountName,
+                );
+            } catch (error) {
+                logger.warn('[QuestionSkipAction] Could not restore the question:', error);
+                detector = undefined;
+            }
 
             if (!detector) {
                 logger.warn(`[QuestionSkipAction] No detector for project=${projectName}`);
                 await interaction
-                    .reply({ text: 'Question detector not found.', ephemeral: true })
+                    .followUp({ text: 'Unable to restore this question. Run /model to refresh the question.', ephemeral: true })
                     .catch(() => {});
                 return false;
             }
-
-            await interaction.deferUpdate().catch(() => {});
 
             let success = false;
             try {
