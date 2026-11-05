@@ -73,4 +73,24 @@ describe('QuestionDetector', () => {
             options: ['Option A', 'Option B']
         }));
     });
+
+    it('keeps a legacy question identity across layout shifts and changes it only for different content', async () => {
+        const question = { detected: true, title: 'Choose a tool', description: 'Select one',
+            options: [{ text: 'Option A', x: 10, y: 20 }, { text: 'Option B', x: 10, y: 40 }] };
+        mockCdpService.call.mockResolvedValue({ result: { value: question } });
+        await detector.refresh();
+        const id = mockOnQuestionDetected.mock.calls[0][0].questionId;
+        mockCdpService.call.mockResolvedValue({ result: { value: { ...question,
+            options: question.options.map(option => ({ ...option, x: option.x + 300, y: option.y - 200 })),
+        } } });
+        await detector.refresh();
+        expect(mockOnQuestionDetected).toHaveBeenCalledTimes(1);
+        expect((detector as any).lastQuestionId).toBe(id);
+        mockCdpService.call.mockResolvedValue({ result: { value: { ...question,
+            options: [{ ...question.options[0], text: 'Option C' }, question.options[1]],
+        } } });
+        await detector.refresh();
+        expect(mockOnQuestionDetected).toHaveBeenCalledTimes(2);
+        expect(mockOnQuestionDetected.mock.calls[1][0].questionId).not.toBe(id);
+    });
 });

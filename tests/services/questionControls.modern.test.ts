@@ -6,7 +6,12 @@ import { toDiscordPayload } from '../../src/platform/discord/wrappers';
 import { richContentToHtml } from '../../src/platform/telegram/telegramFormatter';
 import { EmbedBuilder } from 'discord.js';
 
-jest.mock('../../src/utils/projectResolver', () => ({ resolveProjectName: () => 'TestProject' }));
+function actionDeps(detector: any, project = 'TestProject') {
+    return { bridge: { pool: {
+        extractProjectName: () => project,
+        getQuestionDetector: jest.fn((name: string) => name === project ? detector : undefined),
+    } }, wsHandler: { getWorkspaceForChannel: () => `/projects/${project}` } } as any;
+}
 
 describe('Question notification identity', () => {
     const questionId = '0123456789abcdef';
@@ -26,7 +31,7 @@ describe('Question notification identity', () => {
 
     it('handles the skip dropdown through the same question identity checks', async () => {
         const detector = { skipQuestion: jest.fn().mockResolvedValue(true), refresh: jest.fn().mockResolvedValue(undefined) };
-        const action = createQuestionSelectAction({ bridge: { pool: { getQuestionDetector: () => detector } }, wsHandler: {} } as any);
+        const action = createQuestionSelectAction(actionDeps(detector));
         const interaction = { channel: { id: 'channel' },
             customId: `${QUESTION_SKIP_ACTION_PREFIX}:TestProject:channel:${questionId}`,
             deferUpdate: jest.fn().mockResolvedValue(undefined), editReply: jest.fn().mockResolvedValue(undefined),
@@ -54,9 +59,10 @@ describe('Question notification identity', () => {
         expect(richContentToHtml(payload.richContent!)).toContain('**read_me** &lt;config&gt; `path`');
     });
 
-    it('round-trips question and channel identities within Discord custom ID limits', () => {
+    it('routes truncated Unicode project IDs to the full channel binding for answers and skips', async () => {
+        const project = '專案'.repeat(80);
         const payload = buildQuestionNotification({ title: 'Allow read access?', description: '/projects/other/AGENTS.md',
-            projectName: '專案'.repeat(80), channelId: '123456789012345678', questionId,
+            projectName: project, channelId: '123456789012345678', questionId,
             options: Array.from({ length: 5 }, (_, index) => ({ text: `Choice ${index + 1}`, x: 0, y: 0 })) });
         const selectId = (payload.components![0].components[0] as any).customId;
         const skipId = (payload.components![1].components[0] as any).customId;
@@ -68,11 +74,25 @@ describe('Question notification identity', () => {
         expect(parseQuestionCustomId(skipId, QUESTION_SKIP_ACTION_PREFIX)).toMatchObject({
             channelId: '123456789012345678', questionId,
         });
+        const detector = { submitOption: jest.fn().mockResolvedValue(true), skipQuestion: jest.fn().mockResolvedValue(true),
+            refresh: jest.fn().mockResolvedValue(undefined) };
+        const deps = actionDeps(detector, project);
+        const interaction = { channel: { id: '123456789012345678' }, customId: selectId,
+            deferUpdate: jest.fn().mockResolvedValue(undefined), editReply: jest.fn().mockResolvedValue(undefined),
+            reply: jest.fn().mockResolvedValue(undefined), followUp: jest.fn().mockResolvedValue(undefined),
+        } as any;
+        expect(await createQuestionSelectAction(deps).execute(interaction, ['1'])).toBe(true);
+        interaction.customId = skipId;
+        expect(await createQuestionSelectAction(deps).execute(interaction, ['skip'])).toBe(true);
+        expect(detector.submitOption).toHaveBeenCalledWith(1, questionId);
+        expect(detector.skipQuestion).toHaveBeenCalledWith(questionId);
+        expect(deps.bridge.pool.getQuestionDetector).toHaveBeenCalledTimes(2);
+        expect(deps.bridge.pool.getQuestionDetector).toHaveBeenCalledWith(project, undefined);
     });
 
     it('passes the original question identity through both interaction handlers', async () => {
         const detector = { submitOption: jest.fn().mockResolvedValue(true), skipQuestion: jest.fn().mockResolvedValue(true) };
-        const deps = { bridge: { pool: { getQuestionDetector: () => detector } }, wsHandler: {} } as any;
+        const deps = actionDeps(detector);
         const interaction = { channel: { id: 'channel' },
             customId: `${QUESTION_SELECT_ACTION_PREFIX}:TestProject:channel:${questionId}`,
             deferUpdate: jest.fn().mockResolvedValue(undefined), editReply: jest.fn().mockResolvedValue(undefined),

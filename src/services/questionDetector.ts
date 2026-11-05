@@ -506,7 +506,10 @@ export class QuestionDetector extends EventEmitter {
 
             if (result && result.detected) {
                 this.emptyPollCount = 0;
-                const signature = result.signature ?? JSON.stringify([result.title, result.description, result.options]);
+                const signature = result.signature ?? JSON.stringify([
+                    result.title, result.description,
+                    (result.options || []).map((option: QuestionOption) => option.text),
+                ]);
                 if (!this.lastQuestionDetected || signature !== this.lastQuestionSignature) {
                     this.lastQuestionDetected = true;
                     this.lastQuestionSignature = signature;

@@ -55,6 +55,7 @@ export function createModelButtonAction(deps: ModelButtonActionDeps): ButtonActi
             return null;
         },
 
+        /** Acknowledge the action before IDE work, then edit the deferred menu with verified model state. */
         async execute(interaction, params): Promise<void> {
             await interaction.deferUpdate();
 
@@ -140,7 +141,7 @@ export function createModelButtonAction(deps: ModelButtonActionDeps): ButtonActi
 async function refreshModelsUI(
     cdp: NonNullable<ReturnType<typeof getCurrentCdp>>,
     actionDeps: ModelButtonActionDeps,
-    interaction: { update(payload: any): Promise<void> },
+    interaction: { editReply(payload: any): Promise<void> },
 ): Promise<void> {
     try {
         const models = await cdp.getUiModels();
@@ -149,7 +150,7 @@ async function refreshModelsUI(
         const defaultModel = actionDeps.modelService?.getDefaultModel() ?? null;
         const payload = buildModelsPayload(models, currentModel, quotaData, defaultModel);
         if (payload) {
-            await interaction.update(payload);
+            await interaction.editReply(payload);
         }
     } catch (err: any) {
         logger.warn('[ModelButton] Failed to refresh models UI:', err?.message || err);

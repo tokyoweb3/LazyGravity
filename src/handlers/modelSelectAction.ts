@@ -7,6 +7,7 @@ export function createModelSelectAction(deps: ModelButtonActionDeps): SelectActi
     const action = createModelButtonAction(deps);
     return {
         match: customId => customId === MODEL_SELECT_ID || customId === MODEL_ACTIONS_SELECT_ID,
+        /** Map dropdown values to the shared model executor, rejecting unknown management actions. */
         async execute(interaction, values) {
             const value = values[0];
             if (!value) return false;

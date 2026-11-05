@@ -99,7 +99,7 @@ export interface InteractionCreateHandlerDeps {
     /** Helper function displaying models selection interface. */
     sendModelsUI: (
         target: { editReply: (opts: any) => Promise<any> },
-        deps: { getCurrentCdp: () => CdpService | null; fetchQuota: () => Promise<any[]> },
+        deps: { getCurrentCdp: () => CdpService | null; fetchQuota: () => Promise<any[]>; getDefaultModel?: () => string | null },
     ) => Promise<void>;
     /** Helper function displaying auto-accept config interface. */
     sendAutoAcceptUI: (
@@ -988,6 +988,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                         {
                             getCurrentCdp: () => getChannelCdp(interaction),
                             fetchQuota: async () => deps.bridge.quota.fetchQuota(),
+                            getDefaultModel: () => deps.modelService.getDefaultModel(),
                         },
                     );
                     await interaction.followUp({ content: `Default model set to **${currentModel}**.`, flags: MessageFlags.Ephemeral });
@@ -1013,6 +1014,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                         {
                             getCurrentCdp: () => getChannelCdp(interaction),
                             fetchQuota: async () => deps.bridge.quota.fetchQuota(),
+                            getDefaultModel: () => deps.modelService.getDefaultModel(),
                         },
                     );
                     await interaction.followUp({ content: 'Default model cleared.', flags: MessageFlags.Ephemeral });
@@ -1034,6 +1036,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                         {
                             getCurrentCdp: () => getChannelCdp(interaction),
                             fetchQuota: async () => deps.bridge.quota.fetchQuota(),
+                            getDefaultModel: () => deps.modelService.getDefaultModel(),
                         },
                     );
                     return;
@@ -1065,6 +1068,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                             {
                                 getCurrentCdp: () => getChannelCdp(interaction),
                                 fetchQuota: async () => deps.bridge.quota.fetchQuota(),
+                                getDefaultModel: () => deps.modelService.getDefaultModel(),
                             },
                         );
                         await interaction.followUp({ content: `Model changed to **${res.model}**!`, flags: MessageFlags.Ephemeral });
@@ -1649,6 +1653,10 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
         }
 
         if (interaction.isStringSelectMenu() && [MODEL_SELECT_ID, MODEL_ACTIONS_SELECT_ID].includes(interaction.customId)) {
+            if (!deps.config.allowedUserIds.includes(interaction.user.id)) {
+                await interaction.reply({ content: t('You do not have permission.'), flags: MessageFlags.Ephemeral }).catch(logger.error);
+                return;
+            }
             try {
                 const action = createModelSelectAction({
                     bridge: deps.bridge, modelService: deps.modelService, userPrefRepo: deps.userPrefRepo,
@@ -1672,6 +1680,10 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
         }
 
         if (interaction.isStringSelectMenu() && interaction.customId.startsWith(QUESTION_SELECT_ACTION_PREFIX)) {
+            if (!deps.config.allowedUserIds.includes(interaction.user.id)) {
+                await interaction.reply({ content: t('You do not have permission.'), flags: MessageFlags.Ephemeral }).catch(logger.error);
+                return;
+            }
             try {
                 const actionDeps = { bridge: deps.bridge, wsHandler: deps.wsHandler,
                     accountName: resolveSelectedAccount(interaction.channelId!, interaction.user.id, getParentChannelId(interaction)) };
@@ -1679,7 +1691,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                 if (success && deps.promptDispatcher && interaction.channelId && interaction.message) {
                     const parsed = parseQuestionCustomId(interaction.customId, QUESTION_SELECT_ACTION_PREFIX);
                     if (parsed) {
-                        const projectName = resolveProjectName({ bridge: deps.bridge, wsHandler: deps.wsHandler }, interaction.channelId, parsed.projectName);
+                        const projectName = resolveProjectName({ bridge: deps.bridge, wsHandler: deps.wsHandler }, interaction.channelId, parsed.projectName, { preferChannelBinding: true });
                         const cdp = projectName ? deps.bridge.pool.getConnected(projectName, resolveSelectedAccount(interaction.channelId, interaction.user.id, getParentChannelId(interaction))) : null;
                         if (cdp) {
                             deps.promptDispatcher.resume({
@@ -1703,6 +1715,10 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
         }
 
         if ((interaction.isButton() || interaction.isStringSelectMenu()) && interaction.customId.startsWith(QUESTION_SKIP_ACTION_PREFIX)) {
+            if (!deps.config.allowedUserIds.includes(interaction.user.id)) {
+                await interaction.reply({ content: t('You do not have permission.'), flags: MessageFlags.Ephemeral }).catch(logger.error);
+                return;
+            }
             try {
                 const action = createQuestionSkipAction({ bridge: deps.bridge, wsHandler: deps.wsHandler,
                     accountName: resolveSelectedAccount(interaction.channelId!, interaction.user.id, getParentChannelId(interaction)) });
@@ -1711,7 +1727,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                 if (success && deps.promptDispatcher && interaction.channelId && interaction.message) {
                     const parsed = parseQuestionCustomId(interaction.customId, QUESTION_SKIP_ACTION_PREFIX);
                     if (parsed) {
-                        const projectName = resolveProjectName({ bridge: deps.bridge, wsHandler: deps.wsHandler }, interaction.channelId, parsed.projectName);
+                        const projectName = resolveProjectName({ bridge: deps.bridge, wsHandler: deps.wsHandler }, interaction.channelId, parsed.projectName, { preferChannelBinding: true });
                         const cdp = projectName ? deps.bridge.pool.getConnected(projectName, resolveSelectedAccount(interaction.channelId, interaction.user.id, getParentChannelId(interaction))) : null;
                         if (cdp) {
                             deps.promptDispatcher.resume({

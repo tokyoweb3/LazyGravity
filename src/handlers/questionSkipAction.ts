@@ -32,6 +32,7 @@ export function createQuestionSkipAction(deps: QuestionSkipActionDeps): ButtonAc
             return parsed ? { action: parsed.action } : null;
         },
 
+        /** Restore the bound session and skip only the question identified by this control. */
         async execute(
             interaction: PlatformButtonInteraction,
             params: Record<string, string>,
@@ -47,7 +48,7 @@ export function createQuestionSkipAction(deps: QuestionSkipActionDeps): ButtonAc
                 return false;
             }
 
-            const projectName = resolveProjectName(deps, interaction.channel.id, parsed.projectName);
+            const projectName = resolveProjectName(deps, interaction.channel.id, parsed.projectName, { preferChannelBinding: true });
             logger.debug(`[QuestionSkipAction] project=${projectName ?? 'null'} channel=${interaction.channel.id}`);
 
             await interaction.deferUpdate().catch(() => {});

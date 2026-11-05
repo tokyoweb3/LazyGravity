@@ -849,7 +849,7 @@ async function sendPromptToAntigravity(
                         );
 
                         try {
-                            const modelsPayload = await buildModelsUI(cdp, () => bridge.quota.fetchQuota());
+                            const modelsPayload = await buildModelsUI(cdp, () => bridge.quota.fetchQuota(), modelService.getDefaultModel());
                             if (modelsPayload && channel) {
                                 await channel.send({ ...modelsPayload }).catch((error: unknown) => {
                                     logDeliveryError('quota/modelsPayload/send', error);
@@ -1292,10 +1292,10 @@ async function sendPromptToAntigravity(
             liveActivityUpdateVersion += 1;
             const activityVersion = liveActivityUpdateVersion;
             upsertLiveActivityEmbeds(
-                `${PHASE_ICONS.thinking} Process Log`,
+                waitingForUser ? '⏸ Waiting for your answer' : `${PHASE_ICONS.thinking} Process Log`,
                 lastActivityLogText || ACTIVITY_PLACEHOLDER,
                 PHASE_COLORS.thinking,
-                t(`⏱️ Elapsed: ${elapsed}s | Process log`),
+                waitingForUser ? t('Choose an option in the question message') : t(`⏱️ Elapsed: ${elapsed}s | Process log`),
                 {
                     source: 'elapsed-tick',
                     expectedVersion: activityVersion,
@@ -1321,6 +1321,7 @@ async function sendPromptToAntigravity(
 // Bot main entry point
 // =============================================================================
 
+/** Start configured chat platforms, restore persisted preferences, and connect their IDE event handlers. */
 export const startBot = async (cliLogLevel?: LogLevel) => {
     const config = loadConfig();
     logger.setLogLevel(cliLogLevel ?? config.logLevel);
@@ -1944,7 +1945,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                     createModelSelectAction({ bridge, fetchQuota: () => bridge.quota.fetchQuota(), modelService, userPrefRepo }),
                 ],
             });
-            // Composite handler that routes to the right handler
+            /** Route Telegram session, model, and question menus through their platform handlers. */
             const compositeSelectHandler = async (interaction: import('../platform/types').PlatformSelectInteraction) => {
                 if (interaction.customId === SESSION_SELECT_ID) {
                     await handleTelegramJoinSelect({
@@ -2234,6 +2235,7 @@ export async function handleSlashInteraction(
             }
             return null;
         })();
+    /** Reconnect the bound workspace and restore question notifications without answering them. */
     const ensureChannelCdp = async (): Promise<CdpService | null> => {
         const existing = getChannelCdp();
         const workspacePath = getChannelWorkspacePath();
@@ -2405,6 +2407,7 @@ export async function handleSlashInteraction(
                 await sendModelsUI(interaction, {
                     getCurrentCdp: () => cdp,
                     fetchQuota: async () => bridge.quota.fetchQuota(),
+                    getDefaultModel: () => modelService.getDefaultModel(),
                 });
             } else {
                 const cdp = await ensureChannelCdp();

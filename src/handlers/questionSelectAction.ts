@@ -28,10 +28,12 @@ export interface QuestionSelectActionDeps {
  */
 export function createQuestionSelectAction(deps: QuestionSelectActionDeps): SelectAction {
     return {
+        /** Accept answer and skip dropdowns, including controls sent before a bot restart. */
         match(customId: string): boolean {
             return customId.startsWith(QUESTION_SELECT_ACTION_PREFIX) || customId.startsWith(QUESTION_SKIP_ACTION_PREFIX);
         },
 
+        /** Restore the bound session and submit only the selected option of the matching live question. */
         async execute(
             interaction: PlatformSelectInteraction,
             values: readonly string[],
@@ -53,7 +55,7 @@ export function createQuestionSelectAction(deps: QuestionSelectActionDeps): Sele
                 return false;
             }
 
-            const projectName = resolveProjectName(deps, interaction.channel.id, parsed.projectName);
+            const projectName = resolveProjectName(deps, interaction.channel.id, parsed.projectName, { preferChannelBinding: true });
             logger.debug(`[QuestionSelectAction] project=${projectName ?? 'null'} channel=${interaction.channel.id}`);
 
             await interaction.deferUpdate().catch(() => {});

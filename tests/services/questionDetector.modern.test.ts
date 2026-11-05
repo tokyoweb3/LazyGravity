@@ -99,6 +99,31 @@ describe('Antigravity 2.6 question prompts', () => {
         } finally { recovered?.stop(); }
     });
 
+    it('notifies an identical future question after restoring an already-resolved control', async () => {
+        const old = await poll();
+        const question = document.querySelector('#question')!;
+        question.setAttribute('hidden', '');
+        let recovered: QuestionDetector | undefined;
+        const channel = { id: 'channel', send: jest.fn().mockResolvedValue({ edit: jest.fn() }) } as any;
+        const bridge = {
+            pool: {
+                getQuestionDetector: () => recovered, getConnected: () => cdp,
+                registerQuestionDetector: (_project: string, value: QuestionDetector) => { recovered = value; },
+            },
+            approvalChannelByWorkspace: new Map(), approvalChannelBySession: new Map(),
+        } as any;
+        try {
+            await restoreQuestionDetector(bridge, 'TestProject', null, channel, old.questionId);
+            expect(channel.send).not.toHaveBeenCalled();
+            question.removeAttribute('hidden');
+            await recovered!.refresh();
+            // Notification delivery follows the async chat-title lookup in the callback.
+            await new Promise(resolve => setTimeout(resolve, 0));
+            expect(channel.send).toHaveBeenCalledTimes(1);
+            expect(submit).not.toHaveBeenCalled();
+        } finally { recovered?.stop(); }
+    });
+
     it('reads the path and all choices despite the write-in field and visible Stop control', async () => {
         const info = await poll();
         expect(info.title).toBe('Allow read access to this path?');

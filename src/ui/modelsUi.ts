@@ -20,6 +20,8 @@ export interface ModelsUiDeps {
     getCurrentCdp: () => CdpService | null;
     /** Callback for fetching quota data. */
     fetchQuota: () => Promise<any[]>;
+    /** Read the saved default to show the matching management action on the initial menu. */
+    getDefaultModel?: () => string | null;
 }
 
 /**
@@ -35,6 +37,7 @@ export interface ModelsUiPayload {
 export const MODEL_SELECT_ID = 'model_select';
 export const MODEL_ACTIONS_SELECT_ID = 'model_actions_select';
 
+/** Build model and management dropdowns, marking the current and saved default choices. */
 function modelSelectRows(models: string[], currentModel: string | null, defaultModel: string | null = null): ComponentRow[] {
     return [{ components: [{
         type: 'selectMenu', customId: MODEL_SELECT_ID, placeholder: 'Select a model...',
@@ -54,6 +57,7 @@ function modelSelectRows(models: string[], currentModel: string | null, defaultM
     }] }];
 }
 
+/** Report whether the model list includes quota data rather than implying a successful quota fetch. */
 function quotaFooter(quotaData: any[]): string {
     return quotaData.some(model => model.quotaInfo)
         ? 'Latest quota information retrieved'
@@ -140,6 +144,7 @@ export function buildModelsPayload(
 export async function buildModelsUI(
     cdp: CdpService,
     fetchQuota: () => Promise<any[]>,
+    defaultModel: string | null = null,
 ): Promise<ModelsUiPayload | null> {
     const models = await cdp.getUiModels();
     const currentModel = await cdp.getCurrentModel();
@@ -187,14 +192,14 @@ export async function buildModelsUI(
     const embed = new EmbedBuilder()
         .setTitle('Model Management')
         .setColor(0x5865F2)
-        .setDescription(`**Current Model:**\n${currentModelFormatted}\n\n` +
+        .setDescription(`**Current Model:**\n${currentModelFormatted}\n**Default:** ${defaultModel ? `⭐ ${defaultModel}` : 'Not set'}\n\n` +
             `**Available Models (${models.length})**\n` +
             models.map(m => formatQuota(m, m === currentModel)).join('\n'),
         )
         .setFooter({ text: quotaFooter(quotaData) })
         .setTimestamp();
 
-    const converted = toDiscordPayload({ components: modelSelectRows(models, currentModel) });
+    const converted = toDiscordPayload({ components: modelSelectRows(models, currentModel, defaultModel) });
     return { embeds: [embed], components: converted.components as ActionRowBuilder<StringSelectMenuBuilder>[] };
 }
 
@@ -211,7 +216,7 @@ export async function sendModelsUI(
         return;
     }
 
-    const payload = await buildModelsUI(cdp, deps.fetchQuota);
+    const payload = await buildModelsUI(cdp, deps.fetchQuota, deps.getDefaultModel?.() ?? null);
     if (!payload) {
         await target.editReply({ content: 'Failed to retrieve model list from Antigravity.' });
         return;

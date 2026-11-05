@@ -30,6 +30,20 @@ describe('modelsUi', () => {
 });
 
 describe('buildModelsUI', () => {
+    it.each([null, 'Model B'])('shows the correct saved-default action on the initial menu (%s)', async defaultModel => {
+        const target = { editReply: jest.fn().mockResolvedValue(undefined) };
+        const cdp = { getUiModels: async () => ['Model A', 'Model B'], getCurrentModel: async () => 'Model A' };
+        await sendModelsUI(target, { getCurrentCdp: () => cdp as any, fetchQuota: async () => [],
+            getDefaultModel: () => defaultModel });
+        const payload = target.editReply.mock.calls[0][0];
+        const modelOptions = payload.components[0].toJSON().components[0].options;
+        const actions = payload.components[1].toJSON().components[0].options;
+        expect(actions[1].value).toBe(defaultModel ? 'clear_default' : 'set_default');
+        expect(modelOptions.find((option: any) => option.value === 'Model B').description)
+            .toBe(defaultModel ? 'Default model' : undefined);
+        expect(payload.embeds[0].data.description).toContain(defaultModel ?? 'Not set');
+    });
+
     it('does not claim quota data was retrieved when it is unavailable', async () => {
         const cdp = {
             getUiModels: jest.fn().mockResolvedValue(['Model A']),

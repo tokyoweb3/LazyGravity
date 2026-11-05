@@ -931,6 +931,7 @@ export function ensureUserMessageDetector(
  * @param cdp Active CdpService client.
  * @param projectName Workspace project name.
  * @param accountName Scoped account name.
+ * @param initialQuestionId Existing control to suppress only during the initial poll after restoration.
  */
 export function ensureQuestionDetector(
     bridge: CdpBridge,
@@ -957,7 +958,6 @@ export function ensureQuestionDetector(
         },
         onQuestionRequired: async (info: QuestionInfo) => {
             const suppress = pendingInitialQuestionId === info.questionId;
-            pendingInitialQuestionId = undefined;
             if (suppress) return;
             const currentChatTitle = await getCurrentChatTitle(cdp);
             const targetChannel = resolveApprovalChannelForCurrentChat(bridge, projectName, currentChatTitle);
@@ -986,6 +986,7 @@ export function ensureQuestionDetector(
 
     detector.setProjectName(projectName);
     detector.start();
+    void detector.refresh().finally(() => { pendingInitialQuestionId = undefined; });
     bridge.pool.registerQuestionDetector(projectName, detector, accountName);
     logger.debug(`[QuestionDetector:${projectName}] Started question detection`);
 }

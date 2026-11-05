@@ -2,6 +2,7 @@ import { createInteractionCreateHandler } from '../../src/events/interactionCrea
 import { QUESTION_SELECT_ACTION_PREFIX, QUESTION_SKIP_ACTION_PREFIX } from '../../src/services/notificationSender';
 import path from 'path';
 import fs from 'fs';
+import { MessageFlags } from 'discord.js';
 
 jest.mock('../../src/handlers/questionSelectAction', () => ({
     createQuestionSelectAction: jest.fn(),
@@ -18,6 +19,8 @@ jest.mock('child_process', () => ({
 }));
 
 describe('interactionCreateHandler - question select and skip', () => {
+    beforeEach(() => { jest.clearAllMocks(); });
+
     function createBaseDeps(overrides: Record<string, any> = {}) {
         return {
             config: { allowedUserIds: ['allowed'] },
@@ -31,7 +34,7 @@ describe('interactionCreateHandler - question select and skip', () => {
             modeService: {} as any,
             modelService: {} as any,
             slashCommandHandler: {} as any,
-            wsHandler: {} as any,
+            wsHandler: { getWorkspaceForChannel: jest.fn().mockReturnValue(null) } as any,
             chatHandler: {} as any,
             client: {} as any,
             sendModeUI: jest.fn(),
@@ -67,6 +70,27 @@ describe('interactionCreateHandler - question select and skip', () => {
             ...overrides,
         };
     }
+
+    it.each(['model_select', 'model_actions_select',
+        `${QUESTION_SELECT_ACTION_PREFIX}:test:channel-a`,
+        `${QUESTION_SKIP_ACTION_PREFIX}:test:channel-a`,
+    ])('rejects unauthorized dropdown interaction %s before creating any action', async customId => {
+        const { createModelSelectAction } = require('../../src/handlers/modelSelectAction');
+        const { createQuestionSelectAction } = require('../../src/handlers/questionSelectAction');
+        const { createQuestionSkipAction } = require('../../src/handlers/questionSkipAction');
+        const deps = createBaseDeps();
+        const interaction = { isAutocomplete: () => false, isButton: () => false, isStringSelectMenu: () => true,
+            user: { id: 'unauthorized' }, channelId: 'channel-a', customId, values: ['0'],
+            reply: jest.fn().mockResolvedValue(undefined), deferUpdate: jest.fn(),
+        } as any;
+        await createInteractionCreateHandler(deps)(interaction);
+        expect(interaction.reply).toHaveBeenCalledWith({ content: expect.any(String), flags: MessageFlags.Ephemeral });
+        expect(interaction.deferUpdate).not.toHaveBeenCalled();
+        expect(createModelSelectAction).not.toHaveBeenCalled();
+        expect(createQuestionSelectAction).not.toHaveBeenCalled();
+        expect(createQuestionSkipAction).not.toHaveBeenCalled();
+        expect(deps.promptDispatcher.resume).not.toHaveBeenCalled();
+    });
 
     it('resumes prompt dispatcher when question select action executes successfully', async () => {
         const { createQuestionSelectAction } = require('../../src/handlers/questionSelectAction');
@@ -128,6 +152,27 @@ describe('interactionCreateHandler - question select and skip', () => {
         } as any;
         await createInteractionCreateHandler(createBaseDeps())(interaction);
         expect(execute).toHaveBeenCalledWith(expect.objectContaining({ customId: 'model_select' }), ['Gemini 3.8 Flash Low']);
+    });
+
+    it.each([QUESTION_SELECT_ACTION_PREFIX, QUESTION_SKIP_ACTION_PREFIX])('resumes the full bound project for truncated %s controls', async prefix => {
+        const { createQuestionSelectAction } = require('../../src/handlers/questionSelectAction');
+        const { createQuestionSkipAction } = require('../../src/handlers/questionSkipAction');
+        createQuestionSelectAction.mockReturnValue({ execute: jest.fn().mockResolvedValue(true) });
+        createQuestionSkipAction.mockReturnValue({ execute: jest.fn().mockResolvedValue(true) });
+        const project = '專案'.repeat(80);
+        const cdp = {};
+        const deps = createBaseDeps();
+        deps.wsHandler.getWorkspaceForChannel.mockReturnValue(`/projects/${project}`);
+        deps.bridge.pool.extractProjectName = jest.fn().mockReturnValue(project);
+        deps.bridge.pool.getConnected.mockImplementation((name: string) => name === project ? cdp : null);
+        const interaction = { isAutocomplete: () => false, isButton: () => false, isStringSelectMenu: () => true,
+            user: { id: 'allowed' }, channelId: 'channel-a', channel: { id: 'channel-a' },
+            customId: `${prefix}:truncated:channel-a`, values: ['0'], message: { id: 'question' },
+            followUp: jest.fn().mockResolvedValue(undefined), reply: jest.fn().mockResolvedValue(undefined),
+        } as any;
+        await createInteractionCreateHandler(deps)(interaction);
+        expect(deps.bridge.pool.getConnected).toHaveBeenCalledWith(project, 'default');
+        expect(deps.promptDispatcher.resume).toHaveBeenCalledWith(expect.objectContaining({ cdp }));
     });
 
     it('resumes prompt dispatcher when question skip action executes successfully', async () => {
