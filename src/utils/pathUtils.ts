@@ -28,6 +28,13 @@ export function getAntigravityCliPath(): string {
     return 'antigravity';
 }
 
+/** Keep Electron applications in GUI mode when launched from a VS Code process. */
+export function getAntigravityLaunchEnv(): NodeJS.ProcessEnv {
+    const env = { ...process.env };
+    delete env.ELECTRON_RUN_AS_NODE;
+    return env;
+}
+
 /**
  * Helper to extract the project name from a full workspace path.
  * Handles both Windows (backslash) and POSIX (forward slash) paths.

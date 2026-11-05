@@ -21,6 +21,21 @@ describe('TelegramBindingRepository', () => {
             ).all();
             expect(tables).toHaveLength(1);
         });
+
+        it('migrates an existing workspace-only table without losing bindings', () => {
+            const legacy = new Database(':memory:');
+            try {
+                legacy.exec(`CREATE TABLE telegram_bindings (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    chat_id TEXT UNIQUE NOT NULL, workspace_path TEXT NOT NULL, created_at TEXT);
+                    INSERT INTO telegram_bindings (chat_id, workspace_path) VALUES ('chat', 'project');`);
+                const migrated = new TelegramBindingRepository(legacy);
+                expect(migrated.findByChatId('chat')).toMatchObject({ workspacePath: 'project', sessionTitle: null, accountName: null });
+                migrated.setSession('chat', 'project', 'Conversation A', 'personal');
+                expect(new TelegramBindingRepository(legacy).findByChatId('chat')).toMatchObject({
+                    sessionTitle: 'Conversation A', accountName: 'personal',
+                });
+            } finally { legacy.close(); }
+        });
     });
 
     describe('create - binding creation', () => {
@@ -116,6 +131,18 @@ describe('TelegramBindingRepository', () => {
     });
 
     describe('upsert - create or update binding', () => {
+        it('preserves conversation metadata for the same workspace and clears it on rebind', () => {
+            repo.setSession('chat', 'project-a', 'Conversation A', 'personal');
+            expect(repo.upsert({ chatId: 'chat', workspacePath: 'project-a' })).toMatchObject({
+                sessionTitle: 'Conversation A', accountName: 'personal',
+            });
+            expect(repo.upsert({ chatId: 'chat', workspacePath: 'project-b' })).toMatchObject({ sessionTitle: null, accountName: null });
+        });
+
+        it('distinguishes explicitly new conversations from unknown legacy bindings', () => {
+            repo.setSession('chat', 'project', '', 'default');
+            expect(repo.findByChatId('chat')).toMatchObject({ sessionTitle: '', accountName: 'default' });
+        });
         it('creates a new binding when it does not exist', () => {
             const result = repo.upsert({
                 chatId: '100200300',

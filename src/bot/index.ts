@@ -115,6 +115,7 @@ import { Bot, InputFile } from 'grammy';
 import { TelegramAdapter } from '../platform/telegram/telegramAdapter';
 import { TelegramBindingRepository } from '../database/telegramBindingRepository';
 import { createTelegramMessageHandler } from './telegramMessageHandler';
+import { createTelegramModelActionDeps } from './telegramModelActions';
 import { createTelegramSelectHandler } from './telegramProjectCommand';
 import { EventRouter } from './eventRouter';
 import { createPlatformButtonHandler } from '../handlers/buttonHandler';
@@ -126,6 +127,9 @@ import { createErrorPopupButtonAction } from '../handlers/errorPopupButtonAction
 import { createRunCommandButtonAction } from '../handlers/runCommandButtonAction';
 import { createModelButtonAction } from '../handlers/modelButtonAction';
 import { createQuestionSelectAction } from '../handlers/questionSelectAction';
+import { createModelSelectAction } from '../handlers/modelSelectAction';
+import { MODEL_SELECT_ID, MODEL_ACTIONS_SELECT_ID } from '../ui/modelsUi';
+import { createQuestionSkipAction } from '../handlers/questionSkipAction';
 import { createTemplateButtonAction } from '../handlers/templateButtonAction';
 import { createFileChangeButtonAction } from '../handlers/fileChangeButtonAction';
 import { createAutoAcceptButtonAction } from '../handlers/autoAcceptButtonAction';
@@ -727,6 +731,7 @@ async function sendPromptToAntigravity(
             { source: 'initial' },
         );
 
+        let waitingForUser = false;
         const monitor = new ResponseMonitor({
             cdpService: cdp,
             pollIntervalMs: 2000,
@@ -736,10 +741,11 @@ async function sendPromptToAntigravity(
             initialBaselineText: baseline.text,
             initialSeenProcessLogKeys: baseline.processLogKeys,
 
-            onPhaseChange: (_phase, _text) => {
-                // Phase transitions are already logged inside ResponseMonitor.setPhase()
+            onPhaseChange: (phase, _text) => {
+                waitingForUser = phase === 'waitingForUser';
             },
 
+            /** Keep live activity and waiting instructions consistent as IDE process logs change. */
             onProcessLog: (logText) => {
                 if (isFinalized) return;
                 if (logText && logText.trim().length > 0) {
@@ -749,10 +755,10 @@ async function sendPromptToAntigravity(
                 liveActivityUpdateVersion += 1;
                 const activityVersion = liveActivityUpdateVersion;
                 upsertLiveActivityEmbeds(
-                    `${PHASE_ICONS.thinking} Process Log`,
+                    waitingForUser ? '⏸ Waiting for your answer' : `${PHASE_ICONS.thinking} Process Log`,
                     lastActivityLogText || ACTIVITY_PLACEHOLDER,
                     PHASE_COLORS.thinking,
-                    t(`⏱️ Elapsed: ${elapsed}s | Process log`),
+                    waitingForUser ? t('Choose an option in the question message') : t(`⏱️ Elapsed: ${elapsed}s | Process log`),
                     {
                         source: 'process-log',
                         expectedVersion: activityVersion,
@@ -794,6 +800,7 @@ async function sendPromptToAntigravity(
                 }
             },
 
+            /** Publish the completed response and artifacts, then release monitoring and activity state. */
             onComplete: async (finalText, citedFiles, fileChanges) => {
                 isFinalized = true;
 
@@ -845,7 +852,7 @@ async function sendPromptToAntigravity(
                         );
 
                         try {
-                            const modelsPayload = await buildModelsUI(cdp, () => bridge.quota.fetchQuota());
+                            const modelsPayload = await buildModelsUI(cdp, () => bridge.quota.fetchQuota(), modelService.getDefaultModel());
                             if (modelsPayload && channel) {
                                 await channel.send({ ...modelsPayload }).catch((error: unknown) => {
                                     logDeliveryError('quota/modelsPayload/send', error);
@@ -1288,10 +1295,10 @@ async function sendPromptToAntigravity(
             liveActivityUpdateVersion += 1;
             const activityVersion = liveActivityUpdateVersion;
             upsertLiveActivityEmbeds(
-                `${PHASE_ICONS.thinking} Process Log`,
+                waitingForUser ? '⏸ Waiting for your answer' : `${PHASE_ICONS.thinking} Process Log`,
                 lastActivityLogText || ACTIVITY_PLACEHOLDER,
                 PHASE_COLORS.thinking,
-                t(`⏱️ Elapsed: ${elapsed}s | Process log`),
+                waitingForUser ? t('Choose an option in the question message') : t(`⏱️ Elapsed: ${elapsed}s | Process log`),
                 {
                     source: 'elapsed-tick',
                     expectedVersion: activityVersion,
@@ -1317,6 +1324,7 @@ async function sendPromptToAntigravity(
 // Bot main entry point
 // =============================================================================
 
+/** Start configured chat platforms, restore persisted preferences, and connect their IDE event handlers. */
 export const startBot = async (cliLogLevel?: LogLevel) => {
     const config = loadConfig();
     logger.setLogLevel(cliLogLevel ?? config.logLevel);
@@ -1890,12 +1898,18 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             const telegramAdapter = new TelegramAdapter(telegramBot as any, String(botInfo.id));
 
             const activeMonitors = new Map<string, ResponseMonitor>();
+            const telegramModelActionDeps = createTelegramModelActionDeps({
+                bridge, fetchQuota: () => bridge.quota.fetchQuota(), modelService, userPrefRepo,
+                telegramBindingRepo, workspaceService, chatSessionService, activeMonitors,
+                accountPrefRepo, channelPrefRepo, antigravityAccounts: config.antigravityAccounts,
+            });
             const telegramHandler = createTelegramMessageHandler({
                 bridge,
                 telegramBindingRepo,
                 workspaceService,
                 modeService,
                 modelService,
+                modelActionDeps: telegramModelActionDeps,
                 extractionMode: config.extractionMode,
                 templateRepo,
                 fetchQuota: () => bridge.quota.fetchQuota(),
@@ -1931,19 +1945,30 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                         : binding.workspacePath;
                 },
             });
-            const questionSelectAction = createQuestionSelectAction({ bridge, wsHandler });
+            const telegramQuestionDeps = {
+                bridge,
+                wsHandler: { getWorkspaceForChannel: (channelId: string) => {
+                    const binding = telegramBindingRepo.findByChatIdWithParentFallback(channelId);
+                    return binding ? workspaceService.getWorkspacePath(binding.workspacePath) : undefined;
+                } },
+                resolveAccountName: telegramModelActionDeps.resolveAccountName,
+                prepareSession: telegramModelActionDeps.prepareQuestionSession,
+            };
+            const questionSelectAction = createQuestionSelectAction(telegramQuestionDeps);
             const telegramSelectHandler = createPlatformSelectHandler({
                 actions: [
                     modeSelectAction,
                     accountSelectAction,
                     questionSelectAction,
+                    createModelSelectAction(telegramModelActionDeps),
                 ],
             });
-            // Composite handler that routes to the right handler
+            /** Route Telegram session, model, and question menus through their platform handlers. */
             const compositeSelectHandler = async (interaction: import('../platform/types').PlatformSelectInteraction) => {
                 if (interaction.customId === SESSION_SELECT_ID) {
                     await handleTelegramJoinSelect({
                         bridge,
+                        modelActionDeps: telegramModelActionDeps,
                         botApi: telegramBot.api as any,
                         telegramBindingRepo,
                         workspaceService,
@@ -1958,7 +1983,9 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                 if (
                     interaction.customId === 'mode_select' ||
                     interaction.customId === 'account_select' ||
-                    interaction.customId.startsWith('question_select_action')
+                    interaction.customId.startsWith('question_select_action') ||
+                    interaction.customId.startsWith('question_skip_action') ||
+                    interaction.customId === MODEL_SELECT_ID || interaction.customId === MODEL_ACTIONS_SELECT_ID
                 ) {
                     await telegramSelectHandler(interaction);
                     return;
@@ -1975,52 +2002,12 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
 
             const telegramButtonHandler = createPlatformButtonHandler({
                 actions: [
+                    createQuestionSkipAction(telegramQuestionDeps),
                     createApprovalButtonAction({ bridge, wsHandler }),
                     createPlanningButtonAction({ bridge, wsHandler }),
                     createErrorPopupButtonAction({ bridge, wsHandler }),
                     createRunCommandButtonAction({ bridge, wsHandler }),
-                    createModelButtonAction({
-                        bridge,
-                        fetchQuota: () => bridge.quota.fetchQuota(),
-                        modelService,
-                        userPrefRepo,
-                        ensureSessionActivated: async (channelId, userId, cdp) => {
-                            const savedTitle = chatSessionRepo.findByChannelId(channelId)?.displayName?.trim() || '';
-                            if (!savedTitle || savedTitle === t('(Untitled)')) {
-                                return { ok: true };
-                            }
-
-                            const current = await chatSessionService.getCurrentSessionInfo(cdp);
-                            if (current.title.trim() === savedTitle) {
-                                return { ok: true };
-                            }
-
-                            logger.info(
-                                `[ModelCommand] source=button channel=${channelId} user=${userId} ` +
-                                `restoringSession target="${savedTitle}" current="${current.title.trim() || '(unknown)'}"`,
-                            );
-                            const activation = await chatSessionService.activateSessionByTitle(cdp, savedTitle, {
-                                maxWaitMs: 8000,
-                                retryIntervalMs: 300,
-                                allowVisibilityWarmupMs: 1000,
-                            });
-                            if (!activation.ok) {
-                                return {
-                                    ok: false as const,
-                                    error: `Failed to activate saved session "${savedTitle}" before model action: ${activation.error || 'unknown'}`,
-                                };
-                            }
-
-                            const refresh = await chatSessionService.refreshSessionViewIfStuck(cdp, savedTitle);
-                            if (!refresh.ok) {
-                                logger.warn(
-                                    `[ModelCommand] source=button channel=${channelId} user=${userId} ` +
-                                    `sessionRefreshWarning target="${savedTitle}" error="${refresh.error || 'unknown'}"`,
-                                );
-                            }
-                            return { ok: true as const };
-                        },
-                    }),
+                    createModelButtonAction(telegramModelActionDeps),
                     createAutoAcceptButtonAction({ autoAcceptService: bridge.autoAccept }),
                     createTemplateButtonAction({ bridge, templateRepo }),
                     createFileChangeButtonAction({ bridge, wsHandler }),
@@ -2226,15 +2213,25 @@ export async function handleSlashInteraction(
             }
             return null;
         })();
+    /** Reconnect the bound workspace and restore question notifications without answering them. */
     const ensureChannelCdp = async (): Promise<CdpService | null> => {
         const existing = getChannelCdp();
-        if (existing) return existing;
-
         const workspacePath = getChannelWorkspacePath();
         if (!workspacePath) return null;
 
         try {
-            return await bridge.pool.getOrConnect(workspacePath, { name: resolveSelectedAccount() });
+            const account = resolveSelectedAccount();
+            const cdp = existing ?? await bridge.pool.getOrConnect(workspacePath, { name: account });
+            // A read-only /model command can restore pending questions after a bot restart.
+            if (interaction.channel && (cdp.getContexts?.() ?? []).some(context => context.url?.includes('extensionView=true'))) {
+                const projectName = bridge.pool.extractProjectName(workspacePath);
+                const channel = wrapDiscordChannel(interaction.channel as any);
+                registerApprovalWorkspaceChannel(bridge, projectName, channel);
+                const title = chatSessionRepo?.findByChannelId(interaction.channelId)?.displayName;
+                if (title) registerApprovalSessionChannel(bridge, projectName, title, channel);
+                ensureQuestionDetector(bridge, cdp, projectName, account);
+            }
+            return cdp;
         } catch {
             return null;
         }
@@ -2388,6 +2385,7 @@ export async function handleSlashInteraction(
                 await sendModelsUI(interaction, {
                     getCurrentCdp: () => cdp,
                     fetchQuota: async () => bridge.quota.fetchQuota(),
+                    getDefaultModel: () => modelService.getDefaultModel(),
                 });
             } else {
                 const cdp = await ensureChannelCdp();

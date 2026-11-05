@@ -38,18 +38,22 @@ export interface TelegramJoinCommandDeps {
     readonly extractionMode?: import('../utils/config').ExtractionMode;
     /** Primary active monitors from the main Telegram message handler (keyed by project name). */
     readonly activeMonitors?: Map<string, ResponseMonitor>;
+    /** Shared account routing retains a topic's owning account after restart. */
+    readonly modelActionDeps?: Pick<import('../handlers/modelButtonAction').ModelButtonActionDeps, 'resolveAccountName'>;
 }
 
 const activeResponseMonitors = new Map<string, ResponseMonitor>();
 
 /**
- * Resolves the account name for the interaction based on channel preferences.
+ * Resolves the saved conversation owner, falling back to scoped channel preferences.
  * @param deps Injected dependencies.
  * @param chatId Chat channel ID.
  * @param userId Author user ID.
  * @returns Resolved account name.
  */
 function resolveAccount(deps: TelegramJoinCommandDeps, chatId: string, userId: string): string {
+    const stored = deps.modelActionDeps?.resolveAccountName?.(chatId, userId, { allowParentFallback: true });
+    if (stored) return stored;
     return resolveScopedAccountName({
         channelId: chatId,
         userId,
@@ -106,7 +110,7 @@ export async function handleJoin(deps: TelegramJoinCommandDeps, message: Platfor
 export async function handleTelegramJoinSelect(deps: TelegramJoinCommandDeps, interaction: PlatformSelectInteraction): Promise<void> {
     const selectedTitle = interaction.values[0];
     const originalChannelId = interaction.channel.id;
-    const binding = deps.telegramBindingRepo?.findByChatId(originalChannelId);
+    const binding = deps.telegramBindingRepo?.findByChatIdWithParentFallback(originalChannelId);
 
     if (!binding) {
         await interaction.update({ text: '⚠️ No project is bound to this chat.' }).catch(logger.error);
@@ -149,7 +153,9 @@ export async function handleTelegramJoinSelect(deps: TelegramJoinCommandDeps, in
         );
     }
 
-    const replyMsg = targetChannelId !== originalChannelId 
+    deps.telegramBindingRepo?.setSession(targetChannelId, binding.workspacePath, selectedTitle, account);
+
+    const replyMsg = targetChannelId !== originalChannelId
         ? `✅ Joined session in new topic: <b>${escapeHtml(selectedTitle)}</b>\nUse /mirror if you want to forward PC messages here.` 
         : `✅ Joined session: <b>${escapeHtml(selectedTitle)}</b>\nUse /mirror if you want to forward PC messages here.`;
 

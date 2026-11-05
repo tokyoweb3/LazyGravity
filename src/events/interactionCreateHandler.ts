@@ -34,6 +34,8 @@ import {
 import { QUESTION_SELECT_ACTION_PREFIX, QUESTION_SKIP_ACTION_PREFIX } from '../services/notificationSender';
 import { createQuestionSelectAction } from '../handlers/questionSelectAction';
 import { createQuestionSkipAction } from '../handlers/questionSkipAction';
+import { createModelSelectAction } from '../handlers/modelSelectAction';
+import { MODEL_SELECT_ID, MODEL_ACTIONS_SELECT_ID } from '../ui/modelsUi';
 import { wrapDiscordButton, wrapDiscordSelect, wrapDiscordCommand, wrapDiscordModalSubmit } from '../platform/discord/wrappers';
 import { parseQuestionCustomId } from '../utils/questionActionUtils';
 import { resolveProjectName } from '../utils/projectResolver';
@@ -97,7 +99,7 @@ export interface InteractionCreateHandlerDeps {
     /** Helper function displaying models selection interface. */
     sendModelsUI: (
         target: { editReply: (opts: any) => Promise<any> },
-        deps: { getCurrentCdp: () => CdpService | null; fetchQuota: () => Promise<any[]> },
+        deps: { getCurrentCdp: () => CdpService | null; fetchQuota: () => Promise<any[]>; getDefaultModel?: () => string | null },
     ) => Promise<void>;
     /** Helper function displaying auto-accept config interface. */
     sendAutoAcceptUI: (
@@ -986,6 +988,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                         {
                             getCurrentCdp: () => getChannelCdp(interaction),
                             fetchQuota: async () => deps.bridge.quota.fetchQuota(),
+                            getDefaultModel: () => deps.modelService.getDefaultModel(),
                         },
                     );
                     await interaction.followUp({ content: `Default model set to **${currentModel}**.`, flags: MessageFlags.Ephemeral });
@@ -1011,6 +1014,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                         {
                             getCurrentCdp: () => getChannelCdp(interaction),
                             fetchQuota: async () => deps.bridge.quota.fetchQuota(),
+                            getDefaultModel: () => deps.modelService.getDefaultModel(),
                         },
                     );
                     await interaction.followUp({ content: 'Default model cleared.', flags: MessageFlags.Ephemeral });
@@ -1032,6 +1036,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                         {
                             getCurrentCdp: () => getChannelCdp(interaction),
                             fetchQuota: async () => deps.bridge.quota.fetchQuota(),
+                            getDefaultModel: () => deps.modelService.getDefaultModel(),
                         },
                     );
                     return;
@@ -1063,6 +1068,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                             {
                                 getCurrentCdp: () => getChannelCdp(interaction),
                                 fetchQuota: async () => deps.bridge.quota.fetchQuota(),
+                                getDefaultModel: () => deps.modelService.getDefaultModel(),
                             },
                         );
                         await interaction.followUp({ content: `Model changed to **${res.model}**!`, flags: MessageFlags.Ephemeral });
@@ -1646,15 +1652,47 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
             return;
         }
 
-        if (interaction.isStringSelectMenu() && interaction.customId.startsWith(QUESTION_SELECT_ACTION_PREFIX)) {
+        if (interaction.isStringSelectMenu() && [MODEL_SELECT_ID, MODEL_ACTIONS_SELECT_ID].includes(interaction.customId)) {
+            if (!deps.config.allowedUserIds.includes(interaction.user.id)) {
+                await interaction.reply({ content: t('You do not have permission.'), flags: MessageFlags.Ephemeral }).catch(logger.error);
+                return;
+            }
             try {
-                const action = createQuestionSelectAction({ bridge: deps.bridge, wsHandler: deps.wsHandler });
-                const wrapped = wrapDiscordSelect(interaction as any);
-                const success = await action.execute(wrapped, interaction.values);
+                const action = createModelSelectAction({
+                    bridge: deps.bridge, modelService: deps.modelService, userPrefRepo: deps.userPrefRepo,
+                    fetchQuota: () => deps.bridge.quota.fetchQuota(),
+                    /** Resolve only the menu channel's workspace and scoped IDE account. */
+                    resolveCdp: async (channelId, userId) => {
+                        const existing = getChannelCdp(interaction);
+                        if (existing) return existing;
+                        const workspace = deps.wsHandler.getWorkspaceForChannel(channelId);
+                        return workspace ? deps.bridge.pool.getOrConnect(workspace, {
+                            name: resolveSelectedAccount(channelId, userId, getParentChannelId(interaction)),
+                        }) : null;
+                    },
+                    ensureSessionActivated: (channelId, userId, cdp) => ensureBoundSessionActive(channelId, userId, cdp),
+                });
+                await action.execute(wrapDiscordSelect(interaction as any), interaction.values);
+            } catch (error) {
+                logger.error('[ModelSelect] Failed to handle selection:', error);
+                await interaction.followUp({ content: 'Failed to update the model. Run /model to refresh.', ephemeral: true }).catch(() => {});
+            }
+            return;
+        }
+
+        if (interaction.isStringSelectMenu() && interaction.customId.startsWith(QUESTION_SELECT_ACTION_PREFIX)) {
+            if (!deps.config.allowedUserIds.includes(interaction.user.id)) {
+                await interaction.reply({ content: t('You do not have permission.'), flags: MessageFlags.Ephemeral }).catch(logger.error);
+                return;
+            }
+            try {
+                const actionDeps = { bridge: deps.bridge, wsHandler: deps.wsHandler,
+                    accountName: resolveSelectedAccount(interaction.channelId!, interaction.user.id, getParentChannelId(interaction)) };
+                const success = await createQuestionSelectAction(actionDeps).execute(wrapDiscordSelect(interaction as any), interaction.values);
                 if (success && deps.promptDispatcher && interaction.channelId && interaction.message) {
                     const parsed = parseQuestionCustomId(interaction.customId, QUESTION_SELECT_ACTION_PREFIX);
                     if (parsed) {
-                        const projectName = resolveProjectName({ bridge: deps.bridge, wsHandler: deps.wsHandler }, interaction.channelId, parsed.projectName);
+                        const projectName = resolveProjectName({ bridge: deps.bridge, wsHandler: deps.wsHandler }, interaction.channelId, parsed.projectName, { preferChannelBinding: true });
                         const cdp = projectName ? deps.bridge.pool.getConnected(projectName, resolveSelectedAccount(interaction.channelId, interaction.user.id, getParentChannelId(interaction))) : null;
                         if (cdp) {
                             deps.promptDispatcher.resume({
@@ -1677,15 +1715,20 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
             return;
         }
 
-        if (interaction.isButton() && interaction.customId.startsWith(QUESTION_SKIP_ACTION_PREFIX)) {
+        if ((interaction.isButton() || interaction.isStringSelectMenu()) && interaction.customId.startsWith(QUESTION_SKIP_ACTION_PREFIX)) {
+            if (!deps.config.allowedUserIds.includes(interaction.user.id)) {
+                await interaction.reply({ content: t('You do not have permission.'), flags: MessageFlags.Ephemeral }).catch(logger.error);
+                return;
+            }
             try {
-                const action = createQuestionSkipAction({ bridge: deps.bridge, wsHandler: deps.wsHandler });
-                const wrapped = wrapDiscordButton(interaction as any);
+                const action = createQuestionSkipAction({ bridge: deps.bridge, wsHandler: deps.wsHandler,
+                    accountName: resolveSelectedAccount(interaction.channelId!, interaction.user.id, getParentChannelId(interaction)) });
+                const wrapped = interaction.isStringSelectMenu() ? wrapDiscordSelect(interaction as any) : wrapDiscordButton(interaction as any);
                 const success = await action.execute(wrapped, {});
                 if (success && deps.promptDispatcher && interaction.channelId && interaction.message) {
                     const parsed = parseQuestionCustomId(interaction.customId, QUESTION_SKIP_ACTION_PREFIX);
                     if (parsed) {
-                        const projectName = resolveProjectName({ bridge: deps.bridge, wsHandler: deps.wsHandler }, interaction.channelId, parsed.projectName);
+                        const projectName = resolveProjectName({ bridge: deps.bridge, wsHandler: deps.wsHandler }, interaction.channelId, parsed.projectName, { preferChannelBinding: true });
                         const cdp = projectName ? deps.bridge.pool.getConnected(projectName, resolveSelectedAccount(interaction.channelId, interaction.user.id, getParentChannelId(interaction))) : null;
                         if (cdp) {
                             deps.promptDispatcher.resume({

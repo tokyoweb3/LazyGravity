@@ -1,6 +1,7 @@
 import { logger } from '../utils/logger';
 import type { ExtractionMode } from '../utils/config';
 import { CdpService } from './cdpService';
+import { MODERN_AGENT_STATE_SCRIPT } from '../ui/antigravityState';
 import {
     extractAssistantSegmentsPayloadScript,
     classifyAssistantSegments,
@@ -104,6 +105,8 @@ export const RESPONSE_SELECTORS = {
     })()`,
     /** Stop button detection via tooltip-id + text fallback */
     STOP_BUTTON: `(() => {
+        const modern = ${MODERN_AGENT_STATE_SCRIPT};
+        if (modern) return { isGenerating: modern.isGenerating, waitingForUser: modern.waitingForUser };
         const panel = document.querySelector('.antigravity-agent-side-panel');
         const scopes = [panel, document].filter(Boolean);
 
@@ -478,7 +481,10 @@ export const RESPONSE_SELECTORS = {
 };
 
 /** Response generation phases */
-export type ResponsePhase = 'waiting' | 'thinking' | 'generating' | 'complete' | 'timeout' | 'quotaReached' | 'disconnected';
+export type ResponsePhase = 'waiting' | 'thinking' | 'waitingForUser' | 'generating' | 'complete' | 'timeout' | 'quotaReached' | 'disconnected';
+
+/** Why monitoring ended, before completion or timeout callbacks run. */
+export type ResponseStopReason = 'stopped' | 'complete' | 'timeout';
 
 /** Configuration options passed to constructed ResponseMonitor instances */
 export interface ResponseMonitorOptions {
@@ -502,6 +508,8 @@ export interface ResponseMonitorOptions {
     onStructuredComplete?: (result: ClassifyResult) => void;
     /** Timeout callback */
     onTimeout?: (lastText: string) => void;
+    /** Awaited once when monitoring stops, including an explicit stop command. */
+    onStop?: (reason: ResponseStopReason) => void | Promise<void>;
     /** Phase change callback */
     onPhaseChange?: (phase: ResponsePhase, text: string | null) => void;
     /** Process log update callback (activity messages + tool output) */
@@ -719,6 +727,7 @@ export class ResponseMonitor {
     private readonly onStructuredProgress?: (result: ClassifyResult) => void;
     private readonly onStructuredComplete?: (result: ClassifyResult) => void;
     private readonly onTimeout?: (lastText: string) => void;
+    private readonly onStop?: (reason: ResponseStopReason) => void | Promise<void>;
     private readonly onPhaseChange?: (phase: ResponsePhase, text: string | null) => void;
     private readonly onProcessLog?: (text: string) => void;
     private readonly initialBaselineText?: string | null;
@@ -726,10 +735,12 @@ export class ResponseMonitor {
 
     private pollTimer: ReturnType<typeof setTimeout> | null = null;
     private isRunning: boolean = false;
+    private stopPromise: Promise<void> | null = null;
     private lastText: string | null = null;
     private lastClassified: ClassifyResult | null = null;
     private baselineText: string | null = null;
     private generationStarted: boolean = false;
+    private userWaitStartedAt: number | null = null;
     private currentPhase: ResponsePhase = 'waiting';
     private stopGoneCount: number = 0;
     private quotaDetected: boolean = false;
@@ -763,6 +774,7 @@ export class ResponseMonitor {
         this.onStructuredProgress = options.onStructuredProgress;
         this.onStructuredComplete = options.onStructuredComplete;
         this.onTimeout = options.onTimeout;
+        this.onStop = options.onStop;
         this.onPhaseChange = options.onPhaseChange;
         this.onProcessLog = options.onProcessLog;
         this.initialBaselineText = options.initialBaselineText;
@@ -798,11 +810,17 @@ export class ResponseMonitor {
      */
     private async initMonitoring(passive: boolean): Promise<void> {
         if (this.isRunning) return;
+        if (this.stopPromise) {
+            await this.stopPromise.catch(() => {});
+            if (this.isRunning) return;
+            this.stopPromise = null;
+        }
         this.isRunning = true;
         this.isPaused = false;
         this.lastText = null;
         this.baselineText = null;
         this.generationStarted = passive;
+        this.userWaitStartedAt = null;
         this.currentPhase = passive ? 'generating' : 'waiting';
         this.stopGoneCount = 0;
         this.quotaDetected = false;
@@ -889,8 +907,13 @@ export class ResponseMonitor {
         this.schedulePoll();
     }
 
-    /** Stop monitoring */
-    async stop(): Promise<void> {
+    /**
+     * Stop polling and await the shared persistence hook before releasing callers.
+     * @param reason Whether the caller stopped monitoring or generation ended.
+     * @returns The same lifecycle promise for concurrent stop requests.
+     */
+    stop(reason: ResponseStopReason = 'stopped'): Promise<void> {
+        if (this.stopPromise) return this.stopPromise;
         this.isRunning = false;
         this.isPaused = false;
         this.unregisterCdpConnectionListeners();
@@ -898,6 +921,8 @@ export class ResponseMonitor {
             clearTimeout(this.pollTimer);
             this.pollTimer = null;
         }
+        this.stopPromise = Promise.resolve().then(() => this.onStop?.(reason));
+        return this.stopPromise;
     }
 
     /** Get current phase */
@@ -956,6 +981,9 @@ export class ResponseMonitor {
                 case 'thinking':
                     logger.phase('Thinking');
                     break;
+                case 'waitingForUser':
+                    logger.phase('Waiting for your answer');
+                    break;
                 case 'generating':
                     logger.phase(`Generating (${len} chars)`);
                     break;
@@ -1008,7 +1036,7 @@ export class ResponseMonitor {
             logger.error('[ResponseMonitor] CDP reconnection failed — stopping monitor:', err.message);
             const lastText = this.lastText ?? '';
             this.setPhase('disconnected', lastText);
-            await this.stop();
+            await this.stop('timeout');
             try {
                 await Promise.resolve(this.onTimeout?.(lastText));
             } catch (error) {
@@ -1162,7 +1190,7 @@ export class ResponseMonitor {
         const newEntries: string[] = [];
         for (const line of entries) {
             const normalized = (line || '').replace(/\r/g, '').trim();
-            if (!normalized) continue;
+            if (!normalized || /^[.\u2026\u00b7\s]+$/.test(normalized)) continue;
             const key = normalized.slice(0, 200);
             if (this.seenProcessLogKeys.has(key)) continue;
             this.seenProcessLogKeys.add(key);
@@ -1186,12 +1214,32 @@ export class ResponseMonitor {
     private async poll(): Promise<void> {
         try {
             // 1. Stop button check
-            const stopResult = await this.evaluateAcrossContexts<{ isGenerating?: boolean } | null>(
+            const stopResult = await this.evaluateAcrossContexts<{ isGenerating?: boolean; waitingForUser?: boolean } | null>(
                 RESPONSE_SELECTORS.STOP_BUTTON,
-                (value) => !!(value && typeof value === 'object' && (value as any).isGenerating),
+                (value) => !!(value && (value.isGenerating || value.waitingForUser)),
             );
             const stopValue = stopResult.value;
             const isGenerating = !!(stopValue && typeof stopValue === 'object' && (stopValue as any).isGenerating);
+
+            // A question is an active task awaiting the user, not stalled generation.
+            // Leave its controls available and exclude user wait time from timeouts.
+            if (stopValue?.waitingForUser) {
+                this.setPhase('waitingForUser', null);
+                if (this.userWaitStartedAt === null) {
+                    this.userWaitStartedAt = Date.now();
+                    this.generationStarted = true;
+                    this.emitNewProcessLogs(['Waiting for your answer. Choose an option in the question message.']);
+                }
+                this.stopGoneCount = 0;
+                this.lastActivityTime = Date.now();
+                return;
+            }
+            if (this.userWaitStartedAt !== null) {
+                this.startTime += Date.now() - this.userWaitStartedAt;
+                this.userWaitStartedAt = null;
+                this.lastActivityTime = Date.now();
+                this.setPhase('thinking', null);
+            }
 
             // 2. Quota error check
             const quotaResult = await this.evaluateAcrossContexts<boolean | null>(
@@ -1289,7 +1337,7 @@ export class ResponseMonitor {
                     this.quotaDetected = true;
                 } else {
                     this.setPhase('quotaReached', '');
-                    await this.stop();
+                    await this.stop('complete');
                     try {
                         await Promise.resolve(this.onComplete?.(''));
                         if (this.lastClassified) await Promise.resolve(this.onStructuredComplete?.(this.lastClassified));
@@ -1338,7 +1386,7 @@ export class ResponseMonitor {
                 if (this.stopGoneCount >= this.stopGoneConfirmCount) {
                     const finalText = this.lastText ?? '';
                     this.setPhase('complete', finalText);
-                    await this.stop();
+                    await this.stop('complete');
                     try {
                         await Promise.resolve(this.onComplete?.(finalText, this.currentCitedFiles, this.currentFileChanges));
                         if (this.lastClassified) await Promise.resolve(this.onStructuredComplete?.(this.lastClassified));
@@ -1364,7 +1412,7 @@ export class ResponseMonitor {
                 }
                 const lastText = this.lastText ?? '';
                 this.setPhase('timeout', lastText);
-                await this.stop();
+                await this.stop('timeout');
                 try {
                     await Promise.resolve(this.onTimeout?.(lastText));
                 } catch (error) {

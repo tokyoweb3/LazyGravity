@@ -372,9 +372,7 @@ export function buildResolvedOverlay(
 
     const disabledComponents: ComponentRow[] | undefined = original.components
         ? original.components.map((row) => ({
-              components: row.components.map((comp) =>
-                  comp.type === 'button' ? { ...comp, disabled: true as const } : comp,
-               ),
+              components: row.components.map((comp) => ({ ...comp, disabled: true as const })),
           }))
         : undefined;
 
@@ -417,6 +415,8 @@ export function buildStatusNotification(opts: {
 
 /** Configuration interface for buildQuestionNotification. */
 export interface BuildQuestionNotificationParams {
+    /** Exact prompt identity for rejecting stale controls. */
+    questionId?: string;
     /** Alert question title. */
     title: string;
     /** Question detailed prompt. */
@@ -437,7 +437,7 @@ export interface BuildQuestionNotificationParams {
 export function buildQuestionNotification(
     params: BuildQuestionNotificationParams,
 ): MessagePayload {
-    const { title, description, projectName, channelId, options } = params;
+    const { title, description, projectName, channelId, options, questionId } = params;
 
     const baseContent = pipe(
         createRichContent(),
@@ -445,7 +445,10 @@ export function buildQuestionNotification(
         (rc) => withColor(rc, COLOR_APPROVAL),
     );
 
-    const embed = description ? withDescription(baseContent, description) : baseContent;
+    // Question text comes from the rendered IDE DOM, not Markdown source.
+    const embed = description
+        ? { ...withDescription(baseContent, description), descriptionFormat: 'plain' as const }
+        : baseContent;
 
     const selectMenuOptions = options.map((opt, i) => ({
         label: opt.text.substring(0, 100), // Discord max length for label is 100
@@ -460,35 +463,28 @@ export function buildQuestionNotification(
     };
 
     const encodedChannel = encodeURIComponent(channelId);
+    const questionSuffix = questionId ? `:${questionId}` : '';
     
-    const selectOverhead = QUESTION_SELECT_ACTION_PREFIX.length + 2 + encodedChannel.length;
+    const selectOverhead = QUESTION_SELECT_ACTION_PREFIX.length + 2 + encodedChannel.length + questionSuffix.length;
     const safeSelectProjectName = encodeSafe(projectName, 100 - selectOverhead);
-    const encodedCustomId = `${QUESTION_SELECT_ACTION_PREFIX}:${safeSelectProjectName}:${encodedChannel}`;
+    const encodedCustomId = `${QUESTION_SELECT_ACTION_PREFIX}:${safeSelectProjectName}:${encodedChannel}${questionSuffix}`;
 
-    const skipOverhead = QUESTION_SKIP_ACTION_PREFIX.length + 2 + encodedChannel.length;
+    const skipOverhead = QUESTION_SKIP_ACTION_PREFIX.length + 2 + encodedChannel.length + questionSuffix.length;
     const safeSkipProjectName = encodeSafe(projectName, 100 - skipOverhead);
-    const encodedSkipCustomId = `${QUESTION_SKIP_ACTION_PREFIX}:${safeSkipProjectName}:${encodedChannel}`;
+    const encodedSkipCustomId = `${QUESTION_SKIP_ACTION_PREFIX}:${safeSkipProjectName}:${encodedChannel}${questionSuffix}`;
 
     return {
-        richContent: embed,
+        richContent: withFooter(embed, 'Waiting for your answer. Open the select menu below.'),
         components: [
+            { components: [{ type: 'selectMenu', customId: encodedCustomId,
+                placeholder: 'Select an answer...', options: selectMenuOptions }] },
             {
                 components: [
                     {
                         type: 'selectMenu',
-                        customId: encodedCustomId,
-                        placeholder: 'Select an option...',
-                        options: selectMenuOptions,
-                    },
-                ],
-            },
-            {
-                components: [
-                    {
-                        type: 'button',
                         customId: encodedSkipCustomId,
-                        label: 'Skip',
-                        style: 'secondary',
+                        placeholder: 'Question actions...',
+                        options: [{ label: 'Skip question', value: 'skip' }],
                     },
                 ],
             },

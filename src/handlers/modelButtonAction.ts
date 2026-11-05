@@ -12,7 +12,13 @@ import { getCurrentCdp } from '../services/cdpBridgeManager';
 import { buildModelsPayload } from '../ui/modelsUi';
 import type { ModelService } from '../services/modelService';
 import type { UserPreferenceRepository } from '../database/userPreferenceRepository';
+import type { PlatformChannel } from '../platform/types';
 import { logger } from '../utils/logger';
+
+/** Scope inheritance is opt-in for ordinary prompts; menu and question controls use exact bindings. */
+export interface SessionScopeOptions {
+    allowParentFallback?: boolean;
+}
 
 /**
  * Dependencies injected into model button action creator.
@@ -26,8 +32,14 @@ export interface ModelButtonActionDeps {
     readonly modelService?: ModelService;
     /** User preferences repository. */
     readonly userPrefRepo?: UserPreferenceRepository;
+    /** Resolve the connection belonging to the interaction's channel. */
+    readonly resolveCdp?: (channelId: string, userId: string) => Promise<ReturnType<typeof getCurrentCdp>>;
+    /** Resolve the scoped account, including a platform's persisted conversation owner. */
+    readonly resolveAccountName?: (channelId: string, userId: string, options?: SessionScopeOptions) => string;
     /** Optional activation callback interface checker. */
-    readonly ensureSessionActivated?: (channelId: string, userId: string, cdp: NonNullable<ReturnType<typeof getCurrentCdp>>) => Promise<{ ok: true } | { ok: false; error: string }>;
+    readonly ensureSessionActivated?: (channelId: string, userId: string, cdp: NonNullable<ReturnType<typeof getCurrentCdp>>, options?: SessionScopeOptions) => Promise<{ ok: true } | { ok: false; error: string }>;
+    /** Restore pending controls after the bound session is ready. */
+    readonly onSessionReady?: (channel: PlatformChannel, userId: string, cdp: NonNullable<ReturnType<typeof getCurrentCdp>>) => Promise<void>;
 }
 
 /**
@@ -53,10 +65,13 @@ export function createModelButtonAction(deps: ModelButtonActionDeps): ButtonActi
             return null;
         },
 
+        /** Acknowledge the action before IDE work, then edit the deferred menu with verified model state. */
         async execute(interaction, params): Promise<void> {
             await interaction.deferUpdate();
 
-            const cdp = getCurrentCdp(deps.bridge);
+            const cdp = deps.resolveCdp
+                ? await deps.resolveCdp(interaction.channel.id, interaction.user.id)
+                : getCurrentCdp(deps.bridge);
             if (!cdp) {
                 logger.warn(`[ModelCommand] source=button user=${interaction.user.id} action=${params.action} cdp=unavailable`);
                 await interaction.followUp({ text: 'Not connected to CDP.' }).catch(() => {});
@@ -69,6 +84,7 @@ export function createModelButtonAction(deps: ModelButtonActionDeps): ButtonActi
                     return;
                 }
             }
+            await deps.onSessionReady?.(interaction.channel, interaction.user.id, cdp);
 
             if (params.action === 'set_default') {
                 const currentModel = await cdp.getCurrentModel();
@@ -136,7 +152,7 @@ export function createModelButtonAction(deps: ModelButtonActionDeps): ButtonActi
 async function refreshModelsUI(
     cdp: NonNullable<ReturnType<typeof getCurrentCdp>>,
     actionDeps: ModelButtonActionDeps,
-    interaction: { update(payload: any): Promise<void> },
+    interaction: { editReply(payload: any): Promise<void> },
 ): Promise<void> {
     try {
         const models = await cdp.getUiModels();
@@ -145,7 +161,7 @@ async function refreshModelsUI(
         const defaultModel = actionDeps.modelService?.getDefaultModel() ?? null;
         const payload = buildModelsPayload(models, currentModel, quotaData, defaultModel);
         if (payload) {
-            await interaction.update(payload);
+            await interaction.editReply(payload);
         }
     } catch (err: any) {
         logger.warn('[ModelButton] Failed to refresh models UI:', err?.message || err);

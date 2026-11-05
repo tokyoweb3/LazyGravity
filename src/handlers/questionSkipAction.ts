@@ -1,6 +1,7 @@
 import type { PlatformButtonInteraction } from '../platform/types';
 import type { ButtonAction } from './buttonHandler';
 import type { CdpBridge } from '../services/cdpBridgeManager';
+import { restoreQuestionDetector } from '../services/cdpBridgeManager';
 import type { WorkspaceCommandHandler } from '../commands/workspaceCommandHandler';
 import { logger } from '../utils/logger';
 import { QUESTION_SKIP_ACTION_PREFIX } from '../services/notificationSender';
@@ -14,7 +15,13 @@ export interface QuestionSkipActionDeps {
     /** Target CDP bridge manager instance. */
     readonly bridge: CdpBridge;
     /** Workspace command handler instance. */
-    readonly wsHandler: WorkspaceCommandHandler;
+    readonly wsHandler: Pick<WorkspaceCommandHandler, 'getWorkspaceForChannel'>;
+    /** Account selected for this session. */
+    readonly accountName?: string;
+    /** Resolve the account belonging to the question's platform chat. */
+    readonly resolveAccountName?: (channelId: string, userId: string) => string;
+    /** Restore the control's bound conversation before comparing or skipping a question. */
+    readonly prepareSession?: (channelId: string, userId: string) => Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
 /**
@@ -29,6 +36,7 @@ export function createQuestionSkipAction(deps: QuestionSkipActionDeps): ButtonAc
             return parsed ? { action: parsed.action } : null;
         },
 
+        /** Restore the bound session and skip only the question identified by this control. */
         async execute(
             interaction: PlatformButtonInteraction,
             params: Record<string, string>,
@@ -44,26 +52,50 @@ export function createQuestionSkipAction(deps: QuestionSkipActionDeps): ButtonAc
                 return false;
             }
 
-            const projectName = resolveProjectName(deps, interaction.channel.id, parsed.projectName);
+            const projectName = resolveProjectName(deps, interaction.channel.id, parsed.projectName, { preferChannelBinding: true });
             logger.debug(`[QuestionSkipAction] project=${projectName ?? 'null'} channel=${interaction.channel.id}`);
 
-            const detector = projectName
-                ? deps.bridge.pool.getQuestionDetector(projectName)
+            await interaction.deferUpdate().catch(() => {});
+            try {
+                const ready = await deps.prepareSession?.(interaction.channel.id, interaction.user.id);
+                if (ready && !ready.ok) {
+                    await interaction.followUp({ text: ready.error, ephemeral: true }).catch(() => {});
+                    return false;
+                }
+            } catch (error) {
+                logger.warn('[QuestionSkipAction] Could not prepare the bound conversation:', error);
+                await interaction.followUp({ text: 'Unable to restore this conversation. Run /model to refresh.', ephemeral: true }).catch(() => {});
+                return false;
+            }
+            const accountName = deps.resolveAccountName?.(interaction.channel.id, interaction.user.id) ?? deps.accountName;
+            let detector = projectName
+                ? deps.bridge.pool.getQuestionDetector(projectName, accountName)
                 : undefined;
+
+            try {
+                if (detector) await detector.refresh?.();
+                else if (projectName) detector = await restoreQuestionDetector(
+                    deps.bridge, projectName, deps.wsHandler.getWorkspaceForChannel(interaction.channel.id),
+                    interaction.channel, parsed.questionId, accountName,
+                );
+            } catch (error) {
+                logger.warn('[QuestionSkipAction] Could not restore the question:', error);
+                detector = undefined;
+            }
 
             if (!detector) {
                 logger.warn(`[QuestionSkipAction] No detector for project=${projectName}`);
                 await interaction
-                    .reply({ text: 'Question detector not found.', ephemeral: true })
+                    .followUp({ text: 'Unable to restore this question. Run /model to refresh the question.', ephemeral: true })
                     .catch(() => {});
                 return false;
             }
 
-            await interaction.deferUpdate().catch(() => {});
-
             let success = false;
             try {
-                success = await detector.skipQuestion();
+                success = parsed.questionId
+                    ? await detector.skipQuestion(parsed.questionId)
+                    : await detector.skipQuestion();
             } catch (err: unknown) {
                 const msg = err instanceof Error ? err.message : String(err);
                 logger.error(`[QuestionSkipAction] CDP click failed: ${msg}`);

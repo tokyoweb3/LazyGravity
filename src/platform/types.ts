@@ -156,6 +156,8 @@ export interface RichContent {
     readonly title?: string;
     /** Embed description. */
     readonly description?: string;
+    /** Descriptions default to Markdown; plain text preserves paths and command syntax literally. */
+    readonly descriptionFormat?: 'markdown' | 'plain';
     /** Hex color integer. */
     readonly color?: number;
     /** Structured lists/fields. */
@@ -221,6 +223,8 @@ export interface SelectMenuDef {
     readonly placeholder?: string;
     /** Selectable menu options list. */
     readonly options: readonly SelectMenuOption[];
+    /** True after the question or action has been resolved. */
+    readonly disabled?: boolean;
 }
 
 /**

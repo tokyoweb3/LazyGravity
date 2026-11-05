@@ -148,6 +148,77 @@ describe('createTelegramMessageHandler', () => {
         expect(typeof handler).toBe('function');
     });
 
+    it('rejects a stale topic before applying defaults or sending a prompt', async () => {
+        const cdp = createMockCdp();
+        const modelService = { getDefaultModel: jest.fn() } as any;
+        const { message } = createMockMessage();
+        await createTelegramMessageHandler({ bridge: createBridge(createMockPool(cdp)),
+            telegramBindingRepo: createTelegramBindingRepo({ chatId: 'chat-123', workspacePath: 'project', sessionTitle: 'Stored' } as any), modelService,
+            modelActionDeps: { bridge: {} as any, fetchQuota: async () => [],
+                ensureSessionActivated: async () => ({ ok: false, error: 'Select the linked conversation with /join.' }) },
+        })(message as any);
+        expect(cdp.injectMessage).not.toHaveBeenCalled();
+        expect(modelService.getDefaultModel).not.toHaveBeenCalled();
+        expect(message.reply).toHaveBeenCalledWith({ text: 'Select the linked conversation with /join.' });
+    });
+
+    it('uses the persisted conversation account for a normal message after restart', async () => {
+        const cdp = createMockCdp();
+        const pool = createMockPool(cdp);
+        const { message } = createMockMessage();
+        await createTelegramMessageHandler({ bridge: createBridge(pool),
+            telegramBindingRepo: createTelegramBindingRepo({ chatId: 'chat-123', workspacePath: 'project', sessionTitle: 'Stored' } as any),
+            modelActionDeps: { bridge: {} as any, fetchQuota: async () => [], resolveAccountName: () => 'personal',
+                ensureSessionActivated: async () => ({ ok: true }) },
+        })(message as any);
+        expect(pool.getOrConnect).toHaveBeenCalledWith('project', { name: 'personal' });
+        expect(cdp.injectMessage).toHaveBeenCalledWith('hello');
+    });
+
+    it('cleans downloaded images when the binding changes before injection', async () => {
+        const cdp = createMockCdp();
+        const binding = { chatId: 'chat-123', workspacePath: 'project' };
+        const images = [{ localPath: '/tmp/test-image.png', url: 'telegram-file://test', name: 'test-image.png', mimeType: 'image/png' }];
+        const download = jest.spyOn(require('../../src/utils/telegramImageHandler'), 'downloadTelegramPhotos')
+            .mockImplementation(async () => { binding.workspacePath = 'another-project'; return images; });
+        const cleanup = jest.spyOn(require('../../src/utils/imageHandler'), 'cleanupInboundImageAttachments').mockResolvedValue(undefined);
+        try {
+            const { message } = createMockMessage({ attachments: [{ contentType: 'image/png', url: 'telegram-file://test' }] });
+            await createTelegramMessageHandler({ bridge: createBridge(createMockPool(cdp)),
+                telegramBindingRepo: createTelegramBindingRepo(binding), botToken: 'test-token', botApi: {} as any,
+            })(message as any);
+            expect(cleanup).toHaveBeenCalledWith(images);
+            expect(cdp.injectMessage).not.toHaveBeenCalled();
+        } finally { download.mockRestore(); cleanup.mockRestore(); }
+    });
+
+    it('saves conversation titles after the first prompt and before permission waits', async () => {
+        const cdp = createMockCdp();
+        const binding = { chatId: 'chat-123', workspacePath: 'project', sessionTitle: null as string | null, accountName: 'default' };
+        const repo = createTelegramBindingRepo(binding);
+        repo.setSession = jest.fn((_chat: string, _workspace: string, title: string, account: string) => {
+            binding.sessionTitle = title;
+            binding.accountName = account;
+        });
+        const getCurrentSessionInfo = jest.fn()
+            .mockResolvedValueOnce({ title: 'Draft title', hasActiveChat: true })
+            .mockResolvedValue({ title: 'Permission task', hasActiveChat: true });
+        const { ResponseMonitor } = require('../../src/services/responseMonitor');
+        ResponseMonitor.mockImplementationOnce((options: any) => ({ start: async () => {
+            options.onPhaseChange('waitingForUser');
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(repo.setSession).toHaveBeenCalledWith('chat-123', 'project', 'Permission task', 'default');
+            await options.onComplete('Response text');
+        } }));
+        const { message } = createMockMessage();
+        await createTelegramMessageHandler({ bridge: createBridge(createMockPool(cdp)), telegramBindingRepo: repo,
+            chatSessionService: { getCurrentSessionInfo } as any,
+        })(message as any);
+        expect(repo.setSession).toHaveBeenNthCalledWith(1, 'chat-123', 'project', 'Draft title', 'default');
+        expect(repo.setSession).toHaveBeenCalledTimes(2);
+    });
+
     it('does nothing for empty (whitespace-only) messages', async () => {
         const { message } = createMockMessage({ content: '   ' });
         const telegramBindingRepo = createTelegramBindingRepo();
@@ -780,6 +851,51 @@ describe('createTelegramMessageHandler', () => {
     });
 
     describe('activeMonitors registration', () => {
+        it.each(['manual', 'safety'])('waits for title persistence before releasing the queue on %s stop', async source => {
+            jest.useFakeTimers();
+            let releaseTitle!: (value: { title: string; hasActiveChat: boolean }) => void;
+            const titleResult = new Promise<{ title: string; hasActiveChat: boolean }>(resolve => { releaseTitle = resolve; });
+            let titleStarted!: () => void;
+            const saving = new Promise<void>(resolve => { titleStarted = resolve; });
+            let started!: () => void;
+            const monitoring = new Promise<void>(resolve => { started = resolve; });
+            let monitor: any;
+            const { ResponseMonitor } = jest.requireMock('../../src/services/responseMonitor');
+            ResponseMonitor.mockImplementationOnce((opts: any) => {
+                monitor = { start: jest.fn(async () => { started(); }), stop: jest.fn(() => opts.onStop('stopped')) };
+                return monitor;
+            });
+            const binding = { chatId: 'chat-123', workspacePath: 'project', sessionTitle: 'Original title', accountName: 'default' };
+            const repo = createTelegramBindingRepo(binding);
+            repo.setSession = jest.fn((_chat: string, _workspace: string, title: string) => { binding.sessionTitle = title; });
+            const getCurrentSessionInfo = jest.fn()
+                .mockResolvedValueOnce({ title: 'Original title', hasActiveChat: true })
+                .mockImplementation(() => { titleStarted(); return titleResult; });
+            const activeMonitors = new Map<string, any>();
+            let finished = false;
+            try {
+                const { message } = createMockMessage();
+                const running = createTelegramMessageHandler({ bridge: createBridge(), telegramBindingRepo: repo,
+                    chatSessionService: { getCurrentSessionInfo } as any, activeMonitors, responseTimeoutMs: 10,
+                })(message as any).then(() => { finished = true; });
+                await monitoring;
+                const stopping = source === 'manual' ? monitor.stop() : undefined;
+                if (source === 'safety') jest.advanceTimersByTime(10);
+                await saving;
+                expect(finished).toBe(false);
+                expect(activeMonitors.has('test-project')).toBe(true);
+                expect(repo.setSession).not.toHaveBeenCalled();
+                releaseTitle({ title: 'Final IDE title', hasActiveChat: true });
+                await stopping;
+                await running;
+                expect(repo.setSession).toHaveBeenCalledWith('chat-123', 'project', 'Final IDE title', 'default');
+                expect(activeMonitors.size).toBe(0);
+            } finally {
+                releaseTitle({ title: 'Final IDE title', hasActiveChat: true });
+                jest.useRealTimers();
+            }
+        });
+
         it('registers monitor in activeMonitors map during response monitoring', async () => {
             const { ResponseMonitor } = jest.requireMock('../../src/services/responseMonitor');
             ResponseMonitor.mockImplementationOnce((opts: any) => {

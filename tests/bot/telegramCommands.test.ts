@@ -1043,6 +1043,7 @@ describe('handleTelegramCommand — /new', () => {
         } as any;
         const telegramBindingRepo = {
             findByChatIdWithParentFallback: jest.fn().mockReturnValue({ chatId: 'chat-123', workspacePath: 'TestProject' }),
+            setSession: jest.fn(),
         } as any;
 
         await handleTelegramCommand(
@@ -1052,6 +1053,7 @@ describe('handleTelegramCommand — /new', () => {
         );
 
         expect(chatSessionService.startNewChat).toHaveBeenCalledWith(mockCdp);
+        expect(telegramBindingRepo.setSession).toHaveBeenCalledWith('chat-123', 'TestProject', '', 'default');
         expect(message.reply).toHaveBeenCalledTimes(1);
         const text = message.reply.mock.calls[0][0].text;
         expect(text).toContain('New chat session started');

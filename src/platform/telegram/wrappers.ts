@@ -20,6 +20,8 @@ import type {
     SelectMenuDef,
 } from '../types';
 import { richContentToHtml, markdownToTelegramHtml } from './telegramFormatter';
+import { encodeSelectCallback } from './selectCallbackData';
+export { SELECT_CALLBACK_SEP } from './selectCallbackData';
 
 // ---------------------------------------------------------------------------
 // grammy-compatible interfaces (no grammy import needed)
@@ -156,20 +158,13 @@ function buttonDefToInline(btn: ButtonDef): InlineButton {
 }
 
 /**
- * Separator for select menu callback_data: customId + SEP + value.
- * Uses ASCII Unit Separator (0x1F) to avoid collisions with button
- * customIds that legitimately contain colons (e.g. "approve_action:proj:ch").
- */
-export const SELECT_CALLBACK_SEP = '\x1f';
-
-/**
  * Converts select menu options to inline keyboard rows.
  * @param menu Select menu definition.
  * @returns Grid array of inline buttons.
  */
 function selectMenuToInlineRows(menu: SelectMenuDef): ReadonlyArray<ReadonlyArray<InlineButton>> {
     return menu.options.map((opt) => [
-        { text: opt.label, callback_data: `${menu.customId}${SELECT_CALLBACK_SEP}${opt.value}` },
+        { text: opt.label, callback_data: encodeSelectCallback(menu.customId, opt.value) },
     ]);
 }
 
@@ -192,6 +187,7 @@ function componentRowsToInlineKeyboard(
                 if (comp.disabled) continue;
                 buttons = [...buttons, buttonDefToInline(comp)];
             } else if (comp.type === 'selectMenu') {
+                if (comp.disabled) continue;
                 // A select menu becomes multiple rows (one per option)
                 const menuRows = selectMenuToInlineRows(comp);
                 // Flush any accumulated buttons first

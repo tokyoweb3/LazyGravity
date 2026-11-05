@@ -109,6 +109,8 @@ export interface TelegramCommandDeps {
     readonly modeService?: ModeService;
     /** Model configurations service. */
     readonly modelService?: ModelService;
+    /** Chat-bound routing shared by model commands and menu actions. */
+    readonly modelActionDeps?: import('../handlers/modelButtonAction').ModelButtonActionDeps;
     /** Bindings database repository store. */
     readonly telegramBindingRepo?: TelegramBindingRepository;
     /** Templates database repository store. */
@@ -388,11 +390,22 @@ async function handleMode(deps: TelegramCommandDeps, message: PlatformMessage): 
  * @param message Platform message context.
  */
 async function handleModel(deps: TelegramCommandDeps, message: PlatformMessage): Promise<void> {
-    const cdp = getCurrentCdp(deps.bridge);
+    const cdp = deps.modelActionDeps?.resolveCdp
+        ? await deps.modelActionDeps.resolveCdp(message.channel.id, message.author.id)
+        : getCurrentCdp(deps.bridge);
     if (!cdp) {
         await message.reply({ text: 'Not connected to Antigravity.' }).catch(logger.error);
         return;
     }
+
+    if (deps.modelActionDeps?.ensureSessionActivated) {
+        const ready = await deps.modelActionDeps.ensureSessionActivated(message.channel.id, message.author.id, cdp);
+        if (!ready.ok) {
+            await message.reply({ text: ready.error }).catch(logger.error);
+            return;
+        }
+    }
+    await deps.modelActionDeps?.onSessionReady?.(message.channel, message.author.id, cdp);
 
     const models = await cdp.getUiModels();
     const currentModel = await cdp.getCurrentModel();
@@ -684,7 +697,7 @@ async function handleNew(deps: TelegramCommandDeps, message: PlatformMessage): P
         await message.reply({ text: `✅ Created a new topic for the session.` }).catch(() => {});
     }
 
-    const selectedAccount = resolveScopedAccountName({
+    const selectedAccount = deps.modelActionDeps?.resolveAccountName?.(originalChannelId, message.author.id, { allowParentFallback: true }) ?? resolveScopedAccountName({
         channelId: originalChannelId,
         userId: message.author.id,
         selectedAccountByChannel: deps.bridge.selectedAccountByChannel,
@@ -703,6 +716,7 @@ async function handleNew(deps: TelegramCommandDeps, message: PlatformMessage): P
 
         const result = await deps.chatSessionService.startNewChat(cdp);
         if (result.ok) {
+            deps.telegramBindingRepo?.setSession(targetChannelId, binding.workspacePath, '', selectedAccount);
             if (targetChannelId === originalChannelId) {
                 await message.reply({ text: '✅ New chat session started.' }).catch(logger.error);
             }

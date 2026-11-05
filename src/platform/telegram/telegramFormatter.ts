@@ -158,7 +158,7 @@ export function richContentToHtml(rc: RichContent): string {
     }
 
     if (rc.description) {
-        sections.push(markdownToTelegramHtml(rc.description));
+        sections.push(rc.descriptionFormat === 'plain' ? escapeHtml(rc.description) : markdownToTelegramHtml(rc.description));
     }
 
     if (rc.fields && rc.fields.length > 0) {

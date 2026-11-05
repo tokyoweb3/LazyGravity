@@ -8,11 +8,12 @@ import { buildClickScript } from '../services/approvalDetector';
  * @param expectedPrefix Expected prefix string.
  * @returns Parsed properties dictionary, or null.
  */
-export function parseQuestionCustomId(customId: string, expectedPrefix: string): { action: string; projectName?: string; channelId?: string } | null {
+export function parseQuestionCustomId(customId: string, expectedPrefix: string): { action: string; projectName?: string; channelId?: string; questionId?: string } | null {
     if (customId !== expectedPrefix && !customId.startsWith(expectedPrefix + ':')) return null;
 
     const parts = customId.split(':');
-    const result: { action: string; projectName?: string; channelId?: string } = { action: parts[0] };
+    const result: { action: string; projectName?: string; channelId?: string; questionId?: string } = { action: parts[0] };
+    if (parts[3]) result.questionId = parts[3];
     
     try {
         if (parts.length > 1) {

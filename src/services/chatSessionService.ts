@@ -1,5 +1,6 @@
 import { CdpService } from './cdpService';
 import { logger } from '../utils/logger';
+import { MODERN_AGENT_STATE_SCRIPT, MODERN_NEW_CHAT_SCRIPT } from '../ui/antigravityState';
 
 /** Session list item from the side panel */
 export interface SessionListItem {
@@ -77,6 +78,8 @@ const GET_NEW_CHAT_BUTTON_SCRIPT = `(() => {
  * The title element is a div with the text-ellipsis class inside the header.
  */
 const GET_CHAT_TITLE_SCRIPT = `(() => {
+    const modern = ${MODERN_AGENT_STATE_SCRIPT};
+    if (modern) return { title: modern.title, hasActiveChat: modern.hasActiveChat };
     const panel = document.querySelector('.antigravity-agent-side-panel') || document.body;
     if (!panel) return { title: '', hasActiveChat: false };
     const header = panel.querySelector('div[class*="border-b"]');
@@ -96,6 +99,8 @@ const GET_CHAT_TITLE_SCRIPT = `(() => {
 })()`;
 
 const GET_SESSION_VIEW_STATE_SCRIPT = `(() => {
+    const modern = ${MODERN_AGENT_STATE_SCRIPT};
+    if (modern) return modern;
     const panel = document.querySelector('.antigravity-agent-side-panel') || document.body;
     if (!panel) {
         return {
@@ -830,6 +835,23 @@ export class ChatSessionService {
                     return { ok: false, error: 'No contexts available (timed out)' };
                 }
                 contexts = cdpService.getContexts();
+            }
+
+            const modernFrame = contexts.find(context => context.url?.includes('extensionView=true'));
+            if (modernFrame) {
+                let modernResult: { ok: boolean; error?: string } = { ok: false, error: 'Agent frame unavailable' };
+                for (let attempt = 0; attempt < 5; attempt++) {
+                    const result = await cdpService.call('Runtime.evaluate', {
+                        expression: MODERN_NEW_CHAT_SCRIPT,
+                        returnByValue: true,
+                        awaitPromise: true,
+                        contextId: modernFrame.id,
+                    });
+                    modernResult = result?.result?.value ?? { ok: false, error: 'Agent frame unavailable' };
+                    if (modernResult.ok || modernResult.error !== 'Agent input not ready' || attempt === 4) break;
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+                return modernResult;
             }
 
             // Get button state (retry waiting for DOM load: up to 5 times, 1 second interval)

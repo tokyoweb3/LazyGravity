@@ -83,7 +83,7 @@ describe('createModelButtonAction', () => {
         await action.execute(interaction as any, { action: 'select', modelName: 'new-model' });
 
         expect(mockCdp.setUiModel).toHaveBeenCalledWith('new-model');
-        expect(interaction.update).toHaveBeenCalled();
+        expect(interaction.editReply).toHaveBeenCalled();
         expect(interaction.followUp).toHaveBeenCalledWith({ text: 'Model changed to new-model.' });
     });
 
@@ -98,7 +98,7 @@ describe('createModelButtonAction', () => {
 
         await action.execute(interaction as any, { action: 'refresh' });
 
-        expect(interaction.update).toHaveBeenCalled();
+        expect(interaction.editReply).toHaveBeenCalled();
     });
 
     it('sets current model as default on set_default action', async () => {

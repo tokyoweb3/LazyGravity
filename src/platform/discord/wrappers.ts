@@ -23,6 +23,7 @@ import {
     TextInputBuilder,
     TextInputStyle,
     ModalSubmitInteraction,
+    escapeMarkdown,
 } from 'discord.js';
 import type {
     PlatformMessage,
@@ -72,7 +73,7 @@ function toDiscordEmbed(rc: RichContent): EmbedBuilder {
         embed.setTitle(rc.title);
     }
     if (rc.description !== undefined) {
-        embed.setDescription(rc.description);
+        embed.setDescription(rc.descriptionFormat === 'plain' ? escapeMarkdown(rc.description) : rc.description);
     }
     if (rc.color !== undefined) {
         embed.setColor(rc.color);
@@ -143,6 +144,7 @@ function toDiscordComponents(
                 if (comp.placeholder !== undefined) {
                     select.setPlaceholder(comp.placeholder);
                 }
+                if (comp.disabled !== undefined) select.setDisabled(comp.disabled);
 
                 actionRow.addComponents(select);
             }
