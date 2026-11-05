@@ -2,6 +2,7 @@ import type { ModelButtonActionDeps, SessionScopeOptions } from '../handlers/mod
 import type { TelegramBindingRepository } from '../database/telegramBindingRepository';
 import type { ChatSessionService } from '../services/chatSessionService';
 import type { WorkspaceService } from '../services/workspaceService';
+import type { ResponseMonitor } from '../services/responseMonitor';
 import type { AccountPreferenceLookup, ChannelPreferenceLookup, AccountConfigLike } from '../utils/accountUtils';
 import { resolveScopedAccountName } from '../utils/accountUtils';
 import { logger } from '../utils/logger';
@@ -18,6 +19,8 @@ export interface TelegramModelRoutingDeps extends Omit<ModelButtonActionDeps, 'r
     readonly accountPrefRepo?: AccountPreferenceLookup;
     readonly channelPrefRepo?: ChannelPreferenceLookup;
     readonly antigravityAccounts?: AccountConfigLike[];
+    /** Shared workspace monitors prevent switching away from an active response. */
+    readonly activeMonitors?: Map<string, ResponseMonitor>;
 }
 
 /** Model routing also exposes the account resolver to Telegram question controls. */
@@ -87,6 +90,11 @@ export function createTelegramModelActionDeps(deps: TelegramModelRoutingDeps): T
                     : { ok: false, error: 'The new conversation is no longer active. Use /join or /new to select a conversation.' };
             }
             if (current.hasActiveChat && current.title.trim() === savedTitle) return { ok: true };
+
+            const project = deps.bridge.pool.extractProjectName(deps.workspaceService.getWorkspacePath(binding.workspacePath));
+            if (deps.activeMonitors?.has(project)) {
+                return { ok: false, error: 'Another conversation is still responding in this workspace. Try again after it finishes.' };
+            }
 
             logger.info(`[ModelCommand] source=telegram channel=${channelId} user=${userId} restoringSession target="${savedTitle}"`);
             const activation = await deps.chatSessionService.activateSessionByTitle(cdp, savedTitle, {

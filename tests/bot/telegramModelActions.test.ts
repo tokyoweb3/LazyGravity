@@ -20,7 +20,7 @@ describe('Telegram model workspace routing', () => {
             approvalChannelByWorkspace: new Map(), approvalChannelBySession: new Map(),
             pool: { getConnected: jest.fn().mockReturnValue(b), getOrConnect: jest.fn().mockResolvedValue(a),
                 extractProjectName: jest.fn().mockReturnValue('A'), getQuestionDetector: jest.fn() } } as any;
-        const deps = { bridge, fetchQuota: async () => [],
+        const deps = { bridge, fetchQuota: async () => [], activeMonitors: new Map<string, any>(),
             telegramBindingRepo: {
                 findByChatIdWithParentFallback: jest.fn().mockReturnValue({ workspacePath: 'A' }),
                 findByChatId: jest.fn().mockReturnValue({ workspacePath: 'A', sessionTitle: 'Conversation A', accountName: 'personal' }),
@@ -71,6 +71,27 @@ describe('Telegram model workspace routing', () => {
         expect(a.setUiModel).not.toHaveBeenCalled();
         expect(a.getUiModels).not.toHaveBeenCalled();
         expect(interaction.followUp).toHaveBeenCalledWith({ text: expect.stringContaining('Failed to activate saved session') });
+    });
+
+    it('rejects model and question actions that would switch away from an active response', async () => {
+        const { a, deps, interaction, actionDeps } = setup();
+        deps.activeMonitors.set('A', {});
+        deps.chatSessionService.getCurrentSessionInfo.mockResolvedValue({ title: 'Another conversation', hasActiveChat: true });
+        await createModelSelectAction(actionDeps).execute(interaction, ['Model A']);
+        expect(await actionDeps.prepareQuestionSession(interaction.channel.id, interaction.user.id))
+            .toEqual({ ok: false, error: expect.stringContaining('still responding') });
+        expect(deps.chatSessionService.activateSessionByTitle).not.toHaveBeenCalled();
+        expect(a.setUiModel).not.toHaveBeenCalled();
+        expect(a.getUiModels).not.toHaveBeenCalled();
+    });
+
+    it('allows actions on the current conversation while its monitor is active', async () => {
+        const { a, deps, interaction, actionDeps } = setup();
+        deps.activeMonitors.set('A', {});
+        await createModelSelectAction(actionDeps).execute(interaction, ['Model A']);
+        expect(await actionDeps.prepareQuestionSession(interaction.channel.id, interaction.user.id)).toEqual({ ok: true });
+        expect(a.setUiModel).toHaveBeenCalledWith('Model A');
+        expect(deps.chatSessionService.activateSessionByTitle).not.toHaveBeenCalled();
     });
 
     it('never falls back to the active workspace when the chat is unbound', async () => {

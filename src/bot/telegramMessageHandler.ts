@@ -189,10 +189,23 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
             }
             const sessionWorkspace = currentBinding.workspacePath;
             const inheritedSessionTitle = currentBinding.sessionTitle;
+            let expectedTitle = currentBinding.sessionTitle ?? null;
+            let expectedAccount = currentBinding.accountName ?? null;
             let savedSessionTitle = deps.telegramBindingRepo.findByChatId?.(chatId)?.sessionTitle ?? null;
             let titleSaveOperation = Promise.resolve();
             const selectedAccount = resolveAccount(chatId, message.author.id);
             deps.bridge.selectedAccountByChannel?.set(chatId, selectedAccount);
+
+            /** Stop an older prompt when the operator changes its binding during asynchronous preparation. */
+            async function checkBinding(): Promise<boolean> {
+                const live = deps.telegramBindingRepo.findByChatIdWithParentFallback(chatId);
+                if (live && live.workspacePath === sessionWorkspace
+                    && (live.sessionTitle ?? null) === expectedTitle
+                    && (live.accountName ?? null) === expectedAccount
+                    && resolveAccount(chatId, message.author.id) === selectedAccount) return true;
+                await message.reply({ text: 'The linked conversation changed while connecting. Please send the message again.' }).catch(logger.error);
+                return false;
+            }
 
             const cdpStartTime = Date.now();
             logger.debug(`[TelegramHandler] getOrConnect start (elapsed=${cdpStartTime - handlerEntryTime}ms)`);
@@ -207,6 +220,8 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
             }
             logger.debug(`[TelegramHandler] getOrConnect done (took=${Date.now() - cdpStartTime}ms)`);
 
+            if (!await checkBinding()) return;
+
             if (deps.modelActionDeps?.ensureSessionActivated) {
                 if (currentBinding.sessionTitle == null) {
                     if (!deps.chatSessionService) {
@@ -219,8 +234,11 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
                             await message.reply({ text: created.error || 'Failed to start a new conversation.' }).catch(logger.error);
                             return;
                         }
+                        if (!await checkBinding()) return;
                         deps.telegramBindingRepo.setSession(chatId, currentBinding.workspacePath, '', selectedAccount);
                         savedSessionTitle = '';
+                        expectedTitle = '';
+                        expectedAccount = selectedAccount;
                     } catch (error) {
                         logger.warn('[TelegramHandler] Could not prepare the first conversation:', error);
                         await message.reply({ text: 'Failed to prepare a conversation. Please try /new.' }).catch(logger.error);
@@ -233,6 +251,7 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
                     return;
                 }
             }
+            if (!await checkBinding()) return;
 
             const projectName = deps.bridge.pool.extractProjectName(workspacePath);
             deps.bridge.lastActiveWorkspace = projectName;
@@ -296,6 +315,11 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
             // Determine the prompt text — use default for image-only messages
             const effectivePrompt = promptText || 'Please review the attached images and respond accordingly.';
             const baseline = await captureResponseMonitorBaseline(cdp);
+
+            if (!await checkBinding()) {
+                if (inboundImages.length > 0) await cleanupInboundImageAttachments(inboundImages).catch(() => {});
+                return;
+            }
 
             // Register the echo hash BEFORE injecting (the Discord path registers it later):
             // UserMessageDetector polls the DOM every ~2s, so registering only after
@@ -389,6 +413,12 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
                     initialBaselineText: baseline.text,
                     initialSeenProcessLogKeys: baseline.processLogKeys,
 
+                    /** Persist the IDE title before a stop can release the workspace queue. */
+                    onStop: async reason => {
+                        try { await saveConversationTitle(); }
+                        finally { if (reason === 'stopped') settle(); }
+                    },
+
                     /** Save the live conversation title before a permission wait can outlast a bot restart. */
                     onPhaseChange: phase => {
                         if (phase === 'waitingForUser') void saveConversationTitle();
@@ -470,10 +500,11 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
                     },
                 });
 
-                const safetyTimer = setTimeout(() => {
-                    logger.warn(`[TelegramHandler:${projectName}] Safety timeout — releasing queue after 300s`);
-                    monitor.stop().catch(() => {});
-                    settle();
+                const safetyTimer = setTimeout(async () => {
+                    logger.warn(`[TelegramHandler:${projectName}] Safety timeout — stopping monitor after ${TIMEOUT_MS / 1000}s`);
+                    try { await monitor.stop(); }
+                    catch (error) { logger.warn(`[TelegramHandler:${projectName}] Monitor stop failed:`, error); }
+                    finally { settle(); }
                 }, TIMEOUT_MS);
 
                 // Register the monitor so /stop can access and stop it

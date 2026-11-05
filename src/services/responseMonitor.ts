@@ -483,6 +483,9 @@ export const RESPONSE_SELECTORS = {
 /** Response generation phases */
 export type ResponsePhase = 'waiting' | 'thinking' | 'waitingForUser' | 'generating' | 'complete' | 'timeout' | 'quotaReached' | 'disconnected';
 
+/** Why monitoring ended, before completion or timeout callbacks run. */
+export type ResponseStopReason = 'stopped' | 'complete' | 'timeout';
+
 /** Configuration options passed to constructed ResponseMonitor instances */
 export interface ResponseMonitorOptions {
     /** CDP service instance */
@@ -505,6 +508,8 @@ export interface ResponseMonitorOptions {
     onStructuredComplete?: (result: ClassifyResult) => void;
     /** Timeout callback */
     onTimeout?: (lastText: string) => void;
+    /** Awaited once when monitoring stops, including an explicit stop command. */
+    onStop?: (reason: ResponseStopReason) => void | Promise<void>;
     /** Phase change callback */
     onPhaseChange?: (phase: ResponsePhase, text: string | null) => void;
     /** Process log update callback (activity messages + tool output) */
@@ -722,6 +727,7 @@ export class ResponseMonitor {
     private readonly onStructuredProgress?: (result: ClassifyResult) => void;
     private readonly onStructuredComplete?: (result: ClassifyResult) => void;
     private readonly onTimeout?: (lastText: string) => void;
+    private readonly onStop?: (reason: ResponseStopReason) => void | Promise<void>;
     private readonly onPhaseChange?: (phase: ResponsePhase, text: string | null) => void;
     private readonly onProcessLog?: (text: string) => void;
     private readonly initialBaselineText?: string | null;
@@ -729,6 +735,7 @@ export class ResponseMonitor {
 
     private pollTimer: ReturnType<typeof setTimeout> | null = null;
     private isRunning: boolean = false;
+    private stopPromise: Promise<void> | null = null;
     private lastText: string | null = null;
     private lastClassified: ClassifyResult | null = null;
     private baselineText: string | null = null;
@@ -767,6 +774,7 @@ export class ResponseMonitor {
         this.onStructuredProgress = options.onStructuredProgress;
         this.onStructuredComplete = options.onStructuredComplete;
         this.onTimeout = options.onTimeout;
+        this.onStop = options.onStop;
         this.onPhaseChange = options.onPhaseChange;
         this.onProcessLog = options.onProcessLog;
         this.initialBaselineText = options.initialBaselineText;
@@ -802,6 +810,11 @@ export class ResponseMonitor {
      */
     private async initMonitoring(passive: boolean): Promise<void> {
         if (this.isRunning) return;
+        if (this.stopPromise) {
+            await this.stopPromise.catch(() => {});
+            if (this.isRunning) return;
+            this.stopPromise = null;
+        }
         this.isRunning = true;
         this.isPaused = false;
         this.lastText = null;
@@ -894,8 +907,13 @@ export class ResponseMonitor {
         this.schedulePoll();
     }
 
-    /** Stop monitoring */
-    async stop(): Promise<void> {
+    /**
+     * Stop polling and await the shared persistence hook before releasing callers.
+     * @param reason Whether the caller stopped monitoring or generation ended.
+     * @returns The same lifecycle promise for concurrent stop requests.
+     */
+    stop(reason: ResponseStopReason = 'stopped'): Promise<void> {
+        if (this.stopPromise) return this.stopPromise;
         this.isRunning = false;
         this.isPaused = false;
         this.unregisterCdpConnectionListeners();
@@ -903,6 +921,8 @@ export class ResponseMonitor {
             clearTimeout(this.pollTimer);
             this.pollTimer = null;
         }
+        this.stopPromise = Promise.resolve().then(() => this.onStop?.(reason));
+        return this.stopPromise;
     }
 
     /** Get current phase */
@@ -1016,7 +1036,7 @@ export class ResponseMonitor {
             logger.error('[ResponseMonitor] CDP reconnection failed — stopping monitor:', err.message);
             const lastText = this.lastText ?? '';
             this.setPhase('disconnected', lastText);
-            await this.stop();
+            await this.stop('timeout');
             try {
                 await Promise.resolve(this.onTimeout?.(lastText));
             } catch (error) {
@@ -1317,7 +1337,7 @@ export class ResponseMonitor {
                     this.quotaDetected = true;
                 } else {
                     this.setPhase('quotaReached', '');
-                    await this.stop();
+                    await this.stop('complete');
                     try {
                         await Promise.resolve(this.onComplete?.(''));
                         if (this.lastClassified) await Promise.resolve(this.onStructuredComplete?.(this.lastClassified));
@@ -1366,7 +1386,7 @@ export class ResponseMonitor {
                 if (this.stopGoneCount >= this.stopGoneConfirmCount) {
                     const finalText = this.lastText ?? '';
                     this.setPhase('complete', finalText);
-                    await this.stop();
+                    await this.stop('complete');
                     try {
                         await Promise.resolve(this.onComplete?.(finalText, this.currentCitedFiles, this.currentFileChanges));
                         if (this.lastClassified) await Promise.resolve(this.onStructuredComplete?.(this.lastClassified));
@@ -1392,7 +1412,7 @@ export class ResponseMonitor {
                 }
                 const lastText = this.lastText ?? '';
                 this.setPhase('timeout', lastText);
-                await this.stop();
+                await this.stop('timeout');
                 try {
                     await Promise.resolve(this.onTimeout?.(lastText));
                 } catch (error) {

@@ -91,6 +91,35 @@ describe('persisted Telegram topic conversations', () => {
         expect(cdp.injectMessage).toHaveBeenCalledTimes(2);
     });
 
+    it.each(['project', 'conversation'])('preserves a changed %s binding while CDP connects', async kind => {
+        const { cdp, service, deps } = setup();
+        deps.bridge.pool.getOrConnect.mockImplementationOnce(async () => {
+            if (kind === 'project') repo.upsert({ chatId: '-100_7', workspacePath: 'another-project' });
+            else repo.setSession('-100_7', 'project', 'Operator selection', 'default');
+            return cdp;
+        });
+        const message = prompt('-100_7');
+        await createTelegramMessageHandler({ ...deps, modelActionDeps: createTelegramModelActionDeps(deps) })(message);
+        expect(service.startNewChat).not.toHaveBeenCalled();
+        expect(cdp.injectMessage).not.toHaveBeenCalled();
+        expect(repo.findByChatId('-100_7')).toMatchObject(kind === 'project'
+            ? { workspacePath: 'another-project' } : { sessionTitle: 'Operator selection' });
+        expect(message.reply).toHaveBeenCalledWith({ text: expect.stringContaining('changed while connecting') });
+    });
+
+    it('does not overwrite a new project binding while the first conversation is being created', async () => {
+        const { cdp, service, deps } = setup();
+        service.startNewChat.mockImplementationOnce(async () => {
+            repo.upsert({ chatId: '-100_7', workspacePath: 'operator-selection' });
+            return { ok: true };
+        });
+        const message = prompt('-100_7');
+        await createTelegramMessageHandler({ ...deps, modelActionDeps: createTelegramModelActionDeps(deps) })(message);
+        expect(cdp.injectMessage).not.toHaveBeenCalled();
+        expect(repo.findByChatId('-100_7')?.workspacePath).toBe('operator-selection');
+        expect(message.reply).toHaveBeenCalledWith({ text: expect.stringContaining('changed while connecting') });
+    });
+
     it('reports thrown preparation failures without forwarding the prompt', async () => {
         const { cdp, service, deps } = setup();
         service.startNewChat.mockRejectedValue(new Error('CDP disconnected'));

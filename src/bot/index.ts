@@ -1897,12 +1897,12 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             const telegramBindingRepo = new TelegramBindingRepository(db);
             const telegramAdapter = new TelegramAdapter(telegramBot as any, String(botInfo.id));
 
+            const activeMonitors = new Map<string, ResponseMonitor>();
             const telegramModelActionDeps = createTelegramModelActionDeps({
                 bridge, fetchQuota: () => bridge.quota.fetchQuota(), modelService, userPrefRepo,
-                telegramBindingRepo, workspaceService, chatSessionService,
+                telegramBindingRepo, workspaceService, chatSessionService, activeMonitors,
                 accountPrefRepo, channelPrefRepo, antigravityAccounts: config.antigravityAccounts,
             });
-            const activeMonitors = new Map<string, ResponseMonitor>();
             const telegramHandler = createTelegramMessageHandler({
                 bridge,
                 telegramBindingRepo,
