@@ -115,6 +115,7 @@ import { Bot, InputFile } from 'grammy';
 import { TelegramAdapter } from '../platform/telegram/telegramAdapter';
 import { TelegramBindingRepository } from '../database/telegramBindingRepository';
 import { createTelegramMessageHandler } from './telegramMessageHandler';
+import { createTelegramModelActionDeps } from './telegramModelActions';
 import { createTelegramSelectHandler } from './telegramProjectCommand';
 import { EventRouter } from './eventRouter';
 import { createPlatformButtonHandler } from '../handlers/buttonHandler';
@@ -744,6 +745,7 @@ async function sendPromptToAntigravity(
                 waitingForUser = phase === 'waitingForUser';
             },
 
+            /** Keep live activity and waiting instructions consistent as IDE process logs change. */
             onProcessLog: (logText) => {
                 if (isFinalized) return;
                 if (logText && logText.trim().length > 0) {
@@ -798,6 +800,7 @@ async function sendPromptToAntigravity(
                 }
             },
 
+            /** Publish the completed response and artifacts, then release monitoring and activity state. */
             onComplete: async (finalText, citedFiles, fileChanges) => {
                 isFinalized = true;
 
@@ -1894,6 +1897,11 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
             const telegramBindingRepo = new TelegramBindingRepository(db);
             const telegramAdapter = new TelegramAdapter(telegramBot as any, String(botInfo.id));
 
+            const telegramModelActionDeps = createTelegramModelActionDeps({
+                bridge, fetchQuota: () => bridge.quota.fetchQuota(), modelService, userPrefRepo,
+                telegramBindingRepo, workspaceService, chatSessionRepo, chatSessionService,
+                accountPrefRepo, channelPrefRepo, antigravityAccounts: config.antigravityAccounts,
+            });
             const activeMonitors = new Map<string, ResponseMonitor>();
             const telegramHandler = createTelegramMessageHandler({
                 bridge,
@@ -1901,6 +1909,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                 workspaceService,
                 modeService,
                 modelService,
+                modelActionDeps: telegramModelActionDeps,
                 extractionMode: config.extractionMode,
                 templateRepo,
                 fetchQuota: () => bridge.quota.fetchQuota(),
@@ -1942,7 +1951,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                     modeSelectAction,
                     accountSelectAction,
                     questionSelectAction,
-                    createModelSelectAction({ bridge, fetchQuota: () => bridge.quota.fetchQuota(), modelService, userPrefRepo }),
+                    createModelSelectAction(telegramModelActionDeps),
                 ],
             });
             /** Route Telegram session, model, and question menus through their platform handlers. */
@@ -1988,48 +1997,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                     createPlanningButtonAction({ bridge, wsHandler }),
                     createErrorPopupButtonAction({ bridge, wsHandler }),
                     createRunCommandButtonAction({ bridge, wsHandler }),
-                    createModelButtonAction({
-                        bridge,
-                        fetchQuota: () => bridge.quota.fetchQuota(),
-                        modelService,
-                        userPrefRepo,
-                        ensureSessionActivated: async (channelId, userId, cdp) => {
-                            const savedTitle = chatSessionRepo.findByChannelId(channelId)?.displayName?.trim() || '';
-                            if (!savedTitle || savedTitle === t('(Untitled)')) {
-                                return { ok: true };
-                            }
-
-                            const current = await chatSessionService.getCurrentSessionInfo(cdp);
-                            if (current.title.trim() === savedTitle) {
-                                return { ok: true };
-                            }
-
-                            logger.info(
-                                `[ModelCommand] source=button channel=${channelId} user=${userId} ` +
-                                `restoringSession target="${savedTitle}" current="${current.title.trim() || '(unknown)'}"`,
-                            );
-                            const activation = await chatSessionService.activateSessionByTitle(cdp, savedTitle, {
-                                maxWaitMs: 8000,
-                                retryIntervalMs: 300,
-                                allowVisibilityWarmupMs: 1000,
-                            });
-                            if (!activation.ok) {
-                                return {
-                                    ok: false as const,
-                                    error: `Failed to activate saved session "${savedTitle}" before model action: ${activation.error || 'unknown'}`,
-                                };
-                            }
-
-                            const refresh = await chatSessionService.refreshSessionViewIfStuck(cdp, savedTitle);
-                            if (!refresh.ok) {
-                                logger.warn(
-                                    `[ModelCommand] source=button channel=${channelId} user=${userId} ` +
-                                    `sessionRefreshWarning target="${savedTitle}" error="${refresh.error || 'unknown'}"`,
-                                );
-                            }
-                            return { ok: true as const };
-                        },
-                    }),
+                    createModelButtonAction(telegramModelActionDeps),
                     createAutoAcceptButtonAction({ autoAcceptService: bridge.autoAccept }),
                     createTemplateButtonAction({ bridge, templateRepo }),
                     createFileChangeButtonAction({ bridge, wsHandler }),

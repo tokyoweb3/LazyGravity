@@ -109,6 +109,8 @@ export interface TelegramCommandDeps {
     readonly modeService?: ModeService;
     /** Model configurations service. */
     readonly modelService?: ModelService;
+    /** Chat-bound routing shared by model commands and menu actions. */
+    readonly modelActionDeps?: import('../handlers/modelButtonAction').ModelButtonActionDeps;
     /** Bindings database repository store. */
     readonly telegramBindingRepo?: TelegramBindingRepository;
     /** Templates database repository store. */
@@ -388,10 +390,20 @@ async function handleMode(deps: TelegramCommandDeps, message: PlatformMessage): 
  * @param message Platform message context.
  */
 async function handleModel(deps: TelegramCommandDeps, message: PlatformMessage): Promise<void> {
-    const cdp = getCurrentCdp(deps.bridge);
+    const cdp = deps.modelActionDeps?.resolveCdp
+        ? await deps.modelActionDeps.resolveCdp(message.channel.id, message.author.id)
+        : getCurrentCdp(deps.bridge);
     if (!cdp) {
         await message.reply({ text: 'Not connected to Antigravity.' }).catch(logger.error);
         return;
+    }
+
+    if (deps.modelActionDeps?.ensureSessionActivated) {
+        const ready = await deps.modelActionDeps.ensureSessionActivated(message.channel.id, message.author.id, cdp);
+        if (!ready.ok) {
+            await message.reply({ text: ready.error }).catch(logger.error);
+            return;
+        }
     }
 
     const models = await cdp.getUiModels();

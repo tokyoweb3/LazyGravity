@@ -48,6 +48,8 @@ export interface TelegramMessageHandlerDeps {
     readonly modeService?: ModeService;
     /** Model service configurations. */
     readonly modelService?: ModelService;
+    /** Chat-bound routing shared by model commands and menu actions. */
+    readonly modelActionDeps?: import('../handlers/modelButtonAction').ModelButtonActionDeps;
     /** Active extraction mode settings. */
     readonly extractionMode?: ExtractionMode;
     /** Repository managing custom templates. */
@@ -129,6 +131,7 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
                     bridge: deps.bridge,
                     modeService: deps.modeService,
                     modelService: deps.modelService,
+                    modelActionDeps: deps.modelActionDeps,
                     telegramBindingRepo: deps.telegramBindingRepo,
                     templateRepo: deps.templateRepo,
                     workspaceService: deps.workspaceService,
