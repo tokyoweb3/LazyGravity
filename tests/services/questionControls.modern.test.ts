@@ -2,11 +2,31 @@ import { buildQuestionNotification, QUESTION_SELECT_ACTION_PREFIX, QUESTION_SKIP
 import { parseQuestionCustomId } from '../../src/utils/questionActionUtils';
 import { createQuestionSelectAction } from '../../src/handlers/questionSelectAction';
 import { createQuestionSkipAction } from '../../src/handlers/questionSkipAction';
+import { toDiscordPayload } from '../../src/platform/discord/wrappers';
+import { richContentToHtml } from '../../src/platform/telegram/telegramFormatter';
+import { EmbedBuilder } from 'discord.js';
 
 jest.mock('../../src/utils/projectResolver', () => ({ resolveProjectName: () => 'TestProject' }));
 
 describe('Question notification identity', () => {
     const questionId = '0123456789abcdef';
+
+    it('preserves path and PowerShell underscores when rendering a Discord question', () => {
+        const description = String.raw`Get-ChildItem C:\work\Sample_Studio | Where-Object { $_.Name -ne '__pycache__' }; echo "a*b"`;
+        const payload = buildQuestionNotification({ title: 'Allow listing files?', description,
+            projectName: 'TestProject', channelId: 'channel', questionId, options: [] });
+        expect(payload.richContent!.description).toBe(description);
+        const rendered = toDiscordPayload(payload);
+        expect((rendered.embeds as EmbedBuilder[])[0].toJSON().description).toBe(
+            String.raw`Get-ChildItem C:\\work\\Sample\_Studio | Where-Object { $\_.Name -ne '\_\_pycache\_\_' }; echo "a\*b"`,
+        );
+    });
+
+    it('preserves literal Markdown and escapes HTML in a Telegram question', () => {
+        const payload = buildQuestionNotification({ title: 'Allow reading?', description: '**read_me** <config> `path`',
+            projectName: 'TestProject', channelId: 'channel', questionId, options: [] });
+        expect(richContentToHtml(payload.richContent!)).toContain('**read_me** &lt;config&gt; `path`');
+    });
 
     it('round-trips question and channel identities within Discord custom ID limits', () => {
         const payload = buildQuestionNotification({ title: 'Allow read access?', description: '/projects/other/AGENTS.md',

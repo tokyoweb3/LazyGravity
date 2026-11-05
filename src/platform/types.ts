@@ -156,6 +156,8 @@ export interface RichContent {
     readonly title?: string;
     /** Embed description. */
     readonly description?: string;
+    /** Descriptions default to Markdown; plain text preserves paths and command syntax literally. */
+    readonly descriptionFormat?: 'markdown' | 'plain';
     /** Hex color integer. */
     readonly color?: number;
     /** Structured lists/fields. */

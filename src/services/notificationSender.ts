@@ -447,7 +447,10 @@ export function buildQuestionNotification(
         (rc) => withColor(rc, COLOR_APPROVAL),
     );
 
-    const embed = description ? withDescription(baseContent, description) : baseContent;
+    // Question text comes from the rendered IDE DOM, not Markdown source.
+    const embed = description
+        ? { ...withDescription(baseContent, description), descriptionFormat: 'plain' as const }
+        : baseContent;
 
     const selectMenuOptions = options.map((opt, i) => ({
         label: opt.text.substring(0, 100), // Discord max length for label is 100
