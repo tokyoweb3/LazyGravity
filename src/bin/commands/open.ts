@@ -67,8 +67,9 @@ function readTargets(port: number): Promise<Array<{ url?: string; title?: string
     });
 }
 
+/** Recognize an IDE target by either its URL or its window title. */
 function hasAntigravityTarget(targets: Array<{ url?: string; title?: string }>): boolean {
-    return targets.some(target => /antigravity/i.test(target.url || target.title || ''));
+    return targets.some(target => /antigravity/i.test(`${target.url ?? ''} ${target.title ?? ''}`));
 }
 
 /**

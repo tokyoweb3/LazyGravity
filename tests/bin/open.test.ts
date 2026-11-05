@@ -80,6 +80,25 @@ describe('open command on Windows', () => {
         expect(net.createServer).not.toHaveBeenCalled();
     });
 
+    it('recognizes an existing IDE by its title when the workbench URL is generic', async () => {
+        (http.get as jest.Mock).mockImplementation((_url: string, callback: Function) => {
+            const request = new EventEmitter() as any;
+            request.setTimeout = jest.fn();
+            const response = new EventEmitter();
+            callback(response);
+            process.nextTick(() => {
+                response.emit('data', JSON.stringify([{
+                    url: 'vscode-file://vscode-app/workbench.html', title: 'Test - Antigravity IDE',
+                }]));
+                response.emit('end');
+            });
+            return request;
+        });
+        await openAction();
+        expect(spawn).not.toHaveBeenCalled();
+        expect(net.createServer).not.toHaveBeenCalled();
+    });
+
     it('reports executable launch errors', async () => {
         (spawn as jest.Mock).mockImplementation(() => {
             const child = new EventEmitter();

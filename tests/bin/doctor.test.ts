@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 import * as http from 'http';
 import { ConfigLoader } from '../../src/utils/configLoader';
 import { doctorAction } from '../../src/bin/commands/doctor';
+import { CDP_PORTS } from '../../src/utils/cdpPorts';
 
 jest.mock('http', () => ({ get: jest.fn() }));
 jest.mock('fs', () => ({ existsSync: jest.fn(() => true) }));
@@ -59,5 +60,26 @@ describe('doctor persisted credentials', () => {
         expect(output).toContain('Active platforms: telegram');
         expect(output).not.toContain('DISCORD_BOT_TOKEN');
         expect(output).toContain('All checks passed!');
+    });
+
+    it('reports malformed configuration without leaking credentials and continues diagnostics', async () => {
+        const read = jest.spyOn(ConfigLoader, 'readPersisted').mockImplementation(() => {
+            throw new SyntaxError('Invalid JSON near secret-test-token');
+        });
+        process.env.DISCORD_BOT_TOKEN = 'environment-token';
+        process.env.CLIENT_ID = '123';
+        process.env.ALLOWED_USER_IDS = '456';
+        await doctorAction();
+        const output = (console.log as jest.Mock).mock.calls.flat().join('\n');
+        expect(read).toHaveBeenCalledTimes(1);
+        expect(output).toContain('Config file could not be read or contains invalid JSON:');
+        expect(output).toContain('Checking brain path alignment');
+        expect(output).not.toContain('is NOT set');
+        expect(output).not.toContain('secret-test-token');
+        expect(output).not.toContain('environment-token');
+        for (const port of CDP_PORTS) {
+            expect(http.get).toHaveBeenCalledWith(`http://127.0.0.1:${port}/json/list`, expect.any(Function));
+        }
+        expect(process.exitCode).toBe(1);
     });
 });

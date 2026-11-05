@@ -2,7 +2,7 @@ import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
 import { CDP_PORTS } from '../../utils/cdpPorts';
-import { ConfigLoader } from '../../utils/configLoader';
+import { ConfigLoader, type PersistedConfig } from '../../utils/configLoader';
 import { getAntigravityCdpHint } from '../../utils/pathUtils';
 import { COLORS } from '../../utils/logger';
 import type { PlatformType } from '../../platform/types';
@@ -69,8 +69,7 @@ const VALID_PLATFORMS: readonly PlatformType[] = ['discord', 'telegram'];
  * Checks environment configuration to determine currently configured chat platforms.
  * @returns Array of active platform types.
  */
-function getActivePlatforms(): PlatformType[] {
-    const persisted = ConfigLoader.readPersisted();
+function getActivePlatforms(persisted: PersistedConfig): PlatformType[] {
     const raw = process.env.PLATFORMS || persisted.platforms?.join(',') || 'discord';
     return raw
         .split(',')
@@ -82,8 +81,7 @@ function getActivePlatforms(): PlatformType[] {
  * Validates whether required variables are configured based on active platforms.
  * @returns List of variable check status items.
  */
-function checkRequiredEnvVars(): { name: string; set: boolean }[] {
-    const persisted = ConfigLoader.readPersisted();
+function checkRequiredEnvVars(persisted: PersistedConfig): { name: string; set: boolean }[] {
     const persistedValues: Record<string, string | undefined> = {
         DISCORD_BOT_TOKEN: persisted.discordToken,
         CLIENT_ID: persisted.clientId,
@@ -91,7 +89,7 @@ function checkRequiredEnvVars(): { name: string; set: boolean }[] {
         TELEGRAM_BOT_TOKEN: persisted.telegramToken,
         TELEGRAM_ALLOWED_USER_IDS: persisted.telegramAllowedUserIds?.join(','),
     };
-    const platforms = getActivePlatforms();
+    const platforms = getActivePlatforms(persisted);
     const required: string[] = [];
 
     if (platforms.includes('discord')) {
@@ -130,6 +128,14 @@ export async function doctorAction(): Promise<void> {
     } else {
         warn(`Config file not found: ${configFilePath} (optional — .env fallback used)`);
     }
+    let persisted: PersistedConfig = {};
+    try {
+        persisted = ConfigLoader.readPersisted();
+    } catch {
+        // Parse errors can contain credential fragments, so report only the file path.
+        fail(`Config file could not be read or contains invalid JSON: ${configFilePath}`);
+        allOk = false;
+    }
 
     // 3. .env file check
     const env = checkEnvFile();
@@ -147,9 +153,9 @@ export async function doctorAction(): Promise<void> {
     }
 
     // 4. Required environment variables (platform-aware)
-    const platforms = getActivePlatforms();
+    const platforms = getActivePlatforms(persisted);
     ok(`Active platforms: ${platforms.join(', ')}`);
-    const vars = checkRequiredEnvVars();
+    const vars = checkRequiredEnvVars(persisted);
     for (const v of vars) {
         if (v.set) {
             ok(`${v.name} is set`);
