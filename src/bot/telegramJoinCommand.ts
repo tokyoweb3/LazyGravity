@@ -38,18 +38,22 @@ export interface TelegramJoinCommandDeps {
     readonly extractionMode?: import('../utils/config').ExtractionMode;
     /** Primary active monitors from the main Telegram message handler (keyed by project name). */
     readonly activeMonitors?: Map<string, ResponseMonitor>;
+    /** Shared account routing retains a topic's owning account after restart. */
+    readonly modelActionDeps?: Pick<import('../handlers/modelButtonAction').ModelButtonActionDeps, 'resolveAccountName'>;
 }
 
 const activeResponseMonitors = new Map<string, ResponseMonitor>();
 
 /**
- * Resolves the account name for the interaction based on channel preferences.
+ * Resolves the saved conversation owner, falling back to scoped channel preferences.
  * @param deps Injected dependencies.
  * @param chatId Chat channel ID.
  * @param userId Author user ID.
  * @returns Resolved account name.
  */
 function resolveAccount(deps: TelegramJoinCommandDeps, chatId: string, userId: string): string {
+    const stored = deps.modelActionDeps?.resolveAccountName?.(chatId, userId);
+    if (stored) return stored;
     return resolveScopedAccountName({
         channelId: chatId,
         userId,

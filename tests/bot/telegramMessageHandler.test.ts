@@ -162,6 +162,19 @@ describe('createTelegramMessageHandler', () => {
         expect(message.reply).toHaveBeenCalledWith({ text: 'Select the linked conversation with /join.' });
     });
 
+    it('uses the persisted conversation account for a normal message after restart', async () => {
+        const cdp = createMockCdp();
+        const pool = createMockPool(cdp);
+        const { message } = createMockMessage();
+        await createTelegramMessageHandler({ bridge: createBridge(pool),
+            telegramBindingRepo: createTelegramBindingRepo({ chatId: 'chat-123', workspacePath: 'project' }),
+            modelActionDeps: { bridge: {} as any, fetchQuota: async () => [], resolveAccountName: () => 'personal',
+                ensureSessionActivated: async () => ({ ok: true }) },
+        })(message as any);
+        expect(pool.getOrConnect).toHaveBeenCalledWith('project', { name: 'personal' });
+        expect(cdp.injectMessage).toHaveBeenCalledWith('hello');
+    });
+
     it('saves conversation titles after the first prompt and before permission waits', async () => {
         const cdp = createMockCdp();
         const repo = createTelegramBindingRepo({ chatId: 'chat-123', workspacePath: 'project' });

@@ -29,6 +29,8 @@ export interface ModelButtonActionDeps {
     readonly userPrefRepo?: UserPreferenceRepository;
     /** Resolve the connection belonging to the interaction's channel. */
     readonly resolveCdp?: (channelId: string, userId: string) => Promise<ReturnType<typeof getCurrentCdp>>;
+    /** Resolve the scoped account, including a platform's persisted conversation owner. */
+    readonly resolveAccountName?: (channelId: string, userId: string) => string;
     /** Optional activation callback interface checker. */
     readonly ensureSessionActivated?: (channelId: string, userId: string, cdp: NonNullable<ReturnType<typeof getCurrentCdp>>) => Promise<{ ok: true } | { ok: false; error: string }>;
     /** Restore pending controls after the bound session is ready. */

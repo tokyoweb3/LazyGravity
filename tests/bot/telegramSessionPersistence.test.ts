@@ -105,4 +105,20 @@ describe('persisted Telegram topic conversations', () => {
         }).execute(control, ['0'])).toBe(false);
         expect(submit).not.toHaveBeenCalled();
     });
+
+    it.each(['new', 'join'])('keeps the saved account when /%s runs after restart', async command => {
+        const { deps } = setup();
+        repo.setSession('-100_7', 'project', 'Conversation A', 'personal');
+        const shared = { ...deps, antigravityAccounts: [{ name: 'default', cdpPort: 9222 }, { name: 'personal', cdpPort: 9223 }] };
+        const modelActionDeps = createTelegramModelActionDeps(shared);
+        const configured = { ...shared, modelActionDeps };
+        if (command === 'new') {
+            await handleTelegramCommand(configured, { channel: { id: '-100_7' }, author: { id: 'operator' },
+                reply: jest.fn().mockResolvedValue(undefined) } as any, { command: 'new', args: '' });
+        } else {
+            await handleTelegramJoinSelect(configured, interaction('-100_7', 'Conversation C'));
+        }
+        expect(deps.bridge.pool.getOrConnect).toHaveBeenCalledWith('/projects/project', { name: 'personal' });
+        expect(repo.findByChatId('-100_7')?.accountName).toBe('personal');
+    });
 });

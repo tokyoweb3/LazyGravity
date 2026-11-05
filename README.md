@@ -261,7 +261,7 @@ the list, and managing the default model.
 On Telegram, `/join` and `/new` save the conversation and account for each chat
 or forum topic. Run `/model` to restore pending question controls after a bot
 restart or an expired menu. Chats without a saved conversation need `/join` or
-`/new` before model actions can run.
+`/new` before sending prompts or using model actions.
 
 - **If it doesn't launch**: verify that Antigravity IDE is installed at `"%LOCALAPPDATA%\Programs\Antigravity IDE\Antigravity IDE.exe"`. If it is installed elsewhere, right-click the file and update the executable path.
 - **Upgrading to Antigravity 2.0?** The Windows executable was renamed to `Antigravity IDE.exe`. If you are still using the older `Antigravity.exe` installation, auto-launch will not find it. Please update Antigravity, or set the `ANTIGRAVITY_PATH` override in your `.env` file.

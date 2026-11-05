@@ -1968,6 +1968,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                 if (interaction.customId === SESSION_SELECT_ID) {
                     await handleTelegramJoinSelect({
                         bridge,
+                        modelActionDeps: telegramModelActionDeps,
                         botApi: telegramBot.api as any,
                         telegramBindingRepo,
                         workspaceService,

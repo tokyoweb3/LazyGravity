@@ -84,7 +84,10 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
     // Per-workspace prompt queue to serialize messages
     const workspaceQueues = new Map<string, Promise<void>>();
 
+    /** Use the persisted conversation owner after restart, with scoped preferences as a legacy fallback. */
     function resolveAccount(chatId: string, userId: string): string {
+        const stored = deps.modelActionDeps?.resolveAccountName?.(chatId, userId);
+        if (stored) return stored;
         return resolveScopedAccountName({
             channelId: chatId,
             userId,
