@@ -188,7 +188,7 @@ const MODE_RETRY_READY_TIMEOUT_MS = 2000;
 export class CdpService extends EventEmitter {
     private ports: number[];
     private isConnectedFlag: boolean = false;
-    private modelUiOperation: Promise<void> = Promise.resolve();
+    private agentUiOperation: Promise<void> = Promise.resolve();
     private ws: WebSocket | null = null;
     private contexts: CdpContext[] = [];
     private frameSessions = new Map<string, { url: string }>();
@@ -1832,11 +1832,11 @@ export class CdpService extends EventEmitter {
 
     /**
      * Select all text in the focused input and delete it to ensure a clean state.
-     * Uses Meta+A (select all) then Backspace (delete) via CDP key events.
+     * Uses Command+A on macOS or Ctrl+A elsewhere, then Backspace via CDP key events.
      */
     private async clearInputField(): Promise<void> {
         const selectAllModifier = process.platform === 'darwin' ? 4 : 2;
-        // Meta+A to select all content
+        // Select all content with the platform's primary modifier.
         await this.call('Input.dispatchKeyEvent', {
             type: 'keyDown',
             key: 'a',
@@ -2115,12 +2115,14 @@ export class CdpService extends EventEmitter {
             throw new Error('Not connected to CDP. Call connect() first.');
         }
 
-        const result = await this.injectMessageCore(text);
-        if (result.ok || !this.isTransientInjectError(result.error)) {
-            return result;
-        }
+        return this.withAgentUi(async () => {
+            const result = await this.injectMessageCore(text);
+            if (result.ok || !this.isTransientInjectError(result.error)) {
+                return result;
+            }
 
-        return this.retryInjectOnce(text, result.error || 'Message injection failed');
+            return this.retryInjectOnce(text, result.error || 'Message injection failed');
+        });
     }
 
     /**
@@ -2131,12 +2133,14 @@ export class CdpService extends EventEmitter {
             throw new Error('Not connected to CDP. Call connect() first.');
         }
 
-        const result = await this.injectMessageCore(text, imageFilePaths);
-        if (result.ok || !this.isTransientInjectError(result.error)) {
-            return result;
-        }
+        return this.withAgentUi(async () => {
+            const result = await this.injectMessageCore(text, imageFilePaths);
+            if (result.ok || !this.isTransientInjectError(result.error)) {
+                return result;
+            }
 
-        return this.retryInjectOnce(text, result.error || 'Image message injection failed', imageFilePaths);
+            return this.retryInjectOnce(text, result.error || 'Image message injection failed', imageFilePaths);
+        });
     }
 
     /**
@@ -2500,18 +2504,19 @@ export class CdpService extends EventEmitter {
         }
     }
 
-    /** Serialize picker reads and changes so simultaneous Discord actions cannot close each other's menu. */
-    private withModelUi<T>(operation: () => Promise<T>): Promise<T> {
-        const result = this.modelUiOperation.then(operation);
-        this.modelUiOperation = result.then(() => undefined, () => undefined);
+    /** Keep model menus from stealing focus during prompt injection, including its retry. */
+    private withAgentUi<T>(operation: () => Promise<T>): Promise<T> {
+        const result = this.agentUiOperation.then(operation);
+        this.agentUiOperation = result.then(() => undefined, () => undefined);
         return result;
     }
 
     /** Dynamically retrieve the list of available models from the Antigravity UI. */
     getUiModels(): Promise<string[]> {
-        return this.withModelUi(() => this.readUiModels());
+        return this.withAgentUi(() => this.readUiModels());
     }
 
+    /** Read model choices in the agent frame, falling back to legacy workbench menus. */
     private async readUiModels(): Promise<string[]> {
         if (!this.isConnectedFlag || !this.ws) {
             throw new Error('Not connected to CDP.');
@@ -2684,9 +2689,10 @@ export class CdpService extends EventEmitter {
      * Get the currently selected model from the Antigravity UI.
      */
     getCurrentModel(): Promise<string | null> {
-        return this.withModelUi(() => this.readCurrentModel());
+        return this.withAgentUi(() => this.readCurrentModel());
     }
 
+    /** Read the active model without allowing another queued action to change focus mid-read. */
     private async readCurrentModel(): Promise<string | null> {
         if (!this.isConnectedFlag || !this.ws) {
             return null;
@@ -2783,9 +2789,10 @@ export class CdpService extends EventEmitter {
      * @param modelName Model name to set (e.g., 'gpt-4o', 'claude-3-opus')
      */
     setUiModel(modelName: string): Promise<UiSyncResult> {
-        return this.withModelUi(() => this.applyUiModel(modelName));
+        return this.withAgentUi(() => this.applyUiModel(modelName));
     }
 
+    /** Apply an exact model/effort choice and verify the IDE's selected-model indicator. */
     private async applyUiModel(modelName: string): Promise<UiSyncResult> {
         logger.info(`[CdpService] setUiModel requested account=${this.accountName} target="${modelName}" connected=${this.isConnectedFlag}`);
         if (!this.isConnectedFlag || !this.ws) {

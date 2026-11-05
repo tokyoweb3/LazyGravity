@@ -839,13 +839,19 @@ export class ChatSessionService {
 
             const modernFrame = contexts.find(context => context.url?.includes('extensionView=true'));
             if (modernFrame) {
-                const result = await cdpService.call('Runtime.evaluate', {
-                    expression: MODERN_NEW_CHAT_SCRIPT,
-                    returnByValue: true,
-                    awaitPromise: true,
-                    contextId: modernFrame.id,
-                });
-                return result?.result?.value ?? { ok: false, error: 'Agent frame unavailable' };
+                let modernResult: { ok: boolean; error?: string } = { ok: false, error: 'Agent frame unavailable' };
+                for (let attempt = 0; attempt < 5; attempt++) {
+                    const result = await cdpService.call('Runtime.evaluate', {
+                        expression: MODERN_NEW_CHAT_SCRIPT,
+                        returnByValue: true,
+                        awaitPromise: true,
+                        contextId: modernFrame.id,
+                    });
+                    modernResult = result?.result?.value ?? { ok: false, error: 'Agent frame unavailable' };
+                    if (modernResult.ok || modernResult.error !== 'Agent input not ready' || attempt === 4) break;
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+                return modernResult;
             }
 
             // Get button state (retry waiting for DOM load: up to 5 times, 1 second interval)

@@ -25,7 +25,7 @@ describe('Antigravity 2.6 session controls', () => {
         } as unknown as CdpService;
     }
 
-    afterEach(() => { document.body.innerHTML = ''; });
+    afterEach(() => { jest.useRealTimers(); document.body.innerHTML = ''; });
 
     it('reads the conversation breadcrumb and detects active generation', () => {
         mountActiveConversation();
@@ -59,6 +59,53 @@ describe('Antigravity 2.6 session controls', () => {
         document.querySelector('button')!.addEventListener('click', click);
         expect(await new ChatSessionService().startNewChat(createCdp())).toEqual({ ok: true });
         expect(click).not.toHaveBeenCalled();
+    });
+
+    it('waits for delayed agent controls and clicks new conversation only once', async () => {
+        jest.useFakeTimers();
+        const click = jest.fn(() => { document.querySelector('[data-testid="conversation-view"]')!.remove();
+            document.querySelectorAll('[data-testid="breadcrumb-segment"]')[1].remove(); });
+        setTimeout(() => {
+            mountActiveConversation();
+            document.querySelector('[data-testid="extension-new-conversation"]')!.addEventListener('click', click);
+        }, 1500);
+        const cdp = createCdp();
+        const operation = new ChatSessionService().startNewChat(cdp);
+        await jest.runAllTimersAsync();
+        expect(await operation).toEqual({ ok: true });
+        expect(cdp.call).toHaveBeenCalledTimes(3);
+        expect(click).toHaveBeenCalledTimes(1);
+    });
+
+    it('bounds readiness retries when the controls never mount', async () => {
+        jest.useFakeTimers();
+        const cdp = createCdp();
+        const started = Date.now();
+        const operation = new ChatSessionService().startNewChat(cdp);
+        await jest.runAllTimersAsync();
+        expect(await operation).toEqual({ ok: false, error: 'Agent input not ready' });
+        expect(cdp.call).toHaveBeenCalledTimes(5);
+        expect(Date.now() - started).toBe(4000);
+    });
+
+    it('does not retry a click when the new conversation fails verification', async () => {
+        jest.useFakeTimers();
+        mountActiveConversation();
+        const click = jest.fn();
+        document.querySelector('[data-testid="extension-new-conversation"]')!.addEventListener('click', click);
+        const cdp = createCdp();
+        const operation = new ChatSessionService().startNewChat(cdp);
+        await jest.runAllTimersAsync();
+        expect(await operation).toEqual({ ok: false, error: 'New conversation did not become ready' });
+        expect(cdp.call).toHaveBeenCalledTimes(1);
+        expect(click).toHaveBeenCalledTimes(1);
+    });
+
+    it('preserves the unavailable-frame error without retrying', async () => {
+        const cdp = createCdp();
+        (cdp.call as jest.Mock).mockResolvedValue({});
+        expect(await new ChatSessionService().startNewChat(cdp)).toEqual({ ok: false, error: 'Agent frame unavailable' });
+        expect(cdp.call).toHaveBeenCalledTimes(1);
     });
 
     it('leaves legacy workbench pages to the legacy session implementation', () => {
