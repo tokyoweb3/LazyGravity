@@ -14,11 +14,11 @@ import type {
     TelegramCallbackQueryLike,
 } from './wrappers';
 import {
-    SELECT_CALLBACK_SEP,
     wrapTelegramChannel,
     wrapTelegramMessage,
     wrapTelegramCallbackQuery,
 } from './wrappers';
+import { decodeSelectCallback } from './selectCallbackData';
 import { logger } from '../../utils/logger';
 
 // ---------------------------------------------------------------------------
@@ -206,21 +206,21 @@ export class TelegramAdapter implements PlatformAdapter {
 
                 const interaction = wrapTelegramCallbackQuery(query, this.bot.api);
 
-                // Select menu callbacks use \x1F (Unit Separator) between
-                // customId and value. Regular button customIds never contain
-                // \x1F, so this cleanly distinguishes the two.
-                const sepIdx = (query.data ?? '').indexOf(SELECT_CALLBACK_SEP);
-                if (sepIdx > 0 && this.events.onSelectInteraction) {
-                    const selectCustomId = (query.data ?? '').slice(0, sepIdx);
-                    const selectedValue = (query.data ?? '').slice(sepIdx + 1);
-
+                const selection = decodeSelectCallback(query.data ?? '');
+                if (selection === 'expired') {
+                    await this.bot.api.answerCallbackQuery(query.id, {
+                        text: 'This menu has expired. Open the menu again to refresh it.', show_alert: true,
+                    });
+                    return;
+                }
+                if (selection && this.events.onSelectInteraction) {
                     await this.events.onSelectInteraction({
                         id: query.id,
                         platform: 'telegram',
-                        customId: selectCustomId,
+                        customId: selection.customId,
                         user: interaction.user,
                         channel: interaction.channel,
-                        values: [selectedValue],
+                        values: [selection.value],
                         messageId: interaction.messageId,
                         deferUpdate: interaction.deferUpdate,
                         reply: interaction.reply,

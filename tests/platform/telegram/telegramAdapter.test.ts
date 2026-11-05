@@ -1,6 +1,7 @@
 import { TelegramAdapter } from '../../../src/platform/telegram/telegramAdapter';
 import type { PlatformAdapterEvents } from '../../../src/platform/adapter';
-import { SELECT_CALLBACK_SEP } from '../../../src/platform/telegram/wrappers';
+import { SELECT_CALLBACK_SEP, toTelegramPayload } from '../../../src/platform/telegram/wrappers';
+import { buildQuestionNotification } from '../../../src/services/notificationSender';
 import type { TelegramBotLike } from '../../../src/platform/telegram/wrappers';
 
 // ---------------------------------------------------------------------------
@@ -301,6 +302,49 @@ describe('TelegramAdapter', () => {
     });
 
     describe('event handling - callback_query:data', () => {
+        it('round-trips long question identities and skip actions in supergroups within 64 bytes', async () => {
+            const bot = createMockBot();
+            const events = createMockEvents();
+            const adapter = new TelegramAdapter(bot, 'bot_1');
+            await adapter.start(events);
+            const payload = buildQuestionNotification({
+                title: 'Allow reading?', description: '/projects/other/AGENTS.md',
+                projectName: '專案'.repeat(40), channelId: '-1001234567890', questionId: '0123456789abcdef',
+                options: Array.from({ length: 12 }, (_, index) => ({ text: `Choice ${index + 1}`, x: 0, y: 0 })),
+            });
+            const keyboard = toTelegramPayload(payload).reply_markup!.inline_keyboard;
+            for (const button of keyboard.flat()) {
+                expect(Buffer.byteLength(button.callback_data, 'utf8')).toBeLessThanOrEqual(64);
+                await bot.emit('callback_query:data', { callbackQuery: {
+                    id: 'question-callback', from: { id: 42, first_name: 'Bob', is_bot: false },
+                    message: { message_id: 50, chat: { id: -1001234567890, type: 'supergroup' }, date: 1700000000 },
+                    data: button.callback_data,
+                } });
+            }
+            const interactions = events.onSelectInteraction.mock.calls.map(call => call[0]);
+            expect(interactions).toHaveLength(13);
+            expect(interactions[10].customId).toBe((payload.components![0].components[0] as any).customId);
+            expect(interactions[10].values).toEqual(['10']);
+            expect(interactions[12].customId).toBe((payload.components![1].components[0] as any).customId);
+            expect(interactions[12].values).toEqual(['skip']);
+            expect(events.onButtonInteraction).not.toHaveBeenCalled();
+        });
+
+        it('acknowledges expired callback tokens without invoking an IDE action', async () => {
+            const bot = createMockBot();
+            const events = createMockEvents();
+            await new TelegramAdapter(bot, 'bot_1').start(events);
+            await bot.emit('callback_query:data', { callbackQuery: {
+                id: 'expired-callback', from: { id: 42, first_name: 'Bob', is_bot: false },
+                data: 'lgsel:missing-after-restart',
+            } });
+            expect(bot.api.answerCallbackQuery).toHaveBeenCalledWith('expired-callback', {
+                text: expect.stringContaining('expired'), show_alert: true,
+            });
+            expect(events.onSelectInteraction).not.toHaveBeenCalled();
+            expect(events.onButtonInteraction).not.toHaveBeenCalled();
+        });
+
         it('calls onButtonInteraction for simple button data', async () => {
             const bot = createMockBot();
             const events = createMockEvents();
