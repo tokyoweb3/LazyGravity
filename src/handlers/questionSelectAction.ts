@@ -65,7 +65,9 @@ export function createQuestionSelectAction(deps: QuestionSelectActionDeps): Sele
 
             let success = false;
             try {
-                success = await detector.submitOption(selectedOption);
+                success = parsed.questionId
+                    ? await detector.submitOption(selectedOption, parsed.questionId)
+                    : await detector.submitOption(selectedOption);
             } catch (err: unknown) {
                 const msg = err instanceof Error ? err.message : String(err);
                 logger.error(`[QuestionSelectAction] CDP click failed: ${msg}`);

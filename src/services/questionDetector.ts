@@ -1,6 +1,8 @@
 import { EventEmitter } from 'events';
 import { CdpService } from './cdpService';
 import { logger } from '../utils/logger';
+import { createHash } from 'crypto';
+import { MODERN_QUESTION_SNAPSHOT_SCRIPT, modernQuestionActionScript } from '../ui/antigravityQuestion';
 
 /**
  * Metadata representing a single selectable option in the IDE's question prompt.
@@ -18,6 +20,8 @@ export interface QuestionOption {
  * Structured details of a detected question modal/prompt.
  */
 export interface QuestionInfo {
+    /** Identifies the exact prompt so old Discord controls cannot answer a new question. */
+    questionId?: string;
     /** Header/title text of the question modal. */
     title: string;
     /** Description or content of the question. */
@@ -49,6 +53,9 @@ export class QuestionDetector extends EventEmitter {
     private intervalId: NodeJS.Timeout | null = null;
     private logger = logger;
     private lastQuestionDetected: boolean = false;
+    private lastQuestionSignature: string | null = null;
+    private lastQuestionId: string | null = null;
+    private lastQuestionModern = false;
     private emptyPollCount: number = 0;
     private static readonly REQUIRED_EMPTY_POLLS = 3;
     private _isStarted: boolean = false;
@@ -97,6 +104,8 @@ export class QuestionDetector extends EventEmitter {
         this._isStarted = true;
         this.logger.debug(`[QuestionDetector:${this.projectName}] Starting polling`);
         this.lastQuestionDetected = false;
+        this.lastQuestionSignature = null;
+        this.lastQuestionId = null;
         this.emptyPollCount = 0;
         
         this.intervalId = setInterval(() => this.poll(), this.pollIntervalMs);
@@ -121,14 +130,17 @@ export class QuestionDetector extends EventEmitter {
      * @param index Zero-based option list index.
      * @returns True if submitted successfully.
      */
-    async submitOption(index: number): Promise<boolean> {
+    async submitOption(index: number, questionId?: string): Promise<boolean> {
+        if (!Number.isInteger(index) || index < 0 || (questionId && questionId !== this.lastQuestionId)) return false;
         this.logger.debug(`[QuestionDetector:${this.projectName}] Submitting option ${index}`);
         
         try {
             const contextId = this.cdp.getPrimaryContextId();
             const callParams: any = {
                 expression: `
-                (() => {
+                (async () => {
+                    const modern = await ${modernQuestionActionScript('select', index, this.lastQuestionModern ? this.lastQuestionSignature : null)};
+                    if (modern !== null) return modern;
                     const getInteractiveItems = (elContainer) => {
                         return Array.from(elContainer.querySelectorAll('li, label, a, [role="radio"], [role="option"], [class*="cursor-pointer"]'))
                             .filter(el => {
@@ -217,6 +229,7 @@ export class QuestionDetector extends EventEmitter {
             }
 
             this.lastQuestionDetected = false;
+            this.lastQuestionId = null;
             return true;
         } catch (e: any) {
             this.logger.error(`[QuestionDetector:${this.projectName}] submitOption error:`, e.message);
@@ -228,14 +241,17 @@ export class QuestionDetector extends EventEmitter {
      * Simulates clicking the skip button on the question modal.
      * @returns True if skipped successfully.
      */
-    async skipQuestion(): Promise<boolean> {
+    async skipQuestion(questionId?: string): Promise<boolean> {
+        if (questionId && questionId !== this.lastQuestionId) return false;
         this.logger.debug(`[QuestionDetector:${this.projectName}] Skipping question`);
         
         try {
             const contextId = this.cdp.getPrimaryContextId();
             const callParams: any = {
                 expression: `
-                (() => {
+                (async () => {
+                    const modern = await ${modernQuestionActionScript('skip', 0, this.lastQuestionModern ? this.lastQuestionSignature : null)};
+                    if (modern !== null) return modern;
                     const getInteractiveItems = (elContainer) => {
                         return Array.from(elContainer.querySelectorAll('li, label, a, [role="radio"], [role="option"], [class*="cursor-pointer"]'))
                             .filter(el => {
@@ -292,7 +308,7 @@ export class QuestionDetector extends EventEmitter {
                 })()
                 `,
                 returnByValue: true,
-                awaitPromise: false,
+                awaitPromise: true,
             };
             if (contextId !== null) callParams.contextId = contextId;
 
@@ -305,6 +321,7 @@ export class QuestionDetector extends EventEmitter {
             }
 
             this.lastQuestionDetected = false;
+            this.lastQuestionId = null;
             return true;
         } catch (e: any) {
             this.logger.error(`[QuestionDetector:${this.projectName}] skipQuestion error:`, e.message);
@@ -322,6 +339,8 @@ export class QuestionDetector extends EventEmitter {
             const callParams: any = {
                 expression: `
                 (() => {
+                    const modern = ${MODERN_QUESTION_SNAPSHOT_SCRIPT};
+                    if (modern) return modern;
                     const STOP_PATTERNS = [
                         /^stop$/,
                         /^stop generating$/,
@@ -479,12 +498,17 @@ export class QuestionDetector extends EventEmitter {
 
             if (result && result.detected) {
                 this.emptyPollCount = 0;
-                if (!this.lastQuestionDetected) {
+                const signature = result.signature ?? JSON.stringify([result.title, result.description, result.options]);
+                if (!this.lastQuestionDetected || signature !== this.lastQuestionSignature) {
                     this.lastQuestionDetected = true;
+                    this.lastQuestionSignature = signature;
+                    this.lastQuestionModern = typeof result.signature === 'string';
+                    this.lastQuestionId = createHash('sha256').update(signature).digest('hex').slice(0, 16);
                     this.logger.debug(`[QuestionDetector:${this.projectName}] Question modal detected`);
                     this.emit('question', {
+                        questionId: this.lastQuestionId,
                         title: result.title || 'Question',
-                        description: 'Please answer the question below.',
+                        description: result.description || 'Please answer the question below.',
                         options: result.options,
                     });
                 }
@@ -497,6 +521,7 @@ export class QuestionDetector extends EventEmitter {
                     if (this.lastQuestionDetected) {
                         this.logger.debug(`[QuestionDetector:${this.projectName}] Question modal disappeared`);
                         this.lastQuestionDetected = false;
+                        this.lastQuestionId = null;
                         this.emit('resolved');
                     }
                 }

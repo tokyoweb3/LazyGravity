@@ -63,7 +63,9 @@ export function createQuestionSkipAction(deps: QuestionSkipActionDeps): ButtonAc
 
             let success = false;
             try {
-                success = await detector.skipQuestion();
+                success = parsed.questionId
+                    ? await detector.skipQuestion(parsed.questionId)
+                    : await detector.skipQuestion();
             } catch (err: unknown) {
                 const msg = err instanceof Error ? err.message : String(err);
                 logger.error(`[QuestionSkipAction] CDP click failed: ${msg}`);

@@ -417,6 +417,8 @@ export function buildStatusNotification(opts: {
 
 /** Configuration interface for buildQuestionNotification. */
 export interface BuildQuestionNotificationParams {
+    /** Exact prompt identity for rejecting stale controls. */
+    questionId?: string;
     /** Alert question title. */
     title: string;
     /** Question detailed prompt. */
@@ -437,7 +439,7 @@ export interface BuildQuestionNotificationParams {
 export function buildQuestionNotification(
     params: BuildQuestionNotificationParams,
 ): MessagePayload {
-    const { title, description, projectName, channelId, options } = params;
+    const { title, description, projectName, channelId, options, questionId } = params;
 
     const baseContent = pipe(
         createRichContent(),
@@ -460,14 +462,15 @@ export function buildQuestionNotification(
     };
 
     const encodedChannel = encodeURIComponent(channelId);
+    const questionSuffix = questionId ? `:${questionId}` : '';
     
-    const selectOverhead = QUESTION_SELECT_ACTION_PREFIX.length + 2 + encodedChannel.length;
+    const selectOverhead = QUESTION_SELECT_ACTION_PREFIX.length + 2 + encodedChannel.length + questionSuffix.length;
     const safeSelectProjectName = encodeSafe(projectName, 100 - selectOverhead);
-    const encodedCustomId = `${QUESTION_SELECT_ACTION_PREFIX}:${safeSelectProjectName}:${encodedChannel}`;
+    const encodedCustomId = `${QUESTION_SELECT_ACTION_PREFIX}:${safeSelectProjectName}:${encodedChannel}${questionSuffix}`;
 
-    const skipOverhead = QUESTION_SKIP_ACTION_PREFIX.length + 2 + encodedChannel.length;
+    const skipOverhead = QUESTION_SKIP_ACTION_PREFIX.length + 2 + encodedChannel.length + questionSuffix.length;
     const safeSkipProjectName = encodeSafe(projectName, 100 - skipOverhead);
-    const encodedSkipCustomId = `${QUESTION_SKIP_ACTION_PREFIX}:${safeSkipProjectName}:${encodedChannel}`;
+    const encodedSkipCustomId = `${QUESTION_SKIP_ACTION_PREFIX}:${safeSkipProjectName}:${encodedChannel}${questionSuffix}`;
 
     return {
         richContent: embed,

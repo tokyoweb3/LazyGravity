@@ -1,3 +1,5 @@
+import { MODERN_QUESTION_PENDING_SCRIPT } from './antigravityQuestion';
+
 /** DOM state shared by session routing and CDP diagnostics for Antigravity 2.6. */
 export const MODERN_AGENT_STATE_SCRIPT = `(() => {
     const input = document.querySelector('[data-testid="agent-input-box"]');
@@ -8,11 +10,12 @@ export const MODERN_AGENT_STATE_SCRIPT = `(() => {
     const view = document.querySelector('[data-testid="conversation-view"]');
     const output = view?.querySelector('[data-testid="planner-response-text"]');
     const hasActiveChat = !!title || !!view?.querySelector('[data-testid="user-input-step"]');
-    const isGenerating = Array.from(input.querySelectorAll('button')).some(button =>
+    const waitingForUser = ${MODERN_QUESTION_PENDING_SCRIPT};
+    const isGenerating = !waitingForUser && Array.from(input.querySelectorAll('button')).some(button =>
         /^(stop|stop generating|stop generation|cancel)$/i.test(button.getAttribute('aria-label') || '')
     );
     return {
-        title: title || '(Untitled)', hasActiveChat, isGenerating,
+        title: title || '(Untitled)', hasActiveChat, isGenerating, waitingForUser,
         panelFound: true,
         hasLoadingIndicator: !!view?.querySelector('[role="progressbar"], [class*="animate-spin"]'),
         hasRenderableContent: !!(output?.textContent || '').trim(),

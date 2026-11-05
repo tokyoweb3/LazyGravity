@@ -1,6 +1,7 @@
 import { logger } from '../utils/logger';
 import type { ExtractionMode } from '../utils/config';
 import { CdpService } from './cdpService';
+import { MODERN_AGENT_STATE_SCRIPT } from '../ui/antigravityState';
 import {
     extractAssistantSegmentsPayloadScript,
     classifyAssistantSegments,
@@ -104,6 +105,8 @@ export const RESPONSE_SELECTORS = {
     })()`,
     /** Stop button detection via tooltip-id + text fallback */
     STOP_BUTTON: `(() => {
+        const modern = ${MODERN_AGENT_STATE_SCRIPT};
+        if (modern) return { isGenerating: modern.isGenerating, waitingForUser: modern.waitingForUser };
         const panel = document.querySelector('.antigravity-agent-side-panel');
         const scopes = [panel, document].filter(Boolean);
 
@@ -478,7 +481,7 @@ export const RESPONSE_SELECTORS = {
 };
 
 /** Response generation phases */
-export type ResponsePhase = 'waiting' | 'thinking' | 'generating' | 'complete' | 'timeout' | 'quotaReached' | 'disconnected';
+export type ResponsePhase = 'waiting' | 'thinking' | 'waitingForUser' | 'generating' | 'complete' | 'timeout' | 'quotaReached' | 'disconnected';
 
 /** Configuration options passed to constructed ResponseMonitor instances */
 export interface ResponseMonitorOptions {
@@ -730,6 +733,7 @@ export class ResponseMonitor {
     private lastClassified: ClassifyResult | null = null;
     private baselineText: string | null = null;
     private generationStarted: boolean = false;
+    private userWaitStartedAt: number | null = null;
     private currentPhase: ResponsePhase = 'waiting';
     private stopGoneCount: number = 0;
     private quotaDetected: boolean = false;
@@ -803,6 +807,7 @@ export class ResponseMonitor {
         this.lastText = null;
         this.baselineText = null;
         this.generationStarted = passive;
+        this.userWaitStartedAt = null;
         this.currentPhase = passive ? 'generating' : 'waiting';
         this.stopGoneCount = 0;
         this.quotaDetected = false;
@@ -955,6 +960,9 @@ export class ResponseMonitor {
             switch (phase) {
                 case 'thinking':
                     logger.phase('Thinking');
+                    break;
+                case 'waitingForUser':
+                    logger.phase('Waiting for your answer');
                     break;
                 case 'generating':
                     logger.phase(`Generating (${len} chars)`);
@@ -1162,7 +1170,7 @@ export class ResponseMonitor {
         const newEntries: string[] = [];
         for (const line of entries) {
             const normalized = (line || '').replace(/\r/g, '').trim();
-            if (!normalized) continue;
+            if (!normalized || /^[.\u2026\u00b7\s]+$/.test(normalized)) continue;
             const key = normalized.slice(0, 200);
             if (this.seenProcessLogKeys.has(key)) continue;
             this.seenProcessLogKeys.add(key);
@@ -1186,12 +1194,32 @@ export class ResponseMonitor {
     private async poll(): Promise<void> {
         try {
             // 1. Stop button check
-            const stopResult = await this.evaluateAcrossContexts<{ isGenerating?: boolean } | null>(
+            const stopResult = await this.evaluateAcrossContexts<{ isGenerating?: boolean; waitingForUser?: boolean } | null>(
                 RESPONSE_SELECTORS.STOP_BUTTON,
-                (value) => !!(value && typeof value === 'object' && (value as any).isGenerating),
+                (value) => !!(value && (value.isGenerating || value.waitingForUser)),
             );
             const stopValue = stopResult.value;
             const isGenerating = !!(stopValue && typeof stopValue === 'object' && (stopValue as any).isGenerating);
+
+            // A question is an active task awaiting the user, not stalled generation.
+            // Leave its controls available and exclude user wait time from timeouts.
+            if (stopValue?.waitingForUser) {
+                this.setPhase('waitingForUser', null);
+                if (this.userWaitStartedAt === null) {
+                    this.userWaitStartedAt = Date.now();
+                    this.generationStarted = true;
+                    this.emitNewProcessLogs(['Waiting for your answer. Choose an option in the question message.']);
+                }
+                this.stopGoneCount = 0;
+                this.lastActivityTime = Date.now();
+                return;
+            }
+            if (this.userWaitStartedAt !== null) {
+                this.startTime += Date.now() - this.userWaitStartedAt;
+                this.userWaitStartedAt = null;
+                this.lastActivityTime = Date.now();
+                this.setPhase('thinking', null);
+            }
 
             // 2. Quota error check
             const quotaResult = await this.evaluateAcrossContexts<boolean | null>(

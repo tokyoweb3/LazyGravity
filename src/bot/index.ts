@@ -727,6 +727,7 @@ async function sendPromptToAntigravity(
             { source: 'initial' },
         );
 
+        let waitingForUser = false;
         const monitor = new ResponseMonitor({
             cdpService: cdp,
             pollIntervalMs: 2000,
@@ -736,8 +737,8 @@ async function sendPromptToAntigravity(
             initialBaselineText: baseline.text,
             initialSeenProcessLogKeys: baseline.processLogKeys,
 
-            onPhaseChange: (_phase, _text) => {
-                // Phase transitions are already logged inside ResponseMonitor.setPhase()
+            onPhaseChange: (phase, _text) => {
+                waitingForUser = phase === 'waitingForUser';
             },
 
             onProcessLog: (logText) => {
@@ -749,10 +750,10 @@ async function sendPromptToAntigravity(
                 liveActivityUpdateVersion += 1;
                 const activityVersion = liveActivityUpdateVersion;
                 upsertLiveActivityEmbeds(
-                    `${PHASE_ICONS.thinking} Process Log`,
+                    waitingForUser ? '⏸ Waiting for your answer' : `${PHASE_ICONS.thinking} Process Log`,
                     lastActivityLogText || ACTIVITY_PLACEHOLDER,
                     PHASE_COLORS.thinking,
-                    t(`⏱️ Elapsed: ${elapsed}s | Process log`),
+                    waitingForUser ? t('Choose an option in the question message') : t(`⏱️ Elapsed: ${elapsed}s | Process log`),
                     {
                         source: 'process-log',
                         expectedVersion: activityVersion,
@@ -2228,13 +2229,22 @@ export async function handleSlashInteraction(
         })();
     const ensureChannelCdp = async (): Promise<CdpService | null> => {
         const existing = getChannelCdp();
-        if (existing) return existing;
-
         const workspacePath = getChannelWorkspacePath();
         if (!workspacePath) return null;
 
         try {
-            return await bridge.pool.getOrConnect(workspacePath, { name: resolveSelectedAccount() });
+            const account = resolveSelectedAccount();
+            const cdp = existing ?? await bridge.pool.getOrConnect(workspacePath, { name: account });
+            // A read-only /model command can restore pending questions after a bot restart.
+            if (interaction.channel && (cdp.getContexts?.() ?? []).some(context => context.url?.includes('extensionView=true'))) {
+                const projectName = bridge.pool.extractProjectName(workspacePath);
+                const channel = wrapDiscordChannel(interaction.channel as any);
+                registerApprovalWorkspaceChannel(bridge, projectName, channel);
+                const title = chatSessionRepo?.findByChannelId(interaction.channelId)?.displayName;
+                if (title) registerApprovalSessionChannel(bridge, projectName, title, channel);
+                ensureQuestionDetector(bridge, cdp, projectName, account);
+            }
+            return cdp;
         } catch {
             return null;
         }

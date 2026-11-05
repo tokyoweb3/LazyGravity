@@ -20,6 +20,7 @@ import { RunCommandDetector, RunCommandInfo } from './runCommandDetector';
 import { QuotaService } from './quotaService';
 import { UserMessageDetector, UserMessageInfo } from './userMessageDetector';
 import { QuestionDetector, QuestionInfo } from './questionDetector';
+import { MODERN_AGENT_STATE_SCRIPT } from '../ui/antigravityState';
 
 /** CDP connection state management */
 export interface CdpBridge {
@@ -82,6 +83,8 @@ function buildSessionRouteKey(projectName: string, sessionTitle: string): string
 }
 
 const GET_CURRENT_CHAT_TITLE_SCRIPT = `(() => {
+    const modern = ${MODERN_AGENT_STATE_SCRIPT};
+    if (modern) return modern.hasActiveChat ? modern.title : '';
     const panel = document.querySelector('.antigravity-agent-side-panel') || document.body;
     if (!panel) return '';
     const header = panel.querySelector('div[class*="border-b"]');
@@ -958,6 +961,7 @@ export function ensureQuestionDetector(
             if (!targetChannel || !targetChannelId) return;
 
             const payload = buildQuestionNotification({
+                questionId: info.questionId,
                 title: info.title,
                 description: info.description,
                 projectName,
