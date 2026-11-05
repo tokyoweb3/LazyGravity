@@ -956,6 +956,7 @@ export function ensureQuestionDetector(
             const resolved = buildResolvedOverlay(payload, t('Question answered'));
             sent.edit(resolved).catch(logger.error);
         },
+        /** Publish each new question to its bound conversation, suppressing only an initial restored control. */
         onQuestionRequired: async (info: QuestionInfo) => {
             const suppress = pendingInitialQuestionId === info.questionId;
             if (suppress) return;

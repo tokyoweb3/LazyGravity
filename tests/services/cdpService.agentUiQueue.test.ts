@@ -18,6 +18,7 @@ describe('shared agent UI queue', () => {
 
     afterEach(() => { jest.restoreAllMocks(); });
 
+    /** Exercise both public injection entry points against the same focus-ownership queue. */
     function inject(images: boolean) {
         return images ? cdp.injectMessageWithImageFiles('prompt', ['/tmp/image.png']) : cdp.injectMessage('prompt');
     }

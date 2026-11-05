@@ -6,6 +6,7 @@ import { MODEL_SELECT_ID, MODEL_ACTIONS_SELECT_ID } from '../ui/modelsUi';
 export function createModelSelectAction(deps: ModelButtonActionDeps): SelectAction {
     const action = createModelButtonAction(deps);
     return {
+        /** Recognize model choices and management actions without accepting unrelated dropdowns. */
         match: customId => customId === MODEL_SELECT_ID || customId === MODEL_ACTIONS_SELECT_ID,
         /** Map dropdown values to the shared model executor, rejecting unknown management actions. */
         async execute(interaction, values) {

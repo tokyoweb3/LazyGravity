@@ -48,6 +48,7 @@ describeWindows('Windows source launcher', () => {
         fs.rmSync(resolved, { recursive: true, force: true });
     });
 
+    /** Run only the copied launcher with stubbed npm/CLI processes and a controlled Node version. */
     function run() {
         const result = spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/c', 'start.bat'], {
             cwd: workspace, env, input: '\n', encoding: 'utf8', timeout: 15000, windowsHide: true,

@@ -1661,6 +1661,7 @@ export function createInteractionCreateHandler(deps: InteractionCreateHandlerDep
                 const action = createModelSelectAction({
                     bridge: deps.bridge, modelService: deps.modelService, userPrefRepo: deps.userPrefRepo,
                     fetchQuota: () => deps.bridge.quota.fetchQuota(),
+                    /** Resolve only the menu channel's workspace and scoped IDE account. */
                     resolveCdp: async (channelId, userId) => {
                         const existing = getChannelCdp(interaction);
                         if (existing) return existing;

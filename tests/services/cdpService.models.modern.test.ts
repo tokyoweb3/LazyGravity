@@ -46,12 +46,14 @@ describe('Antigravity 2.6 model picker', () => {
         trigger.setAttribute('aria-expanded', 'false');
     }
 
+    /** Simulate a model selection that may or may not update the IDE's verification trigger. */
     function choose(label: string) {
         select(label);
         if (confirmSelection) trigger.setAttribute('aria-label', 'Select model, current: ' + label);
         closePicker();
     }
 
+    /** Mount a Radix-style model menu with keyboard-driven effort submenus and unrelated controls. */
     function openPicker() {
         if (document.getElementById('models')) return;
         const menu = document.createElement('div');

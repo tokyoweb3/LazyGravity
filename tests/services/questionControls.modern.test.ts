@@ -6,6 +6,7 @@ import { toDiscordPayload } from '../../src/platform/discord/wrappers';
 import { richContentToHtml } from '../../src/platform/telegram/telegramFormatter';
 import { EmbedBuilder } from 'discord.js';
 
+/** Keep the real project resolver active while exposing a detector only under the full bound name. */
 function actionDeps(detector: any, project = 'TestProject') {
     return { bridge: { pool: {
         extractProjectName: () => project,

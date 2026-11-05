@@ -71,6 +71,7 @@ describe('CdpService - Antigravity out-of-process agent frames', () => {
         await new Promise<void>(resolve => wss.close(() => server.close(() => resolve())));
     });
 
+    /** Deliver a root or flattened-frame event and wait until the service has processed it. */
     async function emitEvent(method: string, params: any, sessionId?: string): Promise<void> {
         const observed = new Promise<void>(resolve => { service.once(method, () => resolve()); });
         socket.send(JSON.stringify({ method, params, ...(sessionId ? { sessionId } : {}) }));
