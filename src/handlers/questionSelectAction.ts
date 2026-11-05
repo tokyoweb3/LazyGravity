@@ -16,9 +16,11 @@ export interface QuestionSelectActionDeps {
     /** Target CDP bridge manager instance. */
     readonly bridge: CdpBridge;
     /** Workspace command handler instance. */
-    readonly wsHandler: WorkspaceCommandHandler;
+    readonly wsHandler: Pick<WorkspaceCommandHandler, 'getWorkspaceForChannel'>;
     /** Account selected for this session. */
     readonly accountName?: string;
+    /** Resolve the account belonging to the question's platform chat. */
+    readonly resolveAccountName?: (channelId: string, userId: string) => string;
 }
 
 /**
@@ -56,18 +58,19 @@ export function createQuestionSelectAction(deps: QuestionSelectActionDeps): Sele
             }
 
             const projectName = resolveProjectName(deps, interaction.channel.id, parsed.projectName, { preferChannelBinding: true });
+            const accountName = deps.resolveAccountName?.(interaction.channel.id, interaction.user.id) ?? deps.accountName;
             logger.debug(`[QuestionSelectAction] project=${projectName ?? 'null'} channel=${interaction.channel.id}`);
 
             await interaction.deferUpdate().catch(() => {});
             let detector = projectName
-                ? deps.bridge.pool.getQuestionDetector(projectName, deps.accountName)
+                ? deps.bridge.pool.getQuestionDetector(projectName, accountName)
                 : undefined;
 
             try {
                 if (detector) await detector.refresh?.();
                 else if (projectName) detector = await restoreQuestionDetector(
                     deps.bridge, projectName, deps.wsHandler.getWorkspaceForChannel(interaction.channel.id),
-                    interaction.channel, parsed.questionId, deps.accountName,
+                    interaction.channel, parsed.questionId, accountName,
                 );
             } catch (error) {
                 logger.warn('[QuestionSelectAction] Could not restore the question:', error);

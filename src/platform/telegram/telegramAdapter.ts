@@ -209,7 +209,7 @@ export class TelegramAdapter implements PlatformAdapter {
                 const selection = decodeSelectCallback(query.data ?? '');
                 if (selection === 'expired') {
                     await this.bot.api.answerCallbackQuery(query.id, {
-                        text: 'This menu has expired. Open the menu again to refresh it.', show_alert: true,
+                        text: 'This menu has expired. Run /model for model or pending-question controls, or repeat the original command.', show_alert: true,
                     });
                     return;
                 }

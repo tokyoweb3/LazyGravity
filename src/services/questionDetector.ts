@@ -120,6 +120,13 @@ export class QuestionDetector extends EventEmitter {
         return this.pollPromise;
     }
 
+    /** Re-read and republish a still-pending question when the user explicitly refreshes its controls. */
+    async republish(): Promise<void> {
+        if (this.pollPromise) await this.pollPromise;
+        this.lastQuestionSignature = null;
+        await this.refresh();
+    }
+
     /**
      * Stopes active interval polling.
      */

@@ -405,6 +405,7 @@ async function handleModel(deps: TelegramCommandDeps, message: PlatformMessage):
             return;
         }
     }
+    await deps.modelActionDeps?.onSessionReady?.(message.channel, message.author.id, cdp);
 
     const models = await cdp.getUiModels();
     const currentModel = await cdp.getCurrentModel();
@@ -715,6 +716,7 @@ async function handleNew(deps: TelegramCommandDeps, message: PlatformMessage): P
 
         const result = await deps.chatSessionService.startNewChat(cdp);
         if (result.ok) {
+            deps.telegramBindingRepo?.setSession(targetChannelId, binding.workspacePath, '', selectedAccount);
             if (targetChannelId === originalChannelId) {
                 await message.reply({ text: '✅ New chat session started.' }).catch(logger.error);
             }

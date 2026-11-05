@@ -11,7 +11,7 @@ import type { CdpBridge } from '../services/cdpBridgeManager';
  * @returns Resolved project name, or undefined.
  */
 export function resolveProjectName(
-    deps: { wsHandler: WorkspaceCommandHandler; bridge: CdpBridge },
+    deps: { wsHandler: Pick<WorkspaceCommandHandler, 'getWorkspaceForChannel'>; bridge: CdpBridge },
     channelId: string,
     providedProjectName?: string | null,
     options: { preferChannelBinding?: boolean } = {},

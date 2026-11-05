@@ -195,6 +195,14 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
             }
             logger.debug(`[TelegramHandler] getOrConnect done (took=${Date.now() - cdpStartTime}ms)`);
 
+            if (deps.modelActionDeps?.ensureSessionActivated) {
+                const ready = await deps.modelActionDeps.ensureSessionActivated(chatId, message.author.id, cdp);
+                if (!ready.ok) {
+                    await message.reply({ text: ready.error }).catch(logger.error);
+                    return;
+                }
+            }
+
             const projectName = deps.bridge.pool.extractProjectName(workspacePath);
             deps.bridge.lastActiveWorkspace = projectName;
             deps.bridge.lastActiveChannel = message.channel;
@@ -296,6 +304,24 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
                 }).catch(logger.error);
                 return;
             }
+            let savedSessionTitle = binding.sessionTitle ?? null;
+            let titleSaveOperation = Promise.resolve();
+            await saveConversationTitle();
+
+            /** Persist a newly created conversation's title before question controls or later model actions need it. */
+            function saveConversationTitle(): Promise<void> {
+                titleSaveOperation = titleSaveOperation.then(async () => {
+                    if (!deps.chatSessionService || !deps.telegramBindingRepo.setSession) return;
+                    try {
+                        const info = await deps.chatSessionService.getCurrentSessionInfo(cdp);
+                        if (info.hasActiveChat && info.title.trim() && info.title !== savedSessionTitle) {
+                            deps.telegramBindingRepo.setSession(chatId, binding!.workspacePath, info.title, selectedAccount);
+                            savedSessionTitle = info.title;
+                        }
+                    } catch (error) { logger.warn('[TelegramHandler] Could not persist conversation title:', error); }
+                });
+                return titleSaveOperation;
+            }
 
             // Monitor the response
             const channel = message.channel;
@@ -328,6 +354,11 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
                     initialBaselineText: baseline.text,
                     initialSeenProcessLogKeys: baseline.processLogKeys,
 
+                    /** Save the live conversation title before a permission wait can outlast a bot restart. */
+                    onPhaseChange: phase => {
+                        if (phase === 'waitingForUser') void saveConversationTitle();
+                    },
+
                     onProcessLog: (logText) => {
                         if (logText && logText.trim().length > 0) {
                             lastActivityLogText = processLogBuffer.append(logText);
@@ -344,6 +375,7 @@ export function createTelegramMessageHandler(deps: TelegramMessageHandlerDeps) {
 
                     onComplete: async (finalText) => {
                         try {
+                            await saveConversationTitle();
                             const elapsed = Math.round((Date.now() - startTime) / 1000);
 
                             // Console log output (mirroring Discord handler pattern)

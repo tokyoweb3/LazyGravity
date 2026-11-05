@@ -339,7 +339,7 @@ describe('TelegramAdapter', () => {
                 data: 'lgsel:missing-after-restart',
             } });
             expect(bot.api.answerCallbackQuery).toHaveBeenCalledWith('expired-callback', {
-                text: expect.stringContaining('expired'), show_alert: true,
+                text: expect.stringContaining('Run /model'), show_alert: true,
             });
             expect(events.onSelectInteraction).not.toHaveBeenCalled();
             expect(events.onButtonInteraction).not.toHaveBeenCalled();

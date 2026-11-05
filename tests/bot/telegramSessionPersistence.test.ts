@@ -1,0 +1,71 @@
+import Database from 'better-sqlite3';
+import { TelegramBindingRepository } from '../../src/database/telegramBindingRepository';
+import { handleTelegramJoinSelect } from '../../src/bot/telegramJoinCommand';
+import { handleTelegramCommand } from '../../src/bot/telegramCommands';
+import { createTelegramModelActionDeps } from '../../src/bot/telegramModelActions';
+import { createModelSelectAction } from '../../src/handlers/modelSelectAction';
+import { MODEL_SELECT_ID } from '../../src/ui/modelsUi';
+
+jest.mock('../../src/services/cdpBridgeManager', () => ({
+    ...jest.requireActual('../../src/services/cdpBridgeManager'),
+    ensureQuestionDetector: jest.fn(), getCurrentChatTitle: jest.fn().mockResolvedValue(null),
+}));
+
+describe('persisted Telegram topic conversations', () => {
+    let db: Database.Database;
+    let repo: TelegramBindingRepository;
+    beforeEach(() => { db = new Database(':memory:'); repo = new TelegramBindingRepository(db); repo.create({ chatId: '-100', workspacePath: 'project' }); });
+    afterEach(() => { db.close(); });
+
+    /** Use one IDE workspace with mutable active conversation state for multiple Telegram topics. */
+    function setup() {
+        let state = { title: 'Conversation B', hasActiveChat: true };
+        const cdp = { getUiModels: jest.fn().mockResolvedValue(['Model A']), getCurrentModel: jest.fn().mockResolvedValue('Model A'),
+            setUiModel: jest.fn(async () => ({ ok: true, model: state.title })) };
+        const bridge = { selectedAccountByChannel: new Map(), approvalChannelByWorkspace: new Map(), approvalChannelBySession: new Map(),
+            pool: { getOrConnect: jest.fn().mockResolvedValue(cdp), extractProjectName: () => 'project', getQuestionDetector: jest.fn() } } as any;
+        const service = { getCurrentSessionInfo: jest.fn(async () => state),
+            activateSessionByTitle: jest.fn(async (_cdp: unknown, title: string) => { state = { title, hasActiveChat: true }; return { ok: true }; }),
+            startNewChat: jest.fn(async () => { state = { title: '(Untitled)', hasActiveChat: false }; return { ok: true }; }),
+            refreshSessionViewIfStuck: jest.fn().mockResolvedValue({ ok: true }),
+        } as any;
+        const deps = { bridge, telegramBindingRepo: repo, workspaceService: { getWorkspacePath: () => '/projects/project' } as any,
+            chatSessionService: service, fetchQuota: async () => [], antigravityAccounts: [{ name: 'default', cdpPort: 9222 }] };
+        return { cdp, service, deps };
+    }
+
+    /** Represent a Telegram topic control without involving the external Telegram API. */
+    function interaction(chatId: string, title = 'Conversation A') {
+        return { customId: MODEL_SELECT_ID, channel: { id: chatId }, user: { id: 'operator' }, values: [title],
+            update: jest.fn().mockResolvedValue(undefined), deferUpdate: jest.fn().mockResolvedValue(undefined),
+            editReply: jest.fn().mockResolvedValue(undefined), followUp: jest.fn().mockResolvedValue(undefined) } as any;
+    }
+
+    it('restores the joined topic after another topic changes the IDE conversation and the repository is reopened', async () => {
+        const { cdp, service, deps } = setup();
+        await handleTelegramJoinSelect(deps, interaction('-100_7', 'Conversation A'));
+        await handleTelegramJoinSelect(deps, interaction('-100_8', 'Conversation B'));
+        expect(repo.findByChatId('-100_7')).toMatchObject({ sessionTitle: 'Conversation A', accountName: 'default' });
+        const reopened = new TelegramBindingRepository(db);
+        const modelDeps = createTelegramModelActionDeps({ ...deps, telegramBindingRepo: reopened });
+        await createModelSelectAction(modelDeps).execute(interaction('-100_7'), ['Model A']);
+        expect(service.activateSessionByTitle).toHaveBeenLastCalledWith(cdp, 'Conversation A', expect.any(Object));
+        expect(cdp.setUiModel).toHaveLastReturnedWith(expect.any(Promise));
+        expect(await cdp.setUiModel.mock.results.at(-1)!.value).toMatchObject({ model: 'Conversation A' });
+    });
+
+    it('persists a new empty conversation and rejects another topic\'s active conversation after a restart', async () => {
+        const { cdp, deps } = setup();
+        const message = { channel: { id: '-100_9' }, author: { id: 'operator' }, reply: jest.fn().mockResolvedValue(undefined) } as any;
+        await handleTelegramCommand(deps, message, { command: 'new', args: '' });
+        expect(repo.findByChatId('-100_9')).toMatchObject({ sessionTitle: '', accountName: 'default' });
+        const modelDeps = createTelegramModelActionDeps({ ...deps, telegramBindingRepo: new TelegramBindingRepository(db) });
+        await createModelSelectAction(modelDeps).execute(interaction('-100_9'), ['Model A']);
+        expect(cdp.setUiModel).toHaveBeenCalledTimes(1);
+        await handleTelegramJoinSelect(deps, interaction('-100_8', 'Conversation B'));
+        const stale = interaction('-100_9');
+        await createModelSelectAction(modelDeps).execute(stale, ['Model A']);
+        expect(cdp.setUiModel).toHaveBeenCalledTimes(1);
+        expect(stale.followUp).toHaveBeenCalledWith({ text: expect.stringContaining('no longer active') });
+    });
+});

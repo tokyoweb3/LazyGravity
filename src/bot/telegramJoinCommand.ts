@@ -106,7 +106,7 @@ export async function handleJoin(deps: TelegramJoinCommandDeps, message: Platfor
 export async function handleTelegramJoinSelect(deps: TelegramJoinCommandDeps, interaction: PlatformSelectInteraction): Promise<void> {
     const selectedTitle = interaction.values[0];
     const originalChannelId = interaction.channel.id;
-    const binding = deps.telegramBindingRepo?.findByChatId(originalChannelId);
+    const binding = deps.telegramBindingRepo?.findByChatIdWithParentFallback(originalChannelId);
 
     if (!binding) {
         await interaction.update({ text: '⚠️ No project is bound to this chat.' }).catch(logger.error);
@@ -149,7 +149,9 @@ export async function handleTelegramJoinSelect(deps: TelegramJoinCommandDeps, in
         );
     }
 
-    const replyMsg = targetChannelId !== originalChannelId 
+    deps.telegramBindingRepo?.setSession(targetChannelId, binding.workspacePath, selectedTitle, account);
+
+    const replyMsg = targetChannelId !== originalChannelId
         ? `✅ Joined session in new topic: <b>${escapeHtml(selectedTitle)}</b>\nUse /mirror if you want to forward PC messages here.` 
         : `✅ Joined session: <b>${escapeHtml(selectedTitle)}</b>\nUse /mirror if you want to forward PC messages here.`;
 

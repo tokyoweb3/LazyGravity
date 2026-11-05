@@ -148,6 +148,43 @@ describe('createTelegramMessageHandler', () => {
         expect(typeof handler).toBe('function');
     });
 
+    it('rejects a stale topic before applying defaults or sending a prompt', async () => {
+        const cdp = createMockCdp();
+        const modelService = { getDefaultModel: jest.fn() } as any;
+        const { message } = createMockMessage();
+        await createTelegramMessageHandler({ bridge: createBridge(createMockPool(cdp)),
+            telegramBindingRepo: createTelegramBindingRepo({ chatId: 'chat-123', workspacePath: 'project' }), modelService,
+            modelActionDeps: { bridge: {} as any, fetchQuota: async () => [],
+                ensureSessionActivated: async () => ({ ok: false, error: 'Select the linked conversation with /join.' }) },
+        })(message as any);
+        expect(cdp.injectMessage).not.toHaveBeenCalled();
+        expect(modelService.getDefaultModel).not.toHaveBeenCalled();
+        expect(message.reply).toHaveBeenCalledWith({ text: 'Select the linked conversation with /join.' });
+    });
+
+    it('saves conversation titles after the first prompt and before permission waits', async () => {
+        const cdp = createMockCdp();
+        const repo = createTelegramBindingRepo({ chatId: 'chat-123', workspacePath: 'project' });
+        repo.setSession = jest.fn();
+        const getCurrentSessionInfo = jest.fn()
+            .mockResolvedValueOnce({ title: 'Draft title', hasActiveChat: true })
+            .mockResolvedValue({ title: 'Permission task', hasActiveChat: true });
+        const { ResponseMonitor } = require('../../src/services/responseMonitor');
+        ResponseMonitor.mockImplementationOnce((options: any) => ({ start: async () => {
+            options.onPhaseChange('waitingForUser');
+            await Promise.resolve();
+            await Promise.resolve();
+            expect(repo.setSession).toHaveBeenCalledWith('chat-123', 'project', 'Permission task', 'default');
+            await options.onComplete('Response text');
+        } }));
+        const { message } = createMockMessage();
+        await createTelegramMessageHandler({ bridge: createBridge(createMockPool(cdp)), telegramBindingRepo: repo,
+            chatSessionService: { getCurrentSessionInfo } as any,
+        })(message as any);
+        expect(repo.setSession).toHaveBeenNthCalledWith(1, 'chat-123', 'project', 'Draft title', 'default');
+        expect(repo.setSession).toHaveBeenCalledTimes(2);
+    });
+
     it('does nothing for empty (whitespace-only) messages', async () => {
         const { message } = createMockMessage({ content: '   ' });
         const telegramBindingRepo = createTelegramBindingRepo();

@@ -1899,7 +1899,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
 
             const telegramModelActionDeps = createTelegramModelActionDeps({
                 bridge, fetchQuota: () => bridge.quota.fetchQuota(), modelService, userPrefRepo,
-                telegramBindingRepo, workspaceService, chatSessionRepo, chatSessionService,
+                telegramBindingRepo, workspaceService, chatSessionService,
                 accountPrefRepo, channelPrefRepo, antigravityAccounts: config.antigravityAccounts,
             });
             const activeMonitors = new Map<string, ResponseMonitor>();
@@ -1945,7 +1945,15 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                         : binding.workspacePath;
                 },
             });
-            const questionSelectAction = createQuestionSelectAction({ bridge, wsHandler });
+            const telegramQuestionDeps = {
+                bridge,
+                wsHandler: { getWorkspaceForChannel: (channelId: string) => {
+                    const binding = telegramBindingRepo.findByChatIdWithParentFallback(channelId);
+                    return binding ? workspaceService.getWorkspacePath(binding.workspacePath) : undefined;
+                } },
+                resolveAccountName: telegramModelActionDeps.resolveAccountName,
+            };
+            const questionSelectAction = createQuestionSelectAction(telegramQuestionDeps);
             const telegramSelectHandler = createPlatformSelectHandler({
                 actions: [
                     modeSelectAction,
@@ -1992,7 +2000,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
 
             const telegramButtonHandler = createPlatformButtonHandler({
                 actions: [
-                    createQuestionSkipAction({ bridge, wsHandler }),
+                    createQuestionSkipAction(telegramQuestionDeps),
                     createApprovalButtonAction({ bridge, wsHandler }),
                     createPlanningButtonAction({ bridge, wsHandler }),
                     createErrorPopupButtonAction({ bridge, wsHandler }),

@@ -12,6 +12,7 @@ import { getCurrentCdp } from '../services/cdpBridgeManager';
 import { buildModelsPayload } from '../ui/modelsUi';
 import type { ModelService } from '../services/modelService';
 import type { UserPreferenceRepository } from '../database/userPreferenceRepository';
+import type { PlatformChannel } from '../platform/types';
 import { logger } from '../utils/logger';
 
 /**
@@ -30,6 +31,8 @@ export interface ModelButtonActionDeps {
     readonly resolveCdp?: (channelId: string, userId: string) => Promise<ReturnType<typeof getCurrentCdp>>;
     /** Optional activation callback interface checker. */
     readonly ensureSessionActivated?: (channelId: string, userId: string, cdp: NonNullable<ReturnType<typeof getCurrentCdp>>) => Promise<{ ok: true } | { ok: false; error: string }>;
+    /** Restore pending controls after the bound session is ready. */
+    readonly onSessionReady?: (channel: PlatformChannel, userId: string, cdp: NonNullable<ReturnType<typeof getCurrentCdp>>) => Promise<void>;
 }
 
 /**
@@ -74,6 +77,7 @@ export function createModelButtonAction(deps: ModelButtonActionDeps): ButtonActi
                     return;
                 }
             }
+            await deps.onSessionReady?.(interaction.channel, interaction.user.id, cdp);
 
             if (params.action === 'set_default') {
                 const currentModel = await cdp.getCurrentModel();

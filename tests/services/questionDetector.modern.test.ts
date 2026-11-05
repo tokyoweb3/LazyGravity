@@ -3,6 +3,12 @@ import { QuestionDetector, QuestionInfo } from '../../src/services/questionDetec
 import { CdpService } from '../../src/services/cdpService';
 import { MODERN_QUESTION_SNAPSHOT_SCRIPT } from '../../src/ui/antigravityQuestion';
 import { restoreQuestionDetector } from '../../src/services/cdpBridgeManager';
+import Database from 'better-sqlite3';
+import { TelegramBindingRepository } from '../../src/database/telegramBindingRepository';
+import { createTelegramModelActionDeps } from '../../src/bot/telegramModelActions';
+import { createQuestionSelectAction } from '../../src/handlers/questionSelectAction';
+import { toTelegramPayload } from '../../src/platform/telegram/wrappers';
+import { decodeSelectCallback } from '../../src/platform/telegram/selectCallbackData';
 
 describe('Antigravity 2.6 question prompts', () => {
     let detector: QuestionDetector;
@@ -54,6 +60,58 @@ describe('Antigravity 2.6 question prompts', () => {
         await (detector as any).poll();
         return detected.mock.calls.at(-1)?.[0];
     }
+
+    it('restores and refreshes Telegram question tokens after model-session activation and answers on the saved account', async () => {
+        document.body.insertAdjacentHTML('afterbegin', '<span data-testid="breadcrumb-segment">TestProject</span><span data-testid="breadcrumb-segment">Conversation A</span><button data-testid="extension-new-conversation"></button>');
+        const db = new Database(':memory:');
+        const repo = new TelegramBindingRepository(db);
+        const chatId = '-1001234567890_7';
+        repo.setSession(chatId, 'TestProject', 'Conversation A', 'personal');
+        let recovered: QuestionDetector | undefined;
+        const channel = { id: chatId, send: jest.fn().mockResolvedValue({ edit: jest.fn().mockResolvedValue(undefined) }) } as any;
+        const bridge = { selectedAccountByChannel: new Map(), approvalChannelByWorkspace: new Map(), approvalChannelBySession: new Map(),
+            pool: { extractProjectName: () => 'TestProject', getOrConnect: jest.fn().mockResolvedValue(cdp),
+                getQuestionDetector: (_project: string, account: string) => account === 'personal' ? recovered : undefined,
+                registerQuestionDetector: (_project: string, value: QuestionDetector) => { recovered = value; },
+            } } as any;
+        (cdp as any).getUiModels = async () => ['Model A'];
+        (cdp as any).getCurrentModel = async () => 'Model A';
+        const modelDeps = createTelegramModelActionDeps({ bridge, telegramBindingRepo: repo,
+            workspaceService: { getWorkspacePath: () => '/projects/TestProject' }, fetchQuota: async () => [],
+            chatSessionService: { getCurrentSessionInfo: async () => ({ title: 'Conversation A', hasActiveChat: true }) } as any,
+            antigravityAccounts: [{ name: 'default', cdpPort: 9222 }, { name: 'personal', cdpPort: 9223 }],
+        });
+        /** Run the model command's shared session-ready hook against the real question detector. */
+        async function refreshControls(): Promise<void> {
+            const connected = await modelDeps.resolveCdp!(chatId, 'operator');
+            expect(connected).toBe(cdp);
+            expect(await modelDeps.ensureSessionActivated!(chatId, 'operator', cdp)).toEqual({ ok: true });
+            await modelDeps.onSessionReady!(channel, 'operator', cdp);
+        }
+        try {
+            await refreshControls();
+            await new Promise(resolve => setTimeout(resolve, 0));
+            expect(channel.send).toHaveBeenCalledTimes(1);
+            const old = toTelegramPayload(channel.send.mock.calls[0][0]).reply_markup!.inline_keyboard[0][0].callback_data;
+            const now = Date.now();
+            jest.spyOn(Date, 'now').mockReturnValue(now + 24 * 60 * 60 * 1000 + 1);
+            expect(decodeSelectCallback(old)).toBe('expired');
+            await refreshControls();
+            await new Promise(resolve => setTimeout(resolve, 0));
+            expect(channel.send).toHaveBeenCalledTimes(2);
+            const fresh = toTelegramPayload(channel.send.mock.calls[1][0]).reply_markup!.inline_keyboard[0][0].callback_data;
+            const selection = decodeSelectCallback(fresh);
+            expect(selection).not.toBe('expired');
+            if (!selection || selection === 'expired') throw new Error('Question token was not refreshed');
+            const action = createQuestionSelectAction({ bridge, resolveAccountName: modelDeps.resolveAccountName,
+                wsHandler: { getWorkspaceForChannel: () => '/projects/TestProject' } });
+            expect(await action.execute({ channel, user: { id: 'operator' }, customId: selection.customId,
+                deferUpdate: jest.fn().mockResolvedValue(undefined), editReply: jest.fn().mockResolvedValue(undefined),
+                followUp: jest.fn().mockResolvedValue(undefined) } as any, [selection.value])).toBe(true);
+            expect(submit).toHaveBeenCalledTimes(1);
+            expect(bridge.pool.getOrConnect).toHaveBeenCalledWith('/projects/TestProject', { name: 'personal' });
+        } finally { recovered?.stop(); db.close(); }
+    });
 
     it('restores a question after restart and answers the matching control without a duplicate notification', async () => {
         const info = await poll();

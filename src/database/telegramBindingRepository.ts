@@ -10,6 +10,10 @@ export interface TelegramBindingRecord {
     chatId: string;
     /** Workspace relative path */
     workspacePath: string;
+    /** Bound conversation title; empty means an explicitly new, still-empty chat, null means unknown. */
+    sessionTitle?: string | null;
+    /** IDE account owning the bound conversation. */
+    accountName?: string | null;
     /** Creation timestamp (ISO string) */
     createdAt?: string;
 }
@@ -43,9 +47,15 @@ export class TelegramBindingRepository {
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 chat_id TEXT NOT NULL UNIQUE,
                 workspace_path TEXT NOT NULL,
+                session_title TEXT,
+                account_name TEXT,
                 created_at TEXT NOT NULL DEFAULT (datetime('now'))
             )
         `);
+        const columns = this.db.prepare('PRAGMA table_info(telegram_bindings)').all() as Array<{ name: string }>;
+        for (const column of ['session_title', 'account_name']) {
+            if (!columns.some(entry => entry.name === column)) this.db.exec(`ALTER TABLE telegram_bindings ADD COLUMN ${column} TEXT`);
+        }
     }
 
     /**
@@ -129,12 +139,24 @@ export class TelegramBindingRepository {
             INSERT INTO telegram_bindings (chat_id, workspace_path)
             VALUES (?, ?)
             ON CONFLICT(chat_id) DO UPDATE SET
+                session_title = CASE WHEN workspace_path = excluded.workspace_path THEN session_title ELSE NULL END,
+                account_name = CASE WHEN workspace_path = excluded.workspace_path THEN account_name ELSE NULL END,
                 workspace_path = excluded.workspace_path
         `);
 
         stmt.run(input.chatId, input.workspacePath);
 
         return this.findByChatId(input.chatId)!;
+    }
+
+    /** Persist the exact topic's conversation and owning account after a successful /join or /new. */
+    public setSession(chatId: string, workspacePath: string, sessionTitle: string, accountName: string): void {
+        this.db.prepare(`
+            INSERT INTO telegram_bindings (chat_id, workspace_path, session_title, account_name)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(chat_id) DO UPDATE SET workspace_path = excluded.workspace_path,
+                session_title = excluded.session_title, account_name = excluded.account_name
+        `).run(chatId, workspacePath, sessionTitle.trim(), accountName);
     }
 
     /**
@@ -145,6 +167,8 @@ export class TelegramBindingRepository {
             id: row.id,
             chatId: row.chat_id,
             workspacePath: row.workspace_path,
+            sessionTitle: row.session_title ?? null,
+            accountName: row.account_name ?? null,
             createdAt: row.created_at,
         };
     }
