@@ -82,4 +82,53 @@ describe('doctor persisted credentials', () => {
         }
         expect(process.exitCode).toBe(1);
     });
+
+    it('uses persisted operator IDs when the environment values are empty', async () => {
+        process.env.ALLOWED_USER_IDS = '';
+        process.env.TELEGRAM_ALLOWED_USER_IDS = '';
+        jest.spyOn(ConfigLoader, 'readPersisted').mockReturnValue({
+            platforms: ['discord', 'telegram'], discordToken: 'discord-token', clientId: '123', allowedUserIds: ['456'],
+            telegramToken: 'telegram-token', telegramAllowedUserIds: ['789'],
+        });
+        await doctorAction();
+        expect((console.log as jest.Mock).mock.calls.flat().join('\n')).toContain('All checks passed!');
+    });
+
+    it('keeps empty token overrides and invalid nonempty ID lists consistent with startup', async () => {
+        process.env.DISCORD_BOT_TOKEN = '';
+        process.env.ALLOWED_USER_IDS = ' , ';
+        jest.spyOn(ConfigLoader, 'readPersisted').mockReturnValue({
+            discordToken: 'persisted-token', clientId: '123', allowedUserIds: ['456'],
+        });
+        await doctorAction();
+        const output = (console.log as jest.Mock).mock.calls.flat().join('\n');
+        expect(output).toContain('DISCORD_BOT_TOKEN is NOT set');
+        expect(output).toContain('ALLOWED_USER_IDS is NOT set');
+    });
+
+    it.each([null, [], 42, 'secret-config-string', { platforms: 'discord' }, { allowedUserIds: 'secret-config-string' }])(
+        'reports invalid persisted shapes and continues the port checks (%j)', async parsed => {
+            jest.spyOn(ConfigLoader, 'readPersisted').mockReturnValue(parsed as any);
+            await doctorAction();
+            const output = (console.log as jest.Mock).mock.calls.flat().join('\n');
+            expect(output).toMatch(/Config file (must contain a JSON object|has invalid credential or platform field types)/);
+            expect(output).toContain('Checking brain path alignment');
+            expect(output).not.toContain('secret-config-string');
+            expect(process.exitCode).toBe(1);
+            for (const port of CDP_PORTS) {
+                expect(http.get).toHaveBeenCalledWith(`http://127.0.0.1:${port}/json/list`, expect.any(Function));
+            }
+        },
+    );
+
+    it('falls back to configured platforms when the environment platform list is invalid', async () => {
+        process.env.PLATFORMS = 'unknown';
+        jest.spyOn(ConfigLoader, 'readPersisted').mockReturnValue({
+            platforms: ['telegram'], telegramToken: 'telegram-token', telegramAllowedUserIds: ['456'],
+        });
+        await doctorAction();
+        const output = (console.log as jest.Mock).mock.calls.flat().join('\n');
+        expect(output).toContain('Active platforms: telegram');
+        expect(output).toContain('All checks passed!');
+    });
 });
