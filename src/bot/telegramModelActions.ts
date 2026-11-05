@@ -23,6 +23,8 @@ export interface TelegramModelRoutingDeps extends Omit<ModelButtonActionDeps, 'r
 /** Model routing also exposes the account resolver to Telegram question controls. */
 export interface TelegramModelActionDeps extends ModelButtonActionDeps {
     resolveAccountName(channelId: string, userId: string): string;
+    /** Restore the topic before question controls can click a matching prompt in the IDE. */
+    prepareQuestionSession(channelId: string, userId: string): Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
 /**
@@ -40,12 +42,18 @@ export function createTelegramModelActionDeps(deps: TelegramModelRoutingDeps): T
         accountPrefRepo: deps.accountPrefRepo, channelPrefRepo: deps.channelPrefRepo,
         accounts: deps.antigravityAccounts,
     });
-    return {
+    const actions: TelegramModelActionDeps = {
         bridge: deps.bridge,
         fetchQuota: deps.fetchQuota,
         modelService: deps.modelService,
         userPrefRepo: deps.userPrefRepo,
         resolveAccountName,
+        /** Use the same connection and conversation guards for question answers and skips. */
+        prepareQuestionSession: async (channelId, userId) => {
+            const cdp = await actions.resolveCdp!(channelId, userId);
+            return cdp ? actions.ensureSessionActivated!(channelId, userId, cdp)
+                : { ok: false, error: 'Not connected to Antigravity. Run /model after reconnecting.' };
+        },
         /** Reconnect the menu's bound workspace using its scoped account preference. */
         resolveCdp: async (channelId, userId) => {
             const binding = deps.telegramBindingRepo.findByChatIdWithParentFallback(channelId);
@@ -104,4 +112,5 @@ export function createTelegramModelActionDeps(deps: TelegramModelRoutingDeps): T
             else await detector?.refresh();
         },
     };
+    return actions;
 }

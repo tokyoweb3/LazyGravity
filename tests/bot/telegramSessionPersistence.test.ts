@@ -5,6 +5,8 @@ import { handleTelegramCommand } from '../../src/bot/telegramCommands';
 import { createTelegramModelActionDeps } from '../../src/bot/telegramModelActions';
 import { createModelSelectAction } from '../../src/handlers/modelSelectAction';
 import { MODEL_SELECT_ID } from '../../src/ui/modelsUi';
+import { createQuestionSelectAction } from '../../src/handlers/questionSelectAction';
+import { createQuestionSkipAction } from '../../src/handlers/questionSkipAction';
 
 jest.mock('../../src/services/cdpBridgeManager', () => ({
     ...jest.requireActual('../../src/services/cdpBridgeManager'),
@@ -67,5 +69,40 @@ describe('persisted Telegram topic conversations', () => {
         await createModelSelectAction(modelDeps).execute(stale, ['Model A']);
         expect(cdp.setUiModel).toHaveBeenCalledTimes(1);
         expect(stale.followUp).toHaveBeenCalledWith({ text: expect.stringContaining('no longer active') });
+    });
+
+    it.each(['answer', 'skip'])('restores the topic before an old question %s control can act', async kind => {
+        const { service, deps } = setup();
+        repo.setSession('-100_7', 'project', 'Conversation A', 'default');
+        const modelDeps = createTelegramModelActionDeps(deps);
+        const submit = jest.fn(async () => {
+            expect(await service.getCurrentSessionInfo()).toMatchObject({ title: 'Conversation A' });
+            return true;
+        });
+        deps.bridge.pool.getQuestionDetector.mockReturnValue({ submitOption: submit, skipQuestion: submit, refresh: async () => {} });
+        const questionDeps = { bridge: deps.bridge, wsHandler: { getWorkspaceForChannel: () => '/projects/project' },
+            prepareSession: modelDeps.prepareQuestionSession, resolveAccountName: modelDeps.resolveAccountName };
+        const control = interaction('-100_7');
+        control.customId = `question_${kind === 'answer' ? 'select' : 'skip'}_action:project:-100_7:0123456789abcdef`;
+        const ok = kind === 'answer'
+            ? await createQuestionSelectAction(questionDeps).execute(control, ['0'])
+            : await createQuestionSkipAction(questionDeps).execute(control, {});
+        expect(ok).toBe(true);
+        expect(submit).toHaveBeenCalledTimes(1);
+    });
+
+    it('never submits a question if its saved conversation cannot be restored', async () => {
+        const { service, deps } = setup();
+        repo.setSession('-100_7', 'project', 'Conversation A', 'default');
+        service.activateSessionByTitle.mockResolvedValue({ ok: false, error: 'Conversation missing' });
+        const modelDeps = createTelegramModelActionDeps(deps);
+        const submit = jest.fn();
+        deps.bridge.pool.getQuestionDetector.mockReturnValue({ submitOption: submit });
+        const control = interaction('-100_7');
+        control.customId = 'question_select_action:project:-100_7:0123456789abcdef';
+        expect(await createQuestionSelectAction({ bridge: deps.bridge,
+            wsHandler: { getWorkspaceForChannel: () => '/projects/project' }, prepareSession: modelDeps.prepareQuestionSession,
+        }).execute(control, ['0'])).toBe(false);
+        expect(submit).not.toHaveBeenCalled();
     });
 });

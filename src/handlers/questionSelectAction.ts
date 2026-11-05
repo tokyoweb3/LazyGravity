@@ -21,6 +21,8 @@ export interface QuestionSelectActionDeps {
     readonly accountName?: string;
     /** Resolve the account belonging to the question's platform chat. */
     readonly resolveAccountName?: (channelId: string, userId: string) => string;
+    /** Restore the control's bound conversation before comparing or submitting a question. */
+    readonly prepareSession?: (channelId: string, userId: string) => Promise<{ ok: true } | { ok: false; error: string }>;
 }
 
 /**
@@ -58,10 +60,21 @@ export function createQuestionSelectAction(deps: QuestionSelectActionDeps): Sele
             }
 
             const projectName = resolveProjectName(deps, interaction.channel.id, parsed.projectName, { preferChannelBinding: true });
-            const accountName = deps.resolveAccountName?.(interaction.channel.id, interaction.user.id) ?? deps.accountName;
             logger.debug(`[QuestionSelectAction] project=${projectName ?? 'null'} channel=${interaction.channel.id}`);
 
             await interaction.deferUpdate().catch(() => {});
+            try {
+                const ready = await deps.prepareSession?.(interaction.channel.id, interaction.user.id);
+                if (ready && !ready.ok) {
+                    await interaction.followUp({ text: ready.error, ephemeral: true }).catch(() => {});
+                    return false;
+                }
+            } catch (error) {
+                logger.warn('[QuestionSelectAction] Could not prepare the bound conversation:', error);
+                await interaction.followUp({ text: 'Unable to restore this conversation. Run /model to refresh.', ephemeral: true }).catch(() => {});
+                return false;
+            }
+            const accountName = deps.resolveAccountName?.(interaction.channel.id, interaction.user.id) ?? deps.accountName;
             let detector = projectName
                 ? deps.bridge.pool.getQuestionDetector(projectName, accountName)
                 : undefined;

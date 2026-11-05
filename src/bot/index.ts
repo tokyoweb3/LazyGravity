@@ -1952,6 +1952,7 @@ export const startBot = async (cliLogLevel?: LogLevel) => {
                     return binding ? workspaceService.getWorkspacePath(binding.workspacePath) : undefined;
                 } },
                 resolveAccountName: telegramModelActionDeps.resolveAccountName,
+                prepareSession: telegramModelActionDeps.prepareQuestionSession,
             };
             const questionSelectAction = createQuestionSelectAction(telegramQuestionDeps);
             const telegramSelectHandler = createPlatformSelectHandler({

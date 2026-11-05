@@ -104,6 +104,7 @@ describe('Antigravity 2.6 question prompts', () => {
             expect(selection).not.toBe('expired');
             if (!selection || selection === 'expired') throw new Error('Question token was not refreshed');
             const action = createQuestionSelectAction({ bridge, resolveAccountName: modelDeps.resolveAccountName,
+                prepareSession: modelDeps.prepareQuestionSession,
                 wsHandler: { getWorkspaceForChannel: () => '/projects/TestProject' } });
             expect(await action.execute({ channel, user: { id: 'operator' }, customId: selection.customId,
                 deferUpdate: jest.fn().mockResolvedValue(undefined), editReply: jest.fn().mockResolvedValue(undefined),
