@@ -70,7 +70,8 @@ const VALID_PLATFORMS: readonly PlatformType[] = ['discord', 'telegram'];
  * @returns Array of active platform types.
  */
 function getActivePlatforms(): PlatformType[] {
-    const raw = process.env.PLATFORMS || 'discord';
+    const persisted = ConfigLoader.readPersisted();
+    const raw = process.env.PLATFORMS || persisted.platforms?.join(',') || 'discord';
     return raw
         .split(',')
         .map((p) => p.trim().toLowerCase())
@@ -82,6 +83,14 @@ function getActivePlatforms(): PlatformType[] {
  * @returns List of variable check status items.
  */
 function checkRequiredEnvVars(): { name: string; set: boolean }[] {
+    const persisted = ConfigLoader.readPersisted();
+    const persistedValues: Record<string, string | undefined> = {
+        DISCORD_BOT_TOKEN: persisted.discordToken,
+        CLIENT_ID: persisted.clientId,
+        ALLOWED_USER_IDS: persisted.allowedUserIds?.join(','),
+        TELEGRAM_BOT_TOKEN: persisted.telegramToken,
+        TELEGRAM_ALLOWED_USER_IDS: persisted.telegramAllowedUserIds?.join(','),
+    };
     const platforms = getActivePlatforms();
     const required: string[] = [];
 
@@ -94,7 +103,7 @@ function checkRequiredEnvVars(): { name: string; set: boolean }[] {
 
     return required.map((name) => ({
         name,
-        set: Boolean(process.env[name]),
+        set: Boolean(process.env[name] ?? persistedValues[name]),
     }));
 }
 
@@ -200,11 +209,11 @@ export async function doctorAction(): Promise<void> {
 
     // 7. Node.js version check
     const nodeVersion = process.versions.node;
-    const major = parseInt(nodeVersion.split('.')[0], 10);
-    if (major >= 18) {
+    const [major, minor] = nodeVersion.split('.').map(Number);
+    if (major > 22 || (major === 22 && minor >= 14)) {
         ok(`Node.js ${nodeVersion}`);
     } else {
-        fail(`Node.js ${nodeVersion} (>= 18.0.0 required)`);
+        fail(`Node.js ${nodeVersion} (>= 22.14.0 required)`);
         allOk = false;
     }
 
